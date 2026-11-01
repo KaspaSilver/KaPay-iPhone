@@ -813,8 +813,8 @@ struct AppSettings: Codable {
         language: AppLanguage = .system,
         currency: AppCurrency = .usDollar,
         biometricSeedPhraseEnabled: Bool = true,
-        // Account-login biometrics are opt-in (off by default) on every platform.
-        biometricAccountLoginEnabled: Bool = false,
+        // Asked when signing back in to a saved account: on by default (owner's call, 2026-11-01).
+        biometricAccountLoginEnabled: Bool = true,
         biometricSpendingKeyEnabled: Bool = true,
         verboseAPILogging: Bool = false,
         indexerURL: String,
@@ -873,7 +873,7 @@ struct AppSettings: Codable {
         language = try container.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .system
         currency = try container.decodeIfPresent(AppCurrency.self, forKey: .currency) ?? .usDollar
         biometricSeedPhraseEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricSeedPhraseEnabled) ?? true
-        biometricAccountLoginEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricAccountLoginEnabled) ?? false
+        biometricAccountLoginEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricAccountLoginEnabled) ?? true
         biometricSpendingKeyEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricSpendingKeyEnabled) ?? true
         verboseAPILogging = try container.decodeIfPresent(Bool.self, forKey: .verboseAPILogging) ?? false
 

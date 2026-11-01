@@ -13,6 +13,12 @@ struct SettingsView: View {
 
     @State private var showSeedPhrase = false
     @State private var showLogoutConfirmation = false
+    @State private var showDeleteAccountConfirmation = false
+    /// The seed phrase over the Delete Account warning, which it closes back to.
+    @State private var showSeedPhraseOverDeleteWarning = false
+    /// The backup steps over the Delete Account warning, for an account that hasn't finished them.
+    @State private var showBackupOverDeleteWarning = false
+    @ObservedObject private var backupStatus = AccountBackupStatus.shared
     @State private var toastMessage: String?
     @State private var toastToken = UUID()
     @State private var toastStyle: ToastStyle = .success
@@ -44,13 +50,7 @@ struct SettingsView: View {
                 // Direct action, not a sub-page: straight into the seed phrase (behind the
                 // biometric gate when enabled).
                 Button {
-                    if settingsViewModel.settings.biometricSeedPhraseEnabled {
-                        DeviceAuth.authenticate(reason: "Unlock to view your seed phrase") {
-                            showSeedPhrase = true
-                        }
-                    } else {
-                        showSeedPhrase = true
-                    }
+                    unlockSeedPhrase { showSeedPhrase = true }
                 } label: {
                     Label {
                         Text("View Seed Phrase")
@@ -62,6 +62,17 @@ struct SettingsView: View {
                 }
                 // Moved here from the Wallet tab (owner's call, 2026-10-27).
                 Section {
+                    Button(role: .destructive) {
+                        showDeleteAccountConfirmation = true
+                    } label: {
+                        Label {
+                            Text("Delete Account")
+                                .foregroundColor(.red)
+                        } icon: {
+                            Image(systemName: "trash")
+                                .foregroundColor(.red)
+                        }
+                    }
                     Button(role: .destructive) {
                         showLogoutConfirmation = true
                     } label: {
@@ -108,9 +119,34 @@ struct SettingsView: View {
                     Task { await walletManager.logout() }
                 }
             }
+            .sheet(isPresented: $showDeleteAccountConfirmation) {
+                DeleteAccountSheet(
+                    confirmSubtitle: "Removes this account and its data from this device.",
+                    onViewSeedPhrase: { unlockSeedPhrase { showSeedPhraseOverDeleteWarning = true } },
+                    notBackedUp: backupStatus.isPending(walletManager.currentWallet?.publicAddress),
+                    onBackUp: { AccountBackupView.unlock { showBackupOverDeleteWarning = true } }
+                ) {
+                    Task { await walletManager.deleteCurrentAccount() }
+                }
+                .sheet(isPresented: $showSeedPhraseOverDeleteWarning) {
+                    SeedPhraseView()
+                }
+                .sheet(isPresented: $showBackupOverDeleteWarning) {
+                    AccountBackupView()
+                }
+            }
         }
         .onAppear {
             Task { _ = try? await walletManager.refreshBalance() }
+        }
+    }
+
+    /// The seed phrase, behind the biometric gate when enabled.
+    private func unlockSeedPhrase(_ show: @escaping () -> Void) {
+        if settingsViewModel.settings.biometricSeedPhraseEnabled {
+            DeviceAuth.authenticate(reason: "Unlock to view your seed phrase", onSuccess: show)
+        } else {
+            show()
         }
     }
 
@@ -1080,6 +1116,10 @@ struct SeedPhraseView: View {
                     Text("Anyone with your seed phrase can access your account. Never share it with anyone.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+
+                    Text("Best practice is to write your seed phrase down to back it up, and never store it online.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
                 .padding()
                 .background(Color.orange.opacity(0.1))
@@ -1168,7 +1208,7 @@ struct SeedPhraseView: View {
                             isRevealed = true
                             let token = UUID()
                             revealToken = token
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 7) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
                                 if revealToken == token {
                                     isRevealed = false
                                 }
@@ -2873,7 +2913,7 @@ struct NextcloudSettingsView: View {
                 } header: {
                     Text("Backup")
                 } footer: {
-                    Text("Your contacts (names, notes and photos) are saved as \"\(NextcloudService.addressBookFileName)\" and your portfolios with their transactions as \"\(NextcloudService.portfolioFileName)\", both in the \(NextcloudService.backupFolderName) folder. Automatic Backup uploads them a few seconds after you change either. Restoring merges the backup into this device: no address is deleted, and a portfolio or transaction deleted on another device is removed here too. Connecting a wallet to a server that has a backup restores it once by itself.")
+                    Text("Your contacts (names, notes and photos) are saved as \"\(NextcloudService.addressBookFileName)\" and your portfolios with their transactions as \"\(NextcloudService.portfolioFileName)\", both in the \(NextcloudService.backupFolderName) folder. Automatic Backup uploads them a few seconds after you change either, and brings in changes from your other devices when you open the app. Restoring merges the backup into this device: no address is deleted, and a portfolio or transaction deleted on another device is removed here too. Connecting a wallet to a server that has a backup restores it once by itself.")
                 }
 
                 Section {

@@ -2,6 +2,10 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var walletManager: WalletManager
+    /// Bumped on every sign-out, so the next account gets new tabs. Without it SwiftUI brought the
+    /// old tabs back as they were: on Settings (where Log Out is), without an onAppear to start
+    /// polling for the new account.
+    @State private var signInSession = 0
 
     var body: some View {
         Group {
@@ -15,6 +19,7 @@ struct ContentView: View {
                 LoadingView()
             case .mainApp:
                 MainTabView()
+                    .id(signInSession)
             case .onboarding:
                 OnboardingView()
             case .recovery:
@@ -29,6 +34,9 @@ struct ContentView: View {
             .easeInOut,
             value: walletManager.currentWallet != nil && !walletManager.isAwaitingSeedPhraseConfirmation
         )
+        .onChange(of: walletManager.currentWallet == nil) { signedOut in
+            if signedOut { signInSession += 1 }
+        }
         .onAppear { LaunchTrace.mark("first screen on") }
     }
 }

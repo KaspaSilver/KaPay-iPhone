@@ -91,13 +91,15 @@ enum NextcloudError: LocalizedError {
 /// The user's own Nextcloud server, for one thing: backing up the Address Book and the Portfolio
 /// to the KaChat folder. Connect with an app password; the backup is two plain JSON files there:
 /// - `addressBookFileName`: the Address Book export file (`AddressBookManager.ExportFile`, with
-///   photos), so any KaChat app's Address Book import can read it.
+///   photos), so any KaChat app's Address Book import can read it, plus what was deleted, so two
+///   devices merge without bringing a deletion back.
 /// - `portfolioFileName`: every portfolio with its transactions and fees, plus what was deleted
 ///   (`PortfolioBackupFile`), so two devices merge without bringing a deletion back. A backup
 ///   merges what is already on the server in first, so it never overwrites another device's
 ///   changes.
 /// Automatic Backup (default off) uploads a few seconds after either changes and when the app goes
-/// to the background; Restore merges both back in, and a fresh connection restores once by
+/// to the background, and merges in what's on the server when the app opens (at most once a
+/// minute); Restore merges both back in, and a fresh connection restores once by
 /// itself. Import / Export in the Address Book and Portfolio also reach the KaChat folder.
 ///
 /// Everything here is scoped to the ACTIVE WALLET ACCOUNT: credentials live in a per-wallet
@@ -139,6 +141,8 @@ final class NextcloudService: ObservableObject {
     /// The Address Book or Portfolio changed since the last successful upload. Persisted, so a
     /// kill before the upload still backs up on the next background or launch.
     private var pendingBackup = false
+    /// When the app last looked for another device's changes.
+    private var lastServerCheck: Date?
 
     private nonisolated static let autoBackupKey = "kachat_nextcloud_auto_backup"
     private nonisolated static let lastBackupKey = "kachat_nextcloud_last_address_book_backup"
@@ -153,6 +157,8 @@ final class NextcloudService: ObservableObject {
     ]
     /// Quiet time after a change before the upload, so a burst of edits is one.
     private nonisolated static let backupDebounce: TimeInterval = 5
+    /// Going in and out of the app quickly checks the server once.
+    private nonisolated static let serverCheckInterval: TimeInterval = 60
 
     static let backupFolderName = "KaChat"
     /// The wallet's own files: KaChat's chat backup (`kachat-backup.json`) may share the folder,
@@ -176,6 +182,13 @@ final class NextcloudService: ObservableObject {
             queue: .main
         ) { _ in
             Task { @MainActor in NextcloudService.shared.backUpPendingInBackground() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in NextcloudService.shared.syncWithServerOnOpen() }
         }
     }
 
@@ -212,7 +225,8 @@ final class NextcloudService: ObservableObject {
         pendingBackup = scopedKey(Self.pendingBackupKey).map { defaults.bool(forKey: $0) } ?? false
         let stamp = scopedKey(Self.lastBackupKey).map { defaults.double(forKey: $0) } ?? 0
         lastBackupAt = stamp > 0 ? Date(timeIntervalSince1970: stamp) : nil
-        if pendingBackup { scheduleBackup(after: Self.backupDebounce) }
+        lastServerCheck = nil
+        syncWithServerOnOpen()
     }
 
     /// Settings' Automatic Backup toggle.
@@ -332,6 +346,48 @@ final class NextcloudService: ObservableObject {
         }
     }
 
+    /// The app opened or came back: with Automatic Backup on, brings in another device's changes.
+    /// A change still owed is uploaded instead, which merges the server's copy in first.
+    private func syncWithServerOnOpen() {
+        guard autoBackupEnabled, isConnected, let walletAtStart = currentWalletAddress else { return }
+        if let lastServerCheck, Date().timeIntervalSince(lastServerCheck) < Self.serverCheckInterval { return }
+        lastServerCheck = Date()
+        if pendingBackup {
+            scheduleBackup(after: Self.backupDebounce)
+            return
+        }
+        backupTask?.cancel()
+        backupTask = Task { [weak self] in
+            // after the other services have switched to this account
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled, let self, self.currentWalletAddress == walletAtStart else { return }
+            do {
+                try await self.mergeFromServer(walletAtStart: walletAtStart)
+            } catch {
+                AppLog.log("%@", "[Nextcloud] Checking the server failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Merges both backups into this device, without uploading unless the server is missing
+    /// something this device has.
+    private func mergeFromServer(walletAtStart: String) async throws {
+        var serverIsBehind = false
+        if let contacts = try await downloadBackupFile(Self.addressBookFileName, legacy: Self.legacyAddressBookFileNames) {
+            guard !Task.isCancelled, currentWalletAddress == walletAtStart else { return }
+            serverIsBehind = try AddressBookManager.shared.mergeBackup(contacts).serverIsBehind
+        }
+        if let portfolio = try await downloadPortfolioBackup() {
+            guard !Task.isCancelled, currentWalletAddress == walletAtStart else { return }
+            PortfolioViewModel.shared.importFromArchive(portfolio)
+        }
+        guard !Task.isCancelled, currentWalletAddress == walletAtStart else { return }
+        if serverIsBehind {
+            setPendingBackup(true)
+            scheduleBackup(after: Self.backupDebounce)
+        }
+    }
+
     /// Going to the background with a change still owed: upload it inside a background task.
     private func backUpPendingInBackground() {
         guard autoBackupEnabled, isConnected, pendingBackup else { return }
@@ -351,12 +407,16 @@ final class NextcloudService: ObservableObject {
     // MARK: - Backup and restore
 
     /// Uploads this wallet's Address Book to `addressBookFileName` and its Portfolio to
-    /// `portfolioFileName`, replacing the previous backup. The Portfolio on the server is merged
-    /// in first, so another device's edits and deletions survive. The manual Back Up Now and the
-    /// automatic backup both come here.
+    /// `portfolioFileName`, replacing the previous backup. What's on the server is merged in first,
+    /// so another device's edits and deletions survive. The manual Back Up Now and the automatic
+    /// backup both come here.
     func runBackup() async throws {
         guard let walletAtStart = currentWalletAddress else { throw NextcloudError.noActiveWallet }
-        let addressBook = try AddressBookManager.shared.exportData()
+        if let remote = try await downloadBackupFile(Self.addressBookFileName, legacy: Self.legacyAddressBookFileNames) {
+            guard currentWalletAddress == walletAtStart else { return }
+            try AddressBookManager.shared.mergeBackup(remote)
+        }
+        let addressBook = try AddressBookManager.shared.exportData(includingDeleted: true)
         _ = try await uploadToKaChatFolder(
             data: addressBook, filename: Self.addressBookFileName, contentType: "application/json", keepSpaces: true
         )

@@ -11,6 +11,9 @@ import SwiftUI
 struct SeedPhraseKeyboardView: View {
     @Binding var words: [String]
     let wordCount: Int
+    /// The number shown on each slot, when they aren't simply 1, 2, 3 (the Backup Hygiene check
+    /// asks for a few words of the phrase).
+    var slotNumbers: [Int]? = nil
 
     @State private var activeSlot = 0
 
@@ -68,7 +71,7 @@ struct SeedPhraseKeyboardView: View {
         let isActive = i == activeSlot
         let isValid = !word.isEmpty && BIP39.shared.isValidWord(word)
         return HStack(spacing: 4) {
-            Text("\(i + 1)")
+            Text("\(slotNumbers.flatMap { $0.indices.contains(i) ? $0[i] : nil } ?? i + 1)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
                 .frame(width: 18, alignment: .trailing)

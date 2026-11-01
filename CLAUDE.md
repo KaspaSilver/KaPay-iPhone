@@ -31,11 +31,30 @@ Five fixed tabs (`AppTab` in `KaChatWallet/Models/Models.swift`, rendered by
 | Portfolio | `PortfolioView` (`Views/Portfolio/`) |
 | Cold Storage | `ColdStorageListView` (`Views/ColdStorage/`) |
 | Wallet | `ProfileView` (`Views/Contacts/ContactsView.swift`, `AppTab.profile`) - the home tab, where the app opens after logging in; receive, the Chatting Address, Manage Addresses, Your Domains, Contacts (`AddressBookView`, as a sheet), help, about; a floating up/down arrow (bottom right, as in KaChat) opens a half sheet: Send Kaspa, Receive Kaspa, Request Payment (`CreatePaymentRequestView`) |
-| .kachat | `KachatMarketView` (`Views/Ecosystem/`); dock icon `KachatTabIcon.domainsImage` (name tag with an @) - the full .kachat names marketplace: search, buy, claim, sell, offers, activity |
-| Settings | `SettingsView(isDockTab: true)` (`Views/Settings/SettingsView.swift`, `AppTab.settings`) - no Done button as a tab; Log Out is its last row |
+| .kachat | `KachatMarketView` (`Views/Ecosystem/`); dock icon `KachatTabIcon.domainsImage` (name tag with an @) - the full .kachat names marketplace: the logo and four numbered cards (Marketplace, Available, Expired, Activity), each opening its page; only the Marketplace has the name search. Search, buy, claim, sell, offers, activity |
+| Settings | `SettingsView(isDockTab: true)` (`Views/Settings/SettingsView.swift`, `AppTab.settings`) - no Done button as a tab; Delete Account (`DeleteAccountSheet`, the warning the sign-in screen's Delete also shows; `WalletManager.deleteCurrentAccount`) and Log Out are its last rows |
 
-Account setup: `ContentView` -> `OnboardingView` (create / import a seed) -> `MainTabView`. The
-sign-in screen says "KaPay" with the wallet logo and no tagline. The rename kept every identifier
+Account setup: `ContentView` -> `OnboardingView` (create / import a seed) -> `MainTabView`. Create
+New Account makes an account in one tap: 24 words, no passphrase, the next free default name
+(`WalletManager.nextDefaultAccountName`: My Account, My Account 2 and on). "Advanced: Create with a
+Passphrase" (`CreateWalletView`) is the only other way: also 24 words, through
+`PassphraseOptionView`. Import still takes 12 or 24 words. Creating never shows the seed phrase: an
+account made here is owed a backup (`AccountBackupStatus`), and until the backup steps
+(`AccountBackupView`: why, get ready, the words six at a time, a check of four random words, the
+passphrase and its check if there is one, where to keep them) are finished, the Wallet tab shows
+`AccountBackupCard` above Manage Addresses (red once the account holds funds), Receive shows a
+reminder and the Delete Account warning leads with Back Up Account; deleting is never blocked. The
+steps never offer a copy; Settings > View Seed Phrase does. Imported and older accounts are never
+owed one. Finishing the steps starts a six-month timer (`AccountBackupStatus`); when it runs out
+the Wallet tab shows `BackupHygieneCard` in the same place, and `BackupHygieneView` asks for five
+random words in random order on `SeedPhraseKeyboardView`, then the passphrase if the account has
+one. Passing, or Can't Complete This and the backup steps again, starts the timer over; closing
+leaves the card up. The passphrase entry screen shows the chatting address and its balance as you type, so
+someone importing can tell they typed the right one. Every sign-in gets new tabs (`ContentView`'s
+`signInSession`, the `MainTabView` id, bumped on sign-out), opening on Wallet; without it SwiftUI
+brought the last account's tabs back, on Settings and with no onAppear.
+
+The sign-in screen says "KaPay" with the wallet logo and no tagline. The rename kept every identifier
 (bundle ID, keychain group, URL scheme, folder and target names `KaChatWallet`): only what people
 read says KaPay. Texts about the KaChat ecosystem (KaChat profiles, .kachat names, the Nextcloud
 `KaChat` folder) still say KaChat.
@@ -105,9 +124,12 @@ Where each screen uses them:
   with photos) and `KaPay Portfolio.json` (`PortfolioBackupFile`: portfolios,
   transactions, fees and deletion tombstones); a restore falls back to the earlier names
   (`KaPay Address Book.json`, then `KaChat Wallet …`). Connect with an app password. Automatic Backup
-  (off by default) uploads a few seconds after either changes and on background; a backup merges
-  the server's Portfolio in first (`PortfolioSync.merge`, newest edit or deletion wins), so two
-  devices don't overwrite each other. Restore and a fresh connection merge both back
+  (off by default) uploads a few seconds after either changes and on background, and merges in
+  what's on the server when the app opens, at most once a minute (`syncWithServerOnOpen`). Every
+  backup merges the server's copies in first (`PortfolioSync.merge`,
+  `AddressBookManager.mergeBackup`; newest edit or deletion wins, the Contacts file carries its
+  deletions in `deleted`), so two devices don't overwrite each other. A Contacts file uploaded by
+  another account (`walletAddress`) isn't merged. Restore and a fresh connection merge both back
   (`AddressBookManager.importExport`, `PortfolioViewModel.importFromArchive`). Contacts and
   Portfolio import/export can also use the KaChat folder.
 - `KachatNamesRegistry` reads .kachat names through `AppSettings.indexerURL` (Settings >

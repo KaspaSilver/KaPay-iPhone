@@ -303,7 +303,21 @@ final class WalletManager: ObservableObject {
     @discardableResult
     func commitCreatedWallet(seedPhrase: SeedPhrase, passphrase: String, alias: String) async throws -> Wallet {
         let sp = SeedPhrase(words: seedPhrase.words, passphrase: passphrase.isEmpty ? nil : passphrase)
-        return try await importWallet(from: sp, alias: alias)
+        let wallet = try await importWallet(from: sp, alias: alias)
+        // nobody has seen these words yet: the Wallet tab's card stays until they're backed up
+        AccountBackupStatus.shared.markPending(wallet.publicAddress)
+        return wallet
+    }
+
+    /// The name a new account gets, renameable later: "My Account", then "My Account 2" and on,
+    /// skipping any name a saved account already has.
+    func nextDefaultAccountName() -> String {
+        let base = AppLocalization.string("My Account")
+        let taken = Set(savedAccounts.map { $0.alias.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        guard taken.contains(base.lowercased()) else { return base }
+        var number = 2
+        while taken.contains("\(base) \(number)".lowercased()) { number += 1 }
+        return "\(base) \(number)"
     }
 
     /// - Parameter chattingAddressIndex: derivation index on the identity chain
@@ -405,6 +419,8 @@ final class WalletManager: ObservableObject {
             throw KasiaError.seedPhraseParsingFailed(wordCount: words.count)
         }
         let wallet = try await importWallet(from: seedPhrase, alias: alias, family: family)
+        // whoever typed the words has them
+        AccountBackupStatus.shared.markDone(wallet.publicAddress)
         // A restored seed finds its spending addresses by itself - legacy and quantum, the same
         // sweep as Manage Addresses' Discover Addresses - so balances and change rotation are
         // right without anyone knowing to tap it (owner's call, 2026-10-21). Only this path: a
@@ -433,6 +449,7 @@ final class WalletManager: ObservableObject {
         }
 
         if let walletAddressToDelete {
+            AccountBackupStatus.shared.forget(walletAddressToDelete)
             // its .kachat reminders would keep firing for names this phone no longer holds - on
             // both networks: the tag is from the address, whose checksum differs per prefix
             for address in Self.accountAddressVariants(walletAddressToDelete) {
@@ -574,7 +591,10 @@ final class WalletManager: ObservableObject {
                 for address in Self.accountAddressVariants(account.publicAddress) {
                     NextcloudService.shared.purgeStoredState(forWalletAddress: address)
                     await KachatNameReminders.removeAll(forWallet: address)
+                    AddressBookManager.shared.removeAllData(forWalletAddress: address)
+                    GlobalNotificationCenter.removeAllData(forWalletAddress: address)
                 }
+                AccountBackupStatus.shared.forget(account.publicAddress)
                 removeSavedAccountFromStorage(account)
                 return
             }
@@ -598,6 +618,8 @@ final class WalletManager: ObservableObject {
             PortfolioViewModel.shared.setCurrentWallet(address)
             PortfolioViewModel.shared.clearAllLocalData()
             NextcloudService.shared.purgeStoredState(forWalletAddress: address)
+            AddressBookManager.shared.removeAllData(forWalletAddress: address)
+            GlobalNotificationCenter.removeAllData(forWalletAddress: address)
         }
 
         do {
@@ -611,6 +633,7 @@ final class WalletManager: ObservableObject {
             return
         }
 
+        AccountBackupStatus.shared.forget(account.publicAddress)
         removeSavedAccountFromStorage(account)
         currentWallet = nil
         isBalanceRefreshing = false
@@ -624,6 +647,22 @@ final class WalletManager: ObservableObject {
         WalletService.shared.resetForNewWallet()
         AddressBookManager.shared.setActiveWalletAddress(nil)
         NotificationCenter.default.post(name: .settingsDidChange, object: nil)
+    }
+
+    /// Settings > Delete Account: the signed-in account, removed the way the sign-in screen's
+    /// Delete removes it.
+    func deleteCurrentAccount() async {
+        guard let wallet = currentWallet else { return }
+        // The app password KaPay made on the user's Nextcloud, while the credentials still exist
+        // to authenticate with.
+        if NextcloudService.shared.isConnected {
+            await NextcloudService.shared.revokeAppPassword()
+        }
+        cachedPrivateKey = nil
+        // files the account first, whatever the list holds, so the removal finds it
+        updateSavedAccounts(from: wallet)
+        guard let account = savedAccounts.first else { return }
+        await removeSavedAccount(account)
     }
 
     func getSeedPhrase() throws -> SeedPhrase? {

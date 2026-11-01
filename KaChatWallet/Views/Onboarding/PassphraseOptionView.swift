@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The optional BIP39 passphrase ("25th word") step, shown after the seed-phrase backup (create)
-/// or seed-phrase entry (import) and before the Welcome Guide.
+/// The optional BIP39 passphrase ("25th word") step: Create with a Passphrase, or after the
+/// seed-phrase entry (import).
 ///
 /// Three screens rather than one. The old version was a single page of explainer cards with the
 /// fields already on it and two buttons at the bottom, which asked someone to decide before it had
@@ -11,9 +11,10 @@ import SwiftUI
 ///
 ///   1. `question` - "Did you create this seed with a passphrase?" (import) or "Do you want to add
 ///      a passphrase to your account?" (create). Yes / No / What is a passphrase?
-///   2. `entry` - the field, with the chatting address it produces updating underneath as you
-///      type. That live address is the point: it is the only direct evidence that a passphrase
-///      opens a DIFFERENT account rather than protecting the same one.
+///   2. `entry` - the field, with the chatting address it produces and that address's balance
+///      updating underneath as you type. That live address is the point: it is the only direct
+///      evidence that a passphrase opens a DIFFERENT account rather than protecting the same one,
+///      and a balance is how someone importing can tell they typed the right one.
 ///   3. `explainer` - plain-language, back only, so reading about it always returns to the choice.
 ///
 /// The caller (`CreateWalletView` / `ImportWalletView`) performs the actual wallet commit via
@@ -54,6 +55,9 @@ struct PassphraseOptionView: View {
     /// than per keystroke: the derivation is PBKDF2 over 2048 rounds, which is quick but not free.
     @State private var previewAddress: String?
     @State private var previewTask: Task<Void, Never>?
+    /// What `previewAddress` holds: nil while looking it up, or when the lookup failed.
+    @State private var previewBalanceSompi: UInt64?
+    @State private var previewBalanceFailed = false
 
     var body: some View {
         Group {
@@ -277,6 +281,7 @@ struct PassphraseOptionView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .animation(.none, value: previewAddress)
+            previewBalanceRow
             Text(passphrase.isEmpty
                  ? "This is the account your seed phrase opens on its own."
                  : "A different passphrase gives a different address, and a different account.")
@@ -291,18 +296,68 @@ struct PassphraseOptionView: View {
         .opacity(seedWords.isEmpty ? 0 : 1)
     }
 
+    /// The balance is only the chatting address's: funds can also sit on the account's other
+    /// addresses, so an empty one suggests a wrong passphrase rather than proving it.
+    @ViewBuilder
+    private var previewBalanceRow: some View {
+        HStack(spacing: 6) {
+            Text("Balance")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            if let previewBalanceSompi {
+                Text(verbatim: KaspaUnit.amount(previewBalanceSompi))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(previewBalanceSompi > 0 ? .green : .primary)
+            } else if previewBalanceFailed {
+                Text("Couldn't check")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            } else {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(height: 14)
+            }
+        }
+        .padding(.top, 4)
+        if mode == .importExisting, let previewBalanceSompi {
+            Text(previewBalanceSompi > 0
+                 ? "This address holds funds, so this looks like the right account."
+                 : "No funds on this address. If you expected funds here, check your passphrase.")
+                .font(.caption)
+                .foregroundColor(previewBalanceSompi > 0 ? .green : .orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private func schedulePreview() {
         previewTask?.cancel()
         guard !seedWords.isEmpty else { return }
         let typed = passphrase
+        previewBalanceSompi = nil
+        previewBalanceFailed = false
         previewTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
-            previewAddress = walletManager.previewChattingAddress(
+            let address = walletManager.previewChattingAddress(
                 words: seedWords,
                 passphrase: typed,
                 family: family
             )
+            previewAddress = address
+            guard let address else {
+                previewBalanceFailed = true
+                return
+            }
+            // a further pause, so only the passphrase someone stopped typing is looked up
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
+            guard !Task.isCancelled else { return }
+            if let utxos {
+                previewBalanceSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
+            } else {
+                previewBalanceFailed = true
+            }
         }
     }
 

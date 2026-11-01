@@ -67,6 +67,16 @@ final class AddressBookManager: ObservableObject {
         photoVersion &+= 1
     }
 
+    /// Delete Account: one wallet's book, tombstones and assigned photos, from this device.
+    func removeAllData(forWalletAddress walletAddress: String) {
+        let wallet = Self.normalize(walletAddress)
+        defaults.removeObject(forKey: Self.entriesKeyPrefix + wallet)
+        defaults.removeObject(forKey: Self.deletedKeyPrefix + wallet)
+        if let directory = Self.photosDirectory(wallet: wallet) {
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
     // MARK: - Reading
 
     func entry(for address: String?) -> AddressBookEntry? {
@@ -297,6 +307,9 @@ final class AddressBookManager: ObservableObject {
         var walletAddress: String?
         /// Every entry with its assigned photo (base64 JPEG) attached.
         var entries: [AddressBookEntry]
+        /// The Nextcloud backup only: what was deleted, so a merge doesn't bring it back. Other
+        /// readers of the file ignore it.
+        var deleted: [AddressBookTombstone]?
     }
 
     enum ImportError: LocalizedError {
@@ -315,9 +328,10 @@ final class AddressBookManager: ObservableObject {
         }
     }
 
-    /// This wallet's Address Book as an export file.
-    func exportData() throws -> Data {
-        let file = ExportFile(exportedAt: Date(), walletAddress: walletAddress, entries: archiveEntries)
+    /// This wallet's Address Book as an export file. `includingDeleted` is for the Nextcloud backup.
+    func exportData(includingDeleted: Bool = false) throws -> Data {
+        let file = ExportFile(exportedAt: Date(), walletAddress: walletAddress, entries: archiveEntries,
+                              deleted: includingDeleted ? archiveTombstones : nil)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -381,6 +395,46 @@ final class AddressBookManager: ObservableObject {
     }
 
     // MARK: - Backup
+
+    /// Each address's last edit and what's deleted, to the second (the file's dates are), to tell
+    /// whether two copies of the book say the same.
+    private struct BookSummary: Equatable {
+        var edits: [String: Int]
+        var deleted: Set<String>
+
+        init(entries: [AddressBookEntry], deleted: [String]) {
+            edits = Dictionary(
+                entries.map { (AddressBookManager.normalize($0.address), Int($0.updatedAt.timeIntervalSince1970)) },
+                uniquingKeysWith: max
+            )
+            self.deleted = Set(deleted.map(AddressBookManager.normalize))
+        }
+    }
+
+    /// Merges the Nextcloud backup into this book, the newest edit or deletion winning per address,
+    /// before an upload or when the app opens. Unlike importing a file, a deletion stays deleted.
+    /// A file another account uploaded (accounts can share a Nextcloud login) is left out, so one
+    /// account's contacts never land in another. `serverIsBehind`: this book has something the file
+    /// doesn't, so it's worth uploading.
+    @discardableResult
+    func mergeBackup(_ data: Data) throws -> (changedHere: Bool, serverIsBehind: Bool) {
+        guard let wallet = walletAddress else { throw SaveError.noWallet }
+        let iso = JSONDecoder()
+        iso.dateDecodingStrategy = .iso8601
+        guard let file = (try? iso.decode(ExportFile.self, from: data)) ?? (try? JSONDecoder().decode(ExportFile.self, from: data)),
+              file.type == ExportFile.kind else { throw ImportError.notAnAddressBook }
+        if let owner = file.walletAddress, Self.normalize(owner) != wallet {
+            return (false, !entries.isEmpty || !deleted.isEmpty)
+        }
+        let incoming = file.entries.filter { KaspaAddress.isValidOnActiveNetwork(Self.normalize($0.address)) }
+        let tombstones = file.deleted ?? []
+        let before = BookSummary(entries: entries, deleted: Array(deleted.keys))
+        importFromArchive(entries: incoming, tombstones: tombstones)
+        let after = BookSummary(entries: entries, deleted: Array(deleted.keys))
+        let server = Self.merge(entries: [incoming], tombstones: [tombstones])
+        let onServer = BookSummary(entries: server.entries, deleted: server.tombstones.map(\.address))
+        return (after != before, after != onServer)
+    }
 
     /// What the backup and export carry for this wallet: each entry with its assigned photo (base64
     /// JPEG) attached.

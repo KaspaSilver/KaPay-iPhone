@@ -4,6 +4,8 @@ struct OnboardingView: View {
     @EnvironmentObject var walletManager: WalletManager
     @EnvironmentObject var settingsViewModel: SettingsViewModel
     @State private var showCreateWallet = false
+    @State private var isCreatingAccount = false
+    @State private var createAccountError: String?
     @State private var showImportWallet = false
     @State private var signingInAccountId: String?
     @State private var pendingRemovalAccount: SavedAccountSummary?
@@ -87,11 +89,9 @@ struct OnboardingView: View {
                 set: { if !$0 { pendingRemovalAccount = nil } }
             )) {
                 if let account = pendingRemovalAccount {
-                    ConfirmActionSheet(
-                        title: "Remove Saved Account",
-                        confirmTitle: "Remove from Device",
+                    DeleteAccountSheet(
                         confirmSubtitle: "Deletes \(account.displayAlias) (\(account.shortPublicAddress)) and its local data from this device.",
-                        confirmSystemImage: "trash"
+                        notBackedUp: AccountBackupStatus.shared.isPending(account.publicAddress)
                     ) {
                         removeSavedAccount(account)
                     }
@@ -140,6 +140,17 @@ struct OnboardingView: View {
             } message: {
                 Text(signInErrorMessage ?? "Unable to sign in to this account.")
             }
+            .alert(
+                "Couldn't Create Account",
+                isPresented: Binding(
+                    get: { createAccountError != nil },
+                    set: { if !$0 { createAccountError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(createAccountError ?? "")
+            }
         }
     }
 
@@ -166,10 +177,14 @@ struct OnboardingView: View {
             }
 
             Button {
-                showCreateWallet = true
+                createAccount()
             } label: {
                 HStack {
-                    Image(systemName: "plus.circle.fill")
+                    if isCreatingAccount {
+                        ProgressView().tint(.white)
+                    } else {
+                        Image(systemName: "plus.circle.fill")
+                    }
                     Text("Create New Account")
                 }
                 .frame(maxWidth: .infinity)
@@ -192,6 +207,16 @@ struct OnboardingView: View {
                 .foregroundColor(.primary)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
+            .disabled(isCreatingAccount)
+
+            Button {
+                showCreateWallet = true
+            } label: {
+                Text("Advanced: Create with a Passphrase")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.accentColor)
+            }
+            .disabled(isCreatingAccount)
         }
         .padding(.horizontal, 32)
         .padding(.bottom, 40)
@@ -211,7 +236,7 @@ struct OnboardingView: View {
         // Everything else on this page - compact title, section header, both buttons and the
         // spacing around them. Whatever is left after that is what the list may take, floored at
         // two rows so it is always obviously a list.
-        let reservedForRest: CGFloat = 300
+        let reservedForRest: CGFloat = 340
         let twoRows = 2 * Self.savedAccountRowHeight + Self.savedAccountRowSpacing
         let spare = max(availableHeight - reservedForRest, twoRows)
         let listHeight = min(cappedRows, spare)
@@ -371,6 +396,26 @@ struct OnboardingView: View {
                 }
                 signingInAccountId = nil
             }
+        }
+    }
+
+    /// A new account in one tap: 24 words, no passphrase, the next free default name. The seed
+    /// phrase comes later, through the Wallet tab's backup card.
+    private func createAccount() {
+        guard !isCreatingAccount else { return }
+        isCreatingAccount = true
+        Task {
+            do {
+                let seedPhrase = try await walletManager.generateNewWalletSeedPhrase(wordCount: 24)
+                _ = try await walletManager.commitCreatedWallet(
+                    seedPhrase: seedPhrase,
+                    passphrase: "",
+                    alias: walletManager.nextDefaultAccountName()
+                )
+            } catch {
+                createAccountError = error.localizedDescription
+            }
+            isCreatingAccount = false
         }
     }
 

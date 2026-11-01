@@ -57,6 +57,9 @@ struct ProfileView: View {
     @State private var showKNSEditor = false
     @State private var showCreateKNSProfileFlow = false
     @State private var showKachatSetupGuide = false
+    @ObservedObject private var backupStatus = AccountBackupStatus.shared
+    @State private var showAccountBackup = false
+    @State private var showBackupHygiene = false
     @State private var settingPrimaryDomainId: String?
     /// Result of the last "Set as Primary" tap, shown by the editor sheet itself.
     @State private var setPrimaryMessage: KNSSetPrimaryMessage?
@@ -169,6 +172,7 @@ struct ProfileView: View {
                                 await loadKachatLabel(wallet.publicAddress)
                             }
                         qrButtonsSection(wallet)
+                        accountBackupSection(wallet)
                         addressDropdownsSection(wallet)
                         yourDomainsSection
                         addressBookSection
@@ -347,6 +351,12 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showAddressBook) {
                 AddressBookView(showsDoneButton: true)
+            }
+            .sheet(isPresented: $showAccountBackup) {
+                AccountBackupView()
+            }
+            .sheet(isPresented: $showBackupHygiene) {
+                BackupHygieneView()
             }
             // "Edit KaChat Profile": the address profile editor, on both networks (see
             // `KaChatProfileEditorSheet`).
@@ -1104,6 +1114,7 @@ struct ProfileView: View {
     /// run whether or not the user ever taps, and it cannot await.
     struct ReceiveKaspaQRView: View {
         @EnvironmentObject private var walletManager: WalletManager
+        @ObservedObject private var backupStatus = AccountBackupStatus.shared
         @State private var address: String?
         @State private var resolving = true
         @State private var balanceSompi: UInt64?
@@ -1125,6 +1136,19 @@ struct ProfileView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .padding()
+                }
+            }
+            // a reminder only: receiving is never blocked
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if backupStatus.isPending(walletManager.currentWallet?.publicAddress) {
+                    Label("This account isn't backed up yet. Use the card on the Wallet tab to back it up.",
+                          systemImage: "exclamationmark.shield.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundColor(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.orange.opacity(0.12))
                 }
             }
             .task {
@@ -1159,6 +1183,21 @@ struct ProfileView: View {
             .foregroundColor(.black)
             .frame(width: 80, height: 80)
             .background(Circle().fill(Color.accentColor))
+    }
+
+    // MARK: - Backup card
+
+    /// Until this account's backup steps are finished, red once it holds funds. After that, Backup
+    /// Hygiene every six months.
+    @ViewBuilder
+    private func accountBackupSection(_ wallet: Wallet) -> some View {
+        if backupStatus.isPending(wallet.publicAddress) {
+            AccountBackupCard(hasFunds: (accountTotalSompi(wallet) ?? wallet.balanceSompi ?? 0) > 0) {
+                AccountBackupView.unlock { showAccountBackup = true }
+            }
+        } else if backupStatus.isHygieneDue(wallet.publicAddress) {
+            BackupHygieneCard { showBackupHygiene = true }
+        }
     }
 
     // MARK: - Manage Addresses card

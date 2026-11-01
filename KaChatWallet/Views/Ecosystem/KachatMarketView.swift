@@ -80,14 +80,28 @@ enum KachatTabIcon {
 ///
 /// On TESTNET (testnet-10, with the bundled registry manifest verified) it is live
 /// (`KachatNamesLiveViews.swift`): search shows real availability and the price, Claim registers,
-/// the tabs read the registry (`KachatNamesRegistry`), and registrations in flight show their
+/// the pages read the registry (`KachatNamesRegistry`), and registrations in flight show their
 /// progress.
+///
+/// The screen is the logo and a numbered card per page: Marketplace, Available, Expired, Activity.
+/// A card opens its page; only the Marketplace has the name search.
 struct KachatMarketView: View {
     /// Names for sale, names in their grace period (counting down to release), expired names
     /// anyone may claim, and everything that happens in the registry.
     /// Your own names (and the offers you made) live in Profile > Your Domains.
-    private enum Page: String, CaseIterable {
+    private enum Page: String, CaseIterable, Identifiable {
         case market, available, expired, activity
+
+        var id: String { rawValue }
+
+        var icon: String {
+            switch self {
+            case .market: return "tag"
+            case .available: return "checkmark.seal"
+            case .expired: return "hourglass"
+            case .activity: return "clock.arrow.circlepath"
+            }
+        }
 
         var title: String {
             switch self {
@@ -99,8 +113,6 @@ struct KachatMarketView: View {
         }
     }
 
-    @State private var page: Page = .market
-    @State private var searchText = ""
     @State private var showHowItWorks = false
     @StateObject private var live = KachatHubModel()
     @State private var claimTarget: KachatClaimTarget?
@@ -112,44 +124,17 @@ struct KachatMarketView: View {
             ScrollView {
                 VStack(spacing: 18) {
                     hero
-                    searchCard
                     // Registrations in flight: the claims button in the toolbar (KachatClaimsButton).
-                    UnderlineTabBar(
-                        tabs: Page.allCases.map { (tab: $0, title: $0.title) },
-                        selection: $page
-                    )
-                    // Live, or not launched here (mainnet): the same pages - empty on mainnet. The
-                    // placeholder pages remain only for a testnet registry that is setting up.
-                    if live.isLive || !KachatNamesService.isLaunched {
-                        switch page {
-                        case .market: KachatLiveMarketPage(model: live)
-                        case .expired: KachatLiveExpiredPage(model: live)
-                        case .available: KachatLiveAvailablePage(model: live)
-                        case .activity: KachatLiveActivityPage(model: live)
-                        }
-                    } else {
-                        switch page {
-                        case .market: marketPage
-                        case .expired: expiredPage
-                        case .available: availablePage
-                        case .activity: activityPage
-                        }
-                    }
+                    pageCards
                 }
                 .padding(.bottom, 28)
             }
-            // Swipe left / right anywhere on the screen to the next / previous tab. Simultaneous,
-            // so the vertical scroll keeps working.
-            .simultaneousGesture(pageSwipe())
             // Pull to refresh on testnet only; mainnet has nothing to refresh.
             .modifier(KachatRefreshable(enabled: live.isLive) { await live.refresh() })
             .task { await live.start() }
             .onReceive(KachatNamesRegistry.shared.$revision.dropFirst()) { _ in
                 guard live.isLive else { return }
                 Task { await live.reload() }
-            }
-            .sheet(item: $claimTarget) { target in
-                KachatClaimSheet(target: target)
             }
             .modifier(KachatNameRouteDestination(route: $nameRoute))
             // A notification that opened this screen fresh (a cold start, or .kachat not the open
@@ -185,21 +170,78 @@ struct KachatMarketView: View {
             }
             .sheet(isPresented: $showHowItWorks) { howItWorksSheet }
         }
+        // on the stack, so the Marketplace page it opens from can be pushed
+        .sheet(item: $claimTarget) { target in
+            KachatClaimSheet(target: target)
+        }
     }
 
-    /// Swipe between the tabs, as on the Chess screen.
-    private func pageSwipe() -> some Gesture {
-        DragGesture(minimumDistance: 25, coordinateSpace: .global)
-            .onEnded { value in
-                let dx = value.translation.width, dy = value.translation.height
-                guard abs(dx) > 50, abs(dx) > abs(dy) * 1.5 else { return }
-                let pages = Page.allCases
-                guard let index = pages.firstIndex(of: page) else { return }
-                withAnimation(.easeInOut(duration: 0.22)) {
-                    if dx < 0, index + 1 < pages.count { page = pages[index + 1] }
-                    else if dx > 0, index > 0 { page = pages[index - 1] }
+    // MARK: - Cards and pages
+
+    private var pageCards: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+            ForEach(Page.allCases) { page in
+                NavigationLink {
+                    pageScreen(page)
+                } label: {
+                    KachatHubCard(title: page.title, icon: page.icon, count: count(of: page))
                 }
+                .buttonStyle(.plain)
             }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    /// How many live on a page; nil until the registry has answered.
+    private func count(of page: Page) -> Int? {
+        guard live.isLive, live.loaded, live.loadError == nil else { return nil }
+        switch page {
+        case .market: return live.listings.count
+        case .available: return live.lapsed.count
+        case .expired: return live.grace.count
+        case .activity: return live.activity.count
+        }
+    }
+
+    private func pageScreen(_ page: Page) -> some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                if page == .market {
+                    KachatNameSearchCard(live: live) { claimTarget = $0 }
+                }
+                pageContent(page)
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+        }
+        .modifier(KachatRefreshable(enabled: live.isLive) { await live.refresh() })
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle(LocalizedStringKey(page.title))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) { KachatClaimsButton() }
+        }
+    }
+
+    /// Live, or not launched here (mainnet): the same pages - empty on mainnet. The placeholder
+    /// pages remain only for a testnet registry that is setting up.
+    @ViewBuilder
+    private func pageContent(_ page: Page) -> some View {
+        if live.isLive || !KachatNamesService.isLaunched {
+            switch page {
+            case .market: KachatLiveMarketPage(model: live)
+            case .expired: KachatLiveExpiredPage(model: live)
+            case .available: KachatLiveAvailablePage(model: live)
+            case .activity: KachatLiveActivityPage(model: live)
+            }
+        } else {
+            switch page {
+            case .market: marketPage
+            case .expired: expiredPage
+            case .available: availablePage
+            case .activity: activityPage
+            }
+        }
     }
 
     /// Opens the name a tapped notification pointed at (testnet only, where names are live).
@@ -218,7 +260,7 @@ struct KachatMarketView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { nameRoute = route }
     }
 
-    // MARK: - Hero and search
+    // MARK: - Hero
 
     private var hero: some View {
         VStack(spacing: 8) {
@@ -266,46 +308,6 @@ struct KachatMarketView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-    }
-
-    private var searchCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Find a name", text: $searchText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Text(".kachat")
-                    .font(.body.weight(.semibold))
-                    .foregroundColor(.secondary)
-            }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
-
-            let typed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !typed.isEmpty && live.isLive {
-                KachatLiveSearchResult(model: live, typed: typed) { claimTarget = $0 }
-            } else if !typed.isEmpty {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(typed).kachat")
-                            .font(.headline)
-                            .lineLimit(1)
-                        Text("Registration isn't open yet.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Button("Claim") {}
-                        .buttonStyle(.borderedProminent)
-                        .disabled(true)
-                }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
-            }
-        }
-        .padding(.horizontal, 16)
     }
 
     // MARK: - Marketplace
@@ -1123,5 +1125,88 @@ struct KachatAddressLiveNamesList: View {
         // an expired name past grace isn't theirs any more: it's available to anyone
         names = (try? await registry.heldNames(owner: key)) ?? []
         loaded = true
+    }
+}
+
+/// One page's card on the .kachat screen: what it is and how many live there.
+private struct KachatHubCard: View {
+    let title: String
+    let icon: String
+    /// nil until the registry has answered.
+    let count: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.title3.weight(.medium))
+                    .foregroundColor(.accentColor)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            Text(count.map { "\($0)" } ?? "-")
+                .font(.title.weight(.bold).monospacedDigit())
+                .foregroundColor(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(LocalizedStringKey(title))
+                .font(.subheadline.weight(.semibold))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .kachatGlass()
+        .contentShape(Rectangle())
+    }
+}
+
+/// The Marketplace's search: "Find a name", and whether it's free or taken.
+private struct KachatNameSearchCard: View {
+    @ObservedObject var live: KachatHubModel
+    let onClaim: (KachatClaimTarget) -> Void
+    @State private var searchText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField("Find a name", text: $searchText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Text(".kachat")
+                    .font(.body.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
+
+            let typed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !typed.isEmpty && live.isLive {
+                KachatLiveSearchResult(model: live, typed: typed) { onClaim($0) }
+            } else if !typed.isEmpty {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(typed).kachat")
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text("Registration isn't open yet.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("Claim") {}
+                        .buttonStyle(.borderedProminent)
+                        .disabled(true)
+                }
+                .padding(12)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
+            }
+        }
+        .padding(.horizontal, 16)
     }
 }

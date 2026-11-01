@@ -70,6 +70,12 @@ final class GlobalNotificationCenter: ObservableObject {
     private var entriesKey: String { "globalNotifCenter.entries.\(walletAddress)" }
     private var seenKey: String { "globalNotifCenter.seenAt.\(walletAddress)" }
 
+    /// Delete Account: one wallet's feed, from this device.
+    static func removeAllData(forWalletAddress walletAddress: String) {
+        UserDefaults.standard.removeObject(forKey: "globalNotifCenter.entries.\(walletAddress)")
+        UserDefaults.standard.removeObject(forKey: "globalNotifCenter.seenAt.\(walletAddress)")
+    }
+
     /// Call on account switch (and at init) to load the active wallet's feed.
     func reload() {
         if let data = UserDefaults.standard.data(forKey: entriesKey),

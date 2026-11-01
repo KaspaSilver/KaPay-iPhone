@@ -374,6 +374,90 @@ struct ConfirmActionSheet: View {
     }
 }
 
+/// The warning before an account is deleted, from Settings or the sign-in screen. Nothing can
+/// bring the account back without its seed phrase (and passphrase), so it says that first.
+struct DeleteAccountSheet: View {
+    /// What goes: the Delete row's second line.
+    let confirmSubtitle: String
+    /// Settings only: a signed-out account on the sign-in screen has no seed phrase open to show.
+    var onViewSeedPhrase: (() -> Void)? = nil
+    /// This account hasn't finished the backup steps: the warning says so. Deleting stays possible
+    /// (an empty account someone doesn't want shouldn't have to be backed up first).
+    var notBackedUp = false
+    /// Settings only: into the backup steps, in place of the seed phrase row.
+    var onBackUp: (() -> Void)? = nil
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.scaled(size: 34, weight: .semibold))
+                    .foregroundColor(.red)
+                    .padding(.top, 24)
+
+                Text("Delete Account")
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+
+                if notBackedUp {
+                    Text("This account isn't backed up. If you delete it now, it and its funds can never be recovered.")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                    if onBackUp == nil {
+                        Text("To back it up first, sign in to it and use the card on the Wallet tab.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+
+                Text("Make sure your seed phrase is backed up, and your passphrase too if you have one. They are the only way to recover this account and its funds.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 8)
+
+                if notBackedUp, let onBackUp {
+                    ActionSheetRow(
+                        title: "Back Up Account",
+                        subtitle: "Write down your seed phrase before you delete.",
+                        systemImage: "exclamationmark.shield",
+                        action: onBackUp
+                    )
+                } else if let onViewSeedPhrase {
+                    ActionSheetRow(
+                        title: "View Seed Phrase and Passphrase",
+                        subtitle: "The passphrase shows too, if this account has one.",
+                        systemImage: "key",
+                        action: onViewSeedPhrase
+                    )
+                }
+
+                ActionSheetRow(
+                    title: "Delete Account",
+                    subtitle: confirmSubtitle,
+                    systemImage: "trash",
+                    tint: .red
+                ) { dismiss(); onConfirm() }
+
+                ActionSheetRow(
+                    title: "Cancel",
+                    subtitle: "Leave everything as it is.",
+                    systemImage: "xmark"
+                ) { dismiss() }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
 // MARK: - Sent confirmation
 
 /// A completed Kaspa send, for `SentConfirmationSheet`. Identifiable on the txid so it can drive
