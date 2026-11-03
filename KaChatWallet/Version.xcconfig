@@ -6,10 +6,10 @@
 //
 // About and the sign-in screen show "<MARKETING_VERSION> (<build>)", or just the marketing
 // version once KACHAT_IS_RELEASE is YES for an App Store release (see AppVersion.display).
-KACHAT_BUILD_NUMBER = 6
+KACHAT_BUILD_NUMBER = 1
 KACHAT_IS_RELEASE = NO
-CURRENT_PROJECT_VERSION = 6
-MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+MARKETING_VERSION = 5.2.3
 
 // Apple Generic Versioning, so `agvtool` can set CURRENT_PROJECT_VERSION if a build script
 // ever needs to.
