@@ -38,12 +38,12 @@ struct PassphraseOptionView: View {
     /// Identity derivation family, so the previewed address matches what the import will actually
     /// produce for a seed coming from another wallet.
     var family: WalletSourceFamily = .kaspaStandard
+    /// Set on import: the preview looks for the address holding funds and writes the choice here.
+    var chattingAddressIndex: Binding<Int>?
     /// Performs the create/import commit with the chosen passphrase ("" = none). Throwing surfaces
     /// an inline error here and re-enables the buttons; on success the app router swaps onboarding
     /// for the main app, so this view is torn down automatically.
     let onProceed: (String) async throws -> Void
-
-    @EnvironmentObject private var walletManager: WalletManager
 
     @State private var step: Step = .question
     @State private var passphrase = ""
@@ -51,14 +51,6 @@ struct PassphraseOptionView: View {
     @State private var reveal = false
     @State private var isBusy = false
     @State private var error: String?
-    /// Address #0 for the passphrase as currently typed. Recomputed on a short debounce rather
-    /// than per keystroke: the derivation is PBKDF2 over 2048 rounds, which is quick but not free.
-    @State private var previewAddress: String?
-    @State private var previewTask: Task<Void, Never>?
-    /// What `previewAddress` holds: nil while looking it up, or when the lookup failed.
-    @State private var previewBalanceSompi: UInt64?
-    @State private var previewBalanceFailed = false
-
     var body: some View {
         Group {
             switch step {
@@ -179,7 +171,13 @@ struct PassphraseOptionView: View {
 
                 passphraseFields
 
-                addressPreview
+                PassphraseAddressPreview(
+                    words: seedWords,
+                    passphrase: passphrase,
+                    family: family,
+                    showsFundsHint: mode == .importExisting,
+                    selectedIndex: chattingAddressIndex
+                )
 
                 Button {
                     submitFromEntry()
@@ -216,8 +214,6 @@ struct PassphraseOptionView: View {
                 .disabled(isBusy)
             }
         }
-        .onChange(of: passphrase) { _ in schedulePreview() }
-        .onAppear { schedulePreview() }
     }
 
     private var passphraseFields: some View {
@@ -258,105 +254,6 @@ struct PassphraseOptionView: View {
                 .padding()
                 .background(Color(.systemGray6))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-            }
-        }
-    }
-
-    /// The whole reason this screen shows an address: a passphrase does not protect one account,
-    /// it opens a different one. Watching #0 change with every character is what makes that
-    /// concrete, and on import it is how someone confirms they typed the right thing before
-    /// committing to an account that would otherwise look simply empty.
-    private var addressPreview: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Your chatting address")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            // Every character, wrapped over as many lines as it takes. This is the one place the
-            // address has to be readable in full: truncating it would hide exactly the part that
-            // changes when the passphrase does, which is the whole reason it is on screen.
-            Text(previewAddress ?? "Checking...")
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundColor(previewAddress == nil ? .secondary : .primary)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-                .animation(.none, value: previewAddress)
-            previewBalanceRow
-            Text(passphrase.isEmpty
-                 ? "This is the account your seed phrase opens on its own."
-                 : "A different passphrase gives a different address, and a different account.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
-        .background(Color(.systemGray6))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .opacity(seedWords.isEmpty ? 0 : 1)
-    }
-
-    /// The balance is only the chatting address's: funds can also sit on the account's other
-    /// addresses, so an empty one suggests a wrong passphrase rather than proving it.
-    @ViewBuilder
-    private var previewBalanceRow: some View {
-        HStack(spacing: 6) {
-            Text("Balance")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            if let previewBalanceSompi {
-                Text(verbatim: KaspaUnit.amount(previewBalanceSompi))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundColor(previewBalanceSompi > 0 ? .green : .primary)
-            } else if previewBalanceFailed {
-                Text("Couldn't check")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            } else {
-                ProgressView()
-                    .scaleEffect(0.6)
-                    .frame(height: 14)
-            }
-        }
-        .padding(.top, 4)
-        if mode == .importExisting, let previewBalanceSompi {
-            Text(previewBalanceSompi > 0
-                 ? "This address holds funds, so this looks like the right account."
-                 : "No funds on this address. If you expected funds here, check your passphrase.")
-                .font(.caption)
-                .foregroundColor(previewBalanceSompi > 0 ? .green : .orange)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func schedulePreview() {
-        previewTask?.cancel()
-        guard !seedWords.isEmpty else { return }
-        let typed = passphrase
-        previewBalanceSompi = nil
-        previewBalanceFailed = false
-        previewTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard !Task.isCancelled else { return }
-            let address = walletManager.previewChattingAddress(
-                words: seedWords,
-                passphrase: typed,
-                family: family
-            )
-            previewAddress = address
-            guard let address else {
-                previewBalanceFailed = true
-                return
-            }
-            // a further pause, so only the passphrase someone stopped typing is looked up
-            try? await Task.sleep(nanoseconds: 450_000_000)
-            guard !Task.isCancelled else { return }
-            let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
-            guard !Task.isCancelled else { return }
-            if let utxos {
-                previewBalanceSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
-            } else {
-                previewBalanceFailed = true
             }
         }
     }
@@ -454,5 +351,191 @@ struct PassphraseOptionView: View {
     NavigationStack {
         PassphraseOptionView(mode: .create) { _ in }
             .environmentObject(WalletManager.shared)
+    }
+}
+
+/// The whole reason this screen shows an address: a passphrase does not protect one account,
+/// it opens a different one. Watching #0 change with every character is what makes that
+/// concrete, and on import it is how someone confirms they typed the right thing before
+/// committing to an account that would otherwise look simply empty.
+struct PassphraseAddressPreview: View {
+    @EnvironmentObject private var walletManager: WalletManager
+
+    let words: [String]
+    let passphrase: String
+    var chattingIndex: UInt32 = 0
+    let family: WalletSourceFamily
+    let showsFundsHint: Bool
+    /// Set when the chatting address isn't known yet: the preview checks the first addresses on
+    /// the identity chain, picks the first with funds, and lets the user pick another.
+    var selectedIndex: Binding<Int>?
+
+    /// The same depth as one page of the chatting address picker.
+    private static let searchDepth = 0..<50
+
+    @State private var foundAddresses: [FoundChattingAddress] = []
+    @State private var previewAddress: String?
+    @State private var previewTask: Task<Void, Never>?
+    /// What `previewAddress` holds: nil while looking it up, or when the lookup failed.
+    @State private var previewBalanceSompi: UInt64?
+    @State private var previewBalanceFailed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Your chatting address")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            // Every character, wrapped over as many lines as it takes. This is the one place the
+            // address has to be readable in full: truncating it would hide exactly the part that
+            // changes when the passphrase does, which is the whole reason it is on screen.
+            Text(previewAddress ?? "Checking...")
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundColor(previewAddress == nil ? .secondary : .primary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .animation(.none, value: previewAddress)
+            previewBalanceRow
+            if foundAddresses.count > 1 {
+                foundAddressRows
+            }
+            Text(passphrase.isEmpty
+                 ? "This is the account your seed phrase opens on its own."
+                 : "A different passphrase gives a different address, and a different account.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color(.systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .opacity(words.isEmpty ? 0 : 1)
+        .onChange(of: passphrase) { _ in schedulePreview() }
+        .onAppear { schedulePreview() }
+        .onDisappear { previewTask?.cancel() }
+    }
+
+    /// The balance is only the chatting address's: funds can also sit on the account's other
+    /// addresses, so an empty one suggests a wrong passphrase rather than proving it.
+    @ViewBuilder
+    private var previewBalanceRow: some View {
+        HStack(spacing: 6) {
+            Text("Balance")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            if let previewBalanceSompi {
+                Text(verbatim: KaspaUnit.amount(previewBalanceSompi))
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(previewBalanceSompi > 0 ? .green : .primary)
+            } else if previewBalanceFailed {
+                Text("Couldn't check")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            } else {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .frame(height: 14)
+            }
+        }
+        .padding(.top, 4)
+        if showsFundsHint, let previewBalanceSompi {
+            Text(previewBalanceSompi > 0
+                 ? "This address holds funds, so this looks like the right account."
+                 : "No funds on this address. If you expected funds here, check your passphrase.")
+                .font(.caption)
+                .foregroundColor(previewBalanceSompi > 0 ? .green : .orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var foundAddressRows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("We picked the first address with funds. Tap another if that's not the one you chat from.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(foundAddresses) { found in
+                Button {
+                    select(found)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: selectedIndex?.wrappedValue == found.index ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(.accentColor)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Address #\(found.index)")
+                                .font(.caption.weight(.semibold))
+                            Text(verbatim: "\(found.address.prefix(14))...\(found.address.suffix(6))")
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                        Text(verbatim: KaspaUnit.amount(found.balanceSompi))
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(found.balanceSompi > 0 ? .green : .secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func select(_ found: FoundChattingAddress) {
+        selectedIndex?.wrappedValue = found.index
+        previewAddress = found.address
+        previewBalanceSompi = found.balanceSompi
+    }
+
+    private func schedulePreview() {
+        previewTask?.cancel()
+        guard !words.isEmpty else { return }
+        let typed = passphrase
+        previewBalanceSompi = nil
+        previewBalanceFailed = false
+        foundAddresses = []
+        selectedIndex?.wrappedValue = 0
+        previewTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            let address = walletManager.previewChattingAddress(
+                words: words,
+                passphrase: typed,
+                chattingIndex: chattingIndex,
+                family: family
+            )
+            previewAddress = address
+            guard let address else {
+                previewBalanceFailed = true
+                return
+            }
+            // a further pause, so only the passphrase someone stopped typing is looked up
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            if selectedIndex != nil {
+                let found = await walletManager.findChattingAddresses(
+                    words: words,
+                    passphrase: typed,
+                    family: family,
+                    indices: Self.searchDepth
+                )
+                guard !Task.isCancelled else { return }
+                guard let found, let first = found.first(where: { $0.balanceSompi > 0 }) ?? found.first else {
+                    previewBalanceFailed = true
+                    return
+                }
+                foundAddresses = found
+                select(first)
+                return
+            }
+            let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
+            guard !Task.isCancelled else { return }
+            if let utxos {
+                previewBalanceSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
+            } else {
+                previewBalanceFailed = true
+            }
+        }
     }
 }

@@ -58,11 +58,25 @@ struct SavedAccountSummary: Identifiable, Equatable, Codable {
 ///   taggedHash("TapTweak", xOnlyPubkey) mod n. Address comes from the tweaked key.
 ///
 /// Raw values are persisted (UserDefaults, keyed per derived address) - do not rename cases.
+/// An address the import's passphrase step found on the identity chain.
+struct FoundChattingAddress: Identifiable, Equatable {
+    let index: Int
+    let address: String
+    let balanceSompi: UInt64
+
+    var id: Int { index }
+}
+
 enum WalletSourceFamily: String, Codable, CaseIterable {
     case kaspaStandard
     case kaspaLegacy972
     case chainge
     case oneKey
+
+    /// Chainge wallets have exactly one address.
+    var supportsIndexScan: Bool {
+        self != .chainge
+    }
 
     /// Human-readable base path, for the import chooser UI.
     var pathDescription: String {
@@ -408,7 +422,7 @@ final class WalletManager: ObservableObject {
     /// - Parameter passphrase: optional BIP39 passphrase the account was created with. Must match
     ///   exactly to restore the same account; a different (or empty) passphrase silently derives a
     ///   different, empty account. Pass "" for none.
-    func importWallet(from phrase: String, alias: String = "My Account", passphrase: String = "", family: WalletSourceFamily = .kaspaStandard) async throws -> Wallet {
+    func importWallet(from phrase: String, alias: String = "My Account", passphrase: String = "", chattingAddressIndex: Int = 0, family: WalletSourceFamily = .kaspaStandard) async throws -> Wallet {
         // Debug: count words
         let words = phrase.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -418,9 +432,9 @@ final class WalletManager: ObservableObject {
         guard let seedPhrase = SeedPhrase(phrase: phrase, passphrase: passphrase.isEmpty ? nil : passphrase) else {
             throw KasiaError.seedPhraseParsingFailed(wordCount: words.count)
         }
-        let wallet = try await importWallet(from: seedPhrase, alias: alias, family: family)
+        let wallet = try await importWallet(from: seedPhrase, alias: alias, chattingAddressIndex: chattingAddressIndex, family: family)
         // whoever typed the words has them
-        AccountBackupStatus.shared.markDone(wallet.publicAddress)
+        AccountBackupStatus.shared.markConfirmed(wallet.publicAddress)
         // A restored seed finds its spending addresses by itself - legacy and quantum, the same
         // sweep as Manage Addresses' Discover Addresses - so balances and change rotation are
         // right without anyone knowing to tap it (owner's call, 2026-10-21). Only this path: a
@@ -1447,6 +1461,34 @@ final class WalletManager: ObservableObject {
         guard let publicKeyData = try? deriveSchnorrPublicKey(from: privateKey) else { return nil }
         let network = SettingsViewModel.loadSettings().networkType
         return KaspaAddress.fromPublicKey(publicKeyData, network: network).address
+    }
+
+    /// For an import's passphrase step, before there's an account: address #0 plus every other
+    /// address on the identity chain holding funds, in index order. Nil when the words are invalid
+    /// or the balances couldn't be checked. Single-address families only ever yield index 0.
+    func findChattingAddresses(words: [String], passphrase: String, family: WalletSourceFamily, indices: Range<Int>) async -> [FoundChattingAddress]? {
+        let seedPhrase = SeedPhrase(words: words, passphrase: passphrase.isEmpty ? nil : passphrase)
+        guard var seed = bip39.mnemonicToSeed(seedPhrase.phrase, passphrase: seedPhrase.passphrase ?? "") else { return nil }
+        let baseNode = identityBaseNode(seed: seed, family: family)
+        seed.zeroOut()
+
+        var derived: [(index: Int, address: String)] = []
+        for index in indices {
+            guard family.supportsIndexScan || index == 0 else { break }
+            guard let address = chattingAddress(at: index, baseNode: baseNode, family: family) else { continue }
+            derived.append((index, address))
+        }
+        guard !derived.isEmpty,
+              let utxos = try? await NodePoolService.shared.getUtxosByAddresses(derived.map(\.address)) else { return nil }
+        var balanceByAddress: [String: UInt64] = [:]
+        for utxo in utxos {
+            balanceByAddress[utxo.address, default: 0] += utxo.amount
+        }
+        return derived.compactMap { entry in
+            let balance = balanceByAddress[entry.address] ?? 0
+            guard entry.index == 0 || balance > 0 else { return nil }
+            return FoundChattingAddress(index: entry.index, address: entry.address, balanceSompi: balance)
+        }
     }
 
     // MARK: - Storage

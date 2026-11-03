@@ -266,12 +266,16 @@ extension KaspaAddress {
 /// last 4 digits for easier reading; `KaChatIsRelease` = YES drops the parenthetical for the
 /// App Store build.
 enum AppVersion {
+    /// True for the App Store build, false through the beta cycle.
+    static var isRelease: Bool {
+        ((Bundle.main.infoDictionary?["KaChatIsRelease"] as? String) ?? "").uppercased() == "YES"
+    }
+
     static var display: String {
         let info = Bundle.main.infoDictionary
         let version = (info?["CFBundleShortVersionString"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !version.isEmpty else { return "Unknown" }
-        let isRelease = ((info?["KaChatIsRelease"] as? String) ?? "").uppercased() == "YES"
         let fullBuild = (info?["CFBundleVersion"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let build = String(fullBuild.suffix(4))

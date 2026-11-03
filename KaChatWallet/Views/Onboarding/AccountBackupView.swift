@@ -78,6 +78,7 @@ struct AccountBackupView: View {
     @State private var checkIndexes: [Int] = []
     @State private var answers: [Int: String] = [:]
     @State private var wrongIndexes: Set<Int> = []
+    @FocusState private var focusedWord: Int?
     @State private var passphraseAnswer = ""
     @State private var revealPassphraseAnswer = false
     @State private var passphraseWrong = false
@@ -326,32 +327,41 @@ struct AccountBackupView: View {
         go(to: passphrase != nil ? .passphrase : .tips)
     }
 
+    private func wordBorderColor(for index: Int) -> Color {
+        if wrongIndexes.contains(index) { return .red }
+        return focusedWord == index ? .accentColor : Color.secondary.opacity(0.5)
+    }
+
     private var wordCheckStep: some View {
         screen(
             buttonTitle: "Check My Words",
             buttonEnabled: checkIndexes.allSatisfy { !normalized(answers[$0] ?? "").isEmpty },
             action: checkWords
         ) {
-            heading("Check your paper", "Enter these words from what you wrote down, to be sure your copy is right.")
+            heading("Check your paper", "Tap each box and type that word from what you wrote down, to be sure your copy is right.")
             ForEach(checkIndexes, id: \.self) { index in
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Word \(index + 1)")
                         .font(.footnote.weight(.semibold))
                         .foregroundColor(.secondary)
-                    TextField("", text: Binding(
+                    TextField("Type word \(index + 1) here", text: Binding(
                         get: { answers[index] ?? "" },
                         set: { answers[index] = $0; wrongIndexes.remove(index) }
                     ))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.asciiCapable)
+                    .focused($focusedWord, equals: index)
                     .padding(12)
                     .background(Color(.systemGray6))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
-                            .stroke(wrongIndexes.contains(index) ? Color.red : Color.clear, lineWidth: 1.5)
+                            .stroke(wordBorderColor(for: index), lineWidth: 1.5)
                     )
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    // The whole box takes the tap, not just the text inside its padding.
+                    .contentShape(RoundedRectangle(cornerRadius: 10))
+                    .onTapGesture { focusedWord = index }
                 }
             }
             if !wrongIndexes.isEmpty {

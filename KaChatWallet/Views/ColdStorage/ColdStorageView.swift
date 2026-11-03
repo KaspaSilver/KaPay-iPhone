@@ -519,6 +519,7 @@ struct ColdStorageDetailView: View {
             ColdSendFlowView(fromAddress: entry.address, availableBalanceSompi: entry.balanceSompi) {
                 Task { await loadEntries() }
             }
+            .sendKaspaSheetSizing()
         }
         .alert(
             "Rename Address",
@@ -2235,6 +2236,7 @@ struct ColdStorageAddressTransactionHistoryView: View {
                     await loadUtxos()
                 }
             }
+            .sendKaspaSheetSizing()
         }
         .sheet(isPresented: $showCompoundSheet) {
             ColdSendFlowView(fromAddress: entry.address, availableBalanceSompi: entry.balanceSompi, isCompoundMode: true) {
@@ -2243,6 +2245,7 @@ struct ColdStorageAddressTransactionHistoryView: View {
                     await loadUtxos()
                 }
             }
+            .sendKaspaSheetSizing()
         }
         .sheet(item: $renamingUtxo) { utxo in
             RenameSheet(

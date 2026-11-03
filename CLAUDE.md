@@ -45,14 +45,30 @@ passphrase and its check if there is one, where to keep them) are finished, the 
 `AccountBackupCard` above Manage Addresses (red once the account holds funds), Receive shows a
 reminder and the Delete Account warning leads with Back Up Account; deleting is never blocked. The
 steps never offer a copy; Settings > View Seed Phrase does. Imported and older accounts are never
-owed one. Finishing the steps starts a six-month timer (`AccountBackupStatus`); when it runs out
-the Wallet tab shows `BackupHygieneCard` in the same place, and `BackupHygieneView` asks for five
+owed one. Finishing the steps or importing starts a six-month timer (`AccountBackupStatus`); when
+it runs out the Wallet tab shows `BackupHygieneCard` in the same place, and `BackupHygieneView` asks for five
 random words in random order on `SeedPhraseKeyboardView`, then the passphrase if the account has
 one. Passing, or Can't Complete This and the backup steps again, starts the timer over; closing
-leaves the card up. The passphrase entry screen shows the chatting address and its balance as you type, so
-someone importing can tell they typed the right one. Every sign-in gets new tabs (`ContentView`'s
+leaves the card up. The passphrase entry screen (`PassphraseAddressPreview`) shows the chatting address and its
+balance as you type, so someone importing can tell they typed the right one. On import it checks
+the first 50 identity addresses, picks the first with funds, lists any others to choose from, and
+imports onto the chosen one (`WalletManager.findChattingAddresses`). Every sign-in gets new tabs (`ContentView`'s
 `signInSession`, the `MainTabView` id, bumped on sign-out), opening on Wallet; without it SwiftUI
 brought the last account's tabs back, on Settings and with no onAppear.
+
+**NFC card backup** (`Services/NFCCard.swift`, beta only: `NFCCard.isAvailable`, hidden once
+`KACHAT_IS_RELEASE` is YES and where NFC can't read): an extra copy of the words of a seed phrase
+the user already has, on a Java Card loaded with
+[KaChat-NFC](https://github.com/KaspaSilver/KaChat-NFC) through Kaspa Quick Start's NFC Card page.
+Not cold storage: the card never generates or uses a key. The card commands and backup format are
+that repo's `docs/PROTOCOL.md`, shared across apps; change them there first. Settings > Back Up to
+NFC Card (`NFCCardBackupView`, behind the seed phrase's biometric gate) only exists for an account
+with a passphrase, which is what protects it: it's never written to the card. The Import chooser's
+Restore from NFC Card (`NFCCardRestoreView`) reads with the 6-digit PIN, asks for the passphrase and
+checks it against the saved chatting address. Saving to a card never clears the backup card. Before
+an App Store submission without this feature, remove the NFC entitlement in
+`KaChatWallet.entitlements` and `KaChatWalletRelease.entitlements` and the NFC keys in `Info.plist`.
+The App ID needs Near Field Communication Tag Reading on.
 
 The sign-in screen says "KaPay" with the wallet logo and no tagline. The rename kept every identifier
 (bundle ID, keychain group, URL scheme, folder and target names `KaChatWallet`): only what people

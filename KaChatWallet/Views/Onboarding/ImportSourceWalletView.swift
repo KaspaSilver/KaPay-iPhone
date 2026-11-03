@@ -36,6 +36,7 @@ struct ImportSourceWalletView: View {
 
     @State private var selectedOptionId: String = ImportSourceWalletView.options[0].id
     @State private var continueToSeedEntry = false
+    @State private var showNFCCardRestore = false
 
     private var selectedFamily: WalletSourceFamily {
         Self.options.first(where: { $0.id == selectedOptionId })?.family ?? .kaspaStandard
@@ -83,10 +84,28 @@ struct ImportSourceWalletView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             }
             .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+
+            #if canImport(CoreNFC) && !targetEnvironment(macCatalyst)
+            if NFCCard.isAvailable {
+                Button {
+                    showNFCCardRestore = true
+                } label: {
+                    Label("Restore from NFC Card", systemImage: "wave.3.right")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .padding(.top, 4)
+            }
+            #endif
+
+            Spacer().frame(height: 12)
         }
         .navigationTitle("Import Account")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $showNFCCardRestore) {
+            #if canImport(CoreNFC) && !targetEnvironment(macCatalyst)
+            NFCCardRestoreView()
+            #endif
+        }
         .navigationDestination(isPresented: $continueToSeedEntry) {
             ImportNameStep(sourceFamily: selectedFamily)
         }

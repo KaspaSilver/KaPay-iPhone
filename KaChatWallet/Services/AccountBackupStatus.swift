@@ -2,12 +2,12 @@ import Foundation
 
 /// Which accounts on this device still owe the backup steps (`AccountBackupView`). An account
 /// created here starts with it owed, since nobody has seen its seed phrase yet; an imported one
-/// never does, since whoever typed the words has them. Kept for an account's addresses on both
+/// never does, since whoever imported it has its seed. Kept for an account's addresses on both
 /// networks, so a switch to testnet doesn't lose or bring back the card.
 ///
-/// Finishing the backup steps also starts a timer: six months later the Backup Hygiene card asks
-/// for a few of the words again (`BackupHygieneView`), and passing that or redoing the backup
-/// starts it over. An account that never did the backup steps has no timer.
+/// Finishing the backup steps or importing the account also starts a timer: six months later the
+/// Backup Hygiene card asks for a few of the words again (`BackupHygieneView`), and passing that or
+/// redoing the backup starts it over. An account that has done neither has no timer.
 @MainActor
 final class AccountBackupStatus: ObservableObject {
     static let shared = AccountBackupStatus()
@@ -25,7 +25,7 @@ final class AccountBackupStatus: ObservableObject {
         confirmedAt = (UserDefaults.standard.dictionary(forKey: Self.confirmedKey) as? [String: Double]) ?? [:]
     }
 
-    /// Six months since this account's backup was last finished or checked.
+    /// Six months since this account was imported, or its backup last finished or checked.
     func isHygieneDue(_ address: String?, now: Date = Date()) -> Bool {
         guard let address, !isPending(address), let stamp = confirmedAt[address],
               let due = Calendar.current.date(byAdding: .month, value: Self.hygieneMonths,
@@ -33,8 +33,8 @@ final class AccountBackupStatus: ObservableObject {
         return now >= due
     }
 
-    /// The backup steps were finished or the words checked: nothing is owed, and the six months
-    /// start over.
+    /// The account was imported, the backup steps finished or the words checked: nothing is owed,
+    /// and the six months start over.
     func markConfirmed(_ address: String) {
         markDone(address)
         let now = Date().timeIntervalSince1970
