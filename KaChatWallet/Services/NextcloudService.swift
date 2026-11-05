@@ -1082,11 +1082,14 @@ final class NextcloudService: ObservableObject {
         var names: [UUID: String] = [:]
         for portfolio in portfolios.sorted(by: { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }) {
             let trimmed = portfolio.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let base = sanitizedFilename(String(trimmed.prefix(60)), keepSpaces: true)
-            var candidate = "\(trimmed.isEmpty ? "Portfolio" : base).json"
+            var base = trimmed.isEmpty ? "Portfolio" : sanitizedFilename(String(trimmed.prefix(60)), keepSpaces: true)
+            // A name no number can make allowed ("KaPay Contacts …") uses "Portfolio", as KaChat
+            // Desktop does, so both apps give it the same file.
+            if !isPortfolioNameAllowed("\(base) 2.json") { base = "Portfolio" }
+            var candidate = "\(base).json"
             var number = 2
             while used.contains(candidate.lowercased()) || !isPortfolioNameAllowed(candidate) {
-                candidate = "\(trimmed.isEmpty ? "Portfolio" : base) \(number).json"
+                candidate = "\(base) \(number).json"
                 number += 1
             }
             used.insert(candidate.lowercased())
