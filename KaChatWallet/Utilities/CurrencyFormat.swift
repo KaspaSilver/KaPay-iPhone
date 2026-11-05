@@ -13,12 +13,12 @@ func currencySymbol(for currency: AppCurrency) -> String {
     return formatter.currencySymbol ?? currency.code
 }
 
-/// Generic fiat total - symbol + 2 decimals, for a read-only display label (e.g. a live
+/// Generic fiat total - symbol + 2 decimals unless asked for more, for a read-only display label (e.g. a live
 /// KAS-to-fiat conversion next to a Max button). Not meant to be parsed back - see
 /// `KaspaFiatAmountState`, which keeps its own plain (no symbol) edit buffer for that.
-func formatFiatAmount(_ value: Double, currency: AppCurrency) -> String {
+func formatFiatAmount(_ value: Double, currency: AppCurrency, decimals: Int = 2) -> String {
     let sign = value < 0 ? "-" : ""
-    return "\(sign)\(currencySymbol(for: currency))\(String(format: "%.2f", abs(value)))"
+    return "\(sign)\(currencySymbol(for: currency))\(String(format: "%.\(decimals)f", abs(value)))"
 }
 
 /// Trimmed 8-decimal KAS amount (e.g. "12.5" rather than "12.50000000").

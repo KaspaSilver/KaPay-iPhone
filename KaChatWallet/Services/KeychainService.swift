@@ -46,6 +46,9 @@ final class KeychainService {
 
     private init() {}
 
+    private let seedTighteningLock = NSLock()
+    private var tightenedSeedItems: Set<String> = []
+
     // MARK: - Device Identifier
 
     /// Returns a stable device identifier derived from the Secure Enclave public key hash.
@@ -428,7 +431,26 @@ final class KeychainService {
             wrapped = data
         }
 
-        try saveSensitiveDataRaw(wrapped, keyName: keyName)
+        try saveSensitiveDataRaw(wrapped, keyName: keyName, accessible: Self.accessibility(for: baseKey))
+    }
+
+    /// The words and passphrase are readable only while the phone is unlocked: nothing that runs in
+    /// the background needs them. The other keys stay readable after the first unlock, since push
+    /// sign-in uses the private key while the phone is locked.
+    private static func accessibility(for baseKey: KeychainKey) -> CFString {
+        baseKey == .seedPhrase ? kSecAttrAccessibleWhenUnlockedThisDeviceOnly : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+    }
+
+    /// Moves a words item saved before that rule onto it, once per launch. Failing changes nothing.
+    private func tightenSeedItem(keyName: String) {
+        seedTighteningLock.lock()
+        let isNew = tightenedSeedItems.insert(keyName).inserted
+        seedTighteningLock.unlock()
+        guard isNew else { return }
+        let update = [kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly] as CFDictionary
+        for includeAccessGroup in [true, false] {
+            SecItemUpdate(genericPasswordQueryForKey(keyName, includeAccessGroup: includeAccessGroup) as CFDictionary, update)
+        }
     }
 
     /// Loads sensitive data from device-specific storage, unwrapping if needed
@@ -439,6 +461,7 @@ final class KeychainService {
         guard let data = try loadSensitiveDataRaw(keyName: keyName) else {
             return nil
         }
+        if baseKey == .seedPhrase { tightenSeedItem(keyName: keyName) }
 
         if data.starts(with: secureEnclaveHeader) {
             return try unwrapPrivateKey(data)
@@ -464,7 +487,29 @@ final class KeychainService {
             wrapped = data
         }
 
-        try saveSensitiveDataRaw(wrapped, keyName: keyName)
+        try saveSensitiveDataRaw(wrapped, keyName: keyName, accessible: Self.accessibility(for: baseKey))
+    }
+
+    /// The accounts with saved keys on this device, read from the Keychain itself: after an app
+    /// reinstall, the list of saved accounts is gone and these are not.
+    func accountSnapshotAddresses() -> [String] {
+        guard let deviceId = try? deviceIdentifier() else { return [] }
+        let prefix = "\(KeychainKey.seedPhrase.rawValue).\(deviceId)."
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return [] }
+        return items.compactMap { item in
+            guard let account = item[kSecAttrAccount as String] as? String, account.hasPrefix(prefix) else { return nil }
+            // accountScopedKeyName stores "kaspa:" as "kaspa_"
+            return String(account.dropFirst(prefix.count)).replacingOccurrences(of: "_", with: ":")
+        }
     }
 
     private func loadSensitiveDataForAccount(baseKey: KeychainKey, publicAddress: String) throws -> Data? {
@@ -472,6 +517,7 @@ final class KeychainService {
         guard let data = try loadSensitiveDataRaw(keyName: keyName) else {
             return nil
         }
+        if baseKey == .seedPhrase { tightenSeedItem(keyName: keyName) }
         if data.starts(with: secureEnclaveHeader) {
             return try unwrapPrivateKey(data)
         }
@@ -491,13 +537,13 @@ final class KeychainService {
     }
 
     /// Low-level save for device-specific data (no sync, device-only access)
-    private func saveSensitiveDataRaw(_ data: Data, keyName: String) throws {
+    private func saveSensitiveDataRaw(_ data: Data, keyName: String, accessible: CFString = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly) throws {
         var query = genericPasswordQueryForKey(keyName, includeAccessGroup: true)
 
         SecItemDelete(query as CFDictionary)
 
         query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        query[kSecAttrAccessible as String] = accessible
         query[kSecAttrSynchronizable as String] = kCFBooleanFalse
 
         let status = SecItemAdd(query as CFDictionary, nil)
@@ -506,7 +552,7 @@ final class KeychainService {
             var fallbackQuery = genericPasswordQueryForKey(keyName, includeAccessGroup: false)
             SecItemDelete(fallbackQuery as CFDictionary)
             fallbackQuery[kSecValueData as String] = data
-            fallbackQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            fallbackQuery[kSecAttrAccessible as String] = accessible
             fallbackQuery[kSecAttrSynchronizable as String] = kCFBooleanFalse
 
             let fallbackStatus = SecItemAdd(fallbackQuery as CFDictionary, nil)

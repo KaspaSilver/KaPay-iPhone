@@ -438,6 +438,8 @@ final class NameServicesClient: ObservableObject {
         do {
             switch try await registry.lookup(canonical) {
             case .registered(let n) where n.status(graceMs: registry.graceMs) != .lapsed:
+                guard n.name == canonical else { throw KachatNames.Failure("the indexer answered for another name") }
+                try await registry.confirmOnChain(n)
                 return NameResolution(tld: .kachat, display: display, address: KachatNamesRegistry.address(of: n.owner), failed: false)
             default:
                 return NameResolution(tld: .kachat, display: display, address: nil, failed: false)

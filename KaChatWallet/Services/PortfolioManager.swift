@@ -136,7 +136,7 @@ final class PortfolioManager: ObservableObject {
         )
         PortfolioLedgerStore.savePortfolios(portfolios, walletAddress: activeWalletAddress)
         savedPortfolios = portfolios
-        NextcloudService.shared.noteBackupDataChanged()
+        NextcloudService.shared.notePortfolioChanged()
     }
 
     /// Re-reads this wallet's list after a Nextcloud restore wrote a merged one.

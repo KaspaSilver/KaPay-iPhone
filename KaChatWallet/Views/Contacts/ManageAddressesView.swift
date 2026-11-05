@@ -92,6 +92,13 @@ struct ManageAddressesView: View {
             .refreshable {
                 await loadEntries()
             }
+            // Room to scroll the last row out from under the floating button.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: 72)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            addressActionsButton
         }
         .navigationTitle("Manage Addresses")
         .navigationBarTitleDisplayMode(.inline)
@@ -405,9 +412,6 @@ struct ManageAddressesView: View {
         (walletManager.currentWallet?.balanceSompi ?? 0) + entries.reduce(0) { $0 + $1.balanceSompi }
     }
 
-    /// Total, then the actions button - directly under it rather than pinned to the bottom of
-    /// the screen. The actions are about this account, so they belong with the account, and a
-    /// floating bar covered the last address row on a short list. Same shape as Cold Storage.
     private var accountSummary: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
@@ -418,31 +422,40 @@ struct ManageAddressesView: View {
                     .font(.title2)
                     .fontWeight(.bold)
             }
-
-            Button {
-                Haptics.impact(.light)
-                showAddressActions = true
-            } label: {
-                Group {
-                    if isGenerating || isDiscovering || isConsolidating {
-                        ProgressView().tint(.black)
-                    } else {
-                        Text("Address Actions")
-                            .font(.subheadline)
-                            .fontWeight(.bold)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .foregroundColor(.black)
-                .background(Capsule().fill(Color.accentColor))
-            }
-            .buttonStyle(.plain)
-            .disabled(isGenerating || isDiscovering || isConsolidating)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
+    }
+
+    /// The floating glass button behind "Address Actions", like the Wallet tab's send / receive one.
+    private var addressActionsButton: some View {
+        Button {
+            Haptics.impact(.light)
+            showAddressActions = true
+        } label: {
+            Group {
+                if isGenerating || isDiscovering || isConsolidating {
+                    ProgressView()
+                } else {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.scaled(size: 22, weight: .semibold))
+                        .foregroundColor(.accentColor)
+                }
+            }
+            .frame(width: 56, height: 56)
+            .background(
+                Circle()
+                    .fill(.regularMaterial)
+                    .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 0.8))
+                    .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 5)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isGenerating || isDiscovering || isConsolidating)
+        .padding(.trailing, 20)
+        .padding(.bottom, 16)
+        .accessibilityLabel(Text("Address Actions"))
     }
 
     /// The half sheet behind "Address Actions".
@@ -852,7 +865,7 @@ struct ManageAddressesView: View {
             // showToast auto-dismisses on the standard timer and replaces (never stacks or
             // extends) any toast a rapid earlier press put up. The old direct assignment
             // here never scheduled a dismissal, so the success toast lingered indefinitely.
-            showToast("Address #\(WalletManager.isQuantumIndex(index) ? index - WalletManager.quantumIndexBase : index) is ready.")
+            showToast("Address #\(WalletManager.addressNumber(forIndex: index)) is ready.")
             Task { await loadEntries() }
         }
     }
@@ -886,6 +899,7 @@ struct ManageAddressesView: View {
             let discovered = await walletManager.discoverSpendingAddresses { progress in
                 discoveryProgress = progress
             }
+            await HotWalletBalance.shared.refresh(force: true)
             await loadEntries()
             isDiscovering = false
             discoveryProgress = nil
@@ -1272,6 +1286,10 @@ struct SpendingAddressWithdrawView: View {
 
     @State private var feeTier: WithdrawFeeTier = .normal
     @State private var normalFeeSompi: UInt64?
+    /// Change too small to keep, which goes to the fee (`SendFeeEstimate`).
+    @State private var foldedChangeSompi: UInt64 = 0
+    /// The fee a send with a higher fee will really pay, once estimated.
+    @State private var tippedFeeSompi: UInt64?
     @State private var isEstimatingFee = false
     @State private var customExtraFeeSompi: UInt64?
     @State private var isEditingFee = false
@@ -1304,7 +1322,8 @@ struct SpendingAddressWithdrawView: View {
 
     private var totalFeeSompi: UInt64? {
         guard let normalFeeSompi else { return nil }
-        return normalFeeSompi + extraFeeSompi
+        if extraFeeSompi > 0, let tippedFeeSompi { return tippedFeeSompi }
+        return SendFeeEstimate(networkFee: normalFeeSompi, foldedChange: foldedChangeSompi).total(extra: extraFeeSompi)
     }
 
     private var feeEstimationKey: String {
@@ -1352,7 +1371,7 @@ struct SpendingAddressWithdrawView: View {
     private var review: some View {
             SwipeUpToSendScrollView(
                 screenTitle: isCompoundMode ? "Compound UTXOs"
-                    : "Send Kaspa from Address #\(WalletManager.isQuantumIndex(source.index) ? source.index - WalletManager.quantumIndexBase : source.index)",
+                    : "Send Kaspa from Address #\(WalletManager.addressNumber(forIndex: source.index))",
                 onCancel: { dismiss() },
                 title: isCompoundMode ? "Swipe up to Consolidate" : "Swipe up to Send",
                 isBusy: isSending,
@@ -1467,6 +1486,17 @@ struct SpendingAddressWithdrawView: View {
                 // Compound sends everything: the amount is what's left after the fee
                 if isCompoundMode { setMaxAmount() }
             }
+            // A higher fee can leave too little change to keep, and then all of it goes to the fee: the
+            // total comes from an estimate made with that fee, what the send itself will do.
+            .task(id: "\(feeEstimationKey)|\(extraFeeSompi)") {
+                tippedFeeSompi = nil
+                guard extraFeeSompi > 0, !isCompoundMode, hasValidRecipient, let amountSompi else { return }
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled else { return }
+                let fee = try? await walletService.estimateSpendingAddressWithdrawalFee(index: source.index, toAddress: effectiveAddress, amountSompi: amountSompi, manualUtxos: manualUtxos, extraFeeSompi: extraFeeSompi)
+                guard !Task.isCancelled, let fee else { return }
+                tippedFeeSompi = fee.networkFee + fee.foldedChange
+            }
             .task(id: feeEstimationKey) {
                 guard hasValidRecipient, let amountSompi else {
                     normalFeeSompi = nil
@@ -1478,7 +1508,8 @@ struct SpendingAddressWithdrawView: View {
                 do {
                     let fee = try await walletService.estimateSpendingAddressWithdrawalFee(index: source.index, toAddress: effectiveAddress, amountSompi: amountSompi, manualUtxos: manualUtxos, availableUtxos: isCompoundMode ? preloadedUtxos : [])
                     guard !Task.isCancelled else { return }
-                    normalFeeSompi = fee
+                    normalFeeSompi = fee.networkFee
+                    foldedChangeSompi = fee.foldedChange
                 } catch {
                     guard !Task.isCancelled else { return }
                     normalFeeSompi = nil
@@ -2490,7 +2521,11 @@ private struct SpendingAddressVisibilityView: View {
     /// A square tile: the chain, and how many of its addresses Manage Addresses shows.
     private func chainCard(quantum: Bool) -> some View {
         let chain = entries.filter { $0.isQuantum == quantum }
-        let shown = chain.filter { !$0.hidden }.count
+        // The Chatting Address is the legacy list's always-shown #0.
+        let chattingRows = quantum ? 0 : 1
+        let shown = chain.filter { !$0.hidden }.count + chattingRows
+        // Hidden addresses count too: their Kaspa is still in the account's total.
+        let balance = chain.reduce(quantum ? 0 : walletManager.currentWallet?.balanceSompi ?? 0) { $0 + $1.balanceSompi }
         return NavigationLink {
             AddressVisibilityChainList(quantum: quantum, entries: $entries, isLoading: isLoading)
         } label: {
@@ -2511,9 +2546,14 @@ private struct SpendingAddressVisibilityView: View {
                         if isLoading {
                             ProgressView().controlSize(.small)
                         } else {
-                            Text("\(shown) of \(chain.count) shown")
+                            Text("\(shown) of \(chain.count + chattingRows) shown")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
+                            Text(verbatim: KaspaUnit.amount(balance))
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(balance > 0 ? .accentColor : .secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -2586,6 +2626,9 @@ private struct AddressVisibilityChainList: View {
                                 .foregroundColor(.secondary)
                                 .listRowSeparator(.hidden)
                         }
+                        if !quantum, page == 0, let wallet = walletManager.currentWallet {
+                            chattingRow(wallet)
+                        }
                         ForEach(pageEntries) { entry in
                             row(entry)
                         }
@@ -2638,7 +2681,7 @@ private struct AddressVisibilityChainList: View {
             }
             .disabled(page == 0)
             Spacer()
-            Text("#\(page * pageSize) - #\(page * pageSize + pageSize - 1)")
+            Text("#\(pagerRange.lowerBound) - #\(pagerRange.upperBound)")
                 .font(.subheadline.weight(.semibold))
                 .monospacedDigit()
             Spacer()
@@ -2655,6 +2698,46 @@ private struct AddressVisibilityChainList: View {
         .background(.thinMaterial)
     }
 
+    /// The numbers on the current page. The legacy chain's first page also holds #0, the
+    /// Chatting Address.
+    private var pagerRange: ClosedRange<Int> {
+        let first = (quantum ? WalletManager.quantumIndexBase : 0) + page * pageSize
+        let lower = !quantum && page == 0 ? 0 : WalletManager.addressNumber(forIndex: first)
+        return lower...WalletManager.addressNumber(forIndex: first + pageSize - 1)
+    }
+
+    /// #0: always shown on Manage Addresses, so it's checked and tapping it does nothing.
+    private func chattingRow(_ wallet: Wallet) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.scaled(size: 20))
+                .foregroundColor(.accentColor)
+                .opacity(0.45)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(verbatim: "#0")
+                        .font(.subheadline.weight(.bold))
+                        .monospacedDigit()
+                    Text("Chatting Address")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Text(verbatim: "\(wallet.publicAddress.prefix(16))…\(wallet.publicAddress.suffix(6))")
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            if let balance = wallet.balanceSompi, balance > 0 {
+                Text(verbatim: "\(String(format: "%.4f", Double(balance) / 100_000_000.0)) \(KaspaUnit.symbol)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundColor(.accentColor)
+            }
+        }
+        .listRowSeparatorTint(Color.secondary.opacity(0.2))
+    }
+
     private func row(_ entry: SpendingAddressEntry) -> some View {
         let funded = entry.balanceSompi > 0
         // Every row toggles both ways - funded ones too (Hide All starts the list over).
@@ -2669,7 +2752,7 @@ private struct AddressVisibilityChainList: View {
                 HStack(spacing: 6) {
                     // The chain-local number; the shield marks the quantum chain's rows apart
                     // from the legacy chain's same numbers.
-                    Text("#\(entry.isQuantum ? entry.index - WalletManager.quantumIndexBase : entry.index)")
+                    Text("#\(WalletManager.addressNumber(forIndex: entry.index))")
                         .font(.subheadline.weight(.bold))
                         .monospacedDigit()
                     if entry.isQuantum {

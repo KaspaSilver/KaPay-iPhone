@@ -31,9 +31,9 @@ struct ImportLengthStep: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Choose seed phrase length")
+                    Text("Choose 12 or 24 words")
                         .font(.title2.weight(.bold))
-                    Text("How many words is the seed phrase you're importing?")
+                    Text("How many words are you importing?")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                     SeedLengthButton(count: 12, title: "12 words", selection: $wordCount)
@@ -104,12 +104,12 @@ struct ImportWalletView: View {
             .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: ".)")) }
             .filter { !$0.isEmpty && !$0.allSatisfy(\.isNumber) }
         guard pasted.count == 12 || pasted.count == 24 else {
-            error = "A recovery phrase is 12 or 24 words - the clipboard holds \(pasted.count)."
+            error = "You need 12 or 24 words - the clipboard holds \(pasted.count)."
             return
         }
         let unknown = pasted.filter { !BIP39.shared.isValidWord($0) }
         guard unknown.isEmpty else {
-            error = "Not a recovery phrase word: \(unknown.prefix(3).joined(separator: ", "))."
+            error = "Not a valid word: \(unknown.prefix(3).joined(separator: ", "))."
             return
         }
         seedWordCount = pasted.count
@@ -124,7 +124,7 @@ struct ImportWalletView: View {
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text("Enter your recovery phrase")
+                Text("Enter your 12 or 24 words")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                 Spacer()
@@ -191,7 +191,7 @@ struct ImportWalletView: View {
     private func advanceToPassphrase() {
         guard canImport else { return }
         guard BIP39.shared.validateMnemonic(seedPhraseText) else {
-            error = "This recovery phrase is invalid. Double-check the words - the last word encodes a checksum, so one wrong word fails validation."
+            error = "These words are invalid. Double-check the words - the last word encodes a checksum, so one wrong word fails validation."
             return
         }
         showPassphraseStep = true

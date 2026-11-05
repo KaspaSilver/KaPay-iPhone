@@ -13,10 +13,9 @@ enum NFCCard {
     /// Also in Info.plist under `com.apple.developer.nfc.readersession.iso7816.select-identifiers`.
     static let appletAID = Data([0xF0, 0x4B, 0x41, 0x43, 0x48, 0x41, 0x54, 0x4E, 0x46, 0x43, 0x01])
 
-    /// Beta only until the owner decides who it's for, since everyone else would also need a card
-    /// loaded through Kaspa Quick Start. iPads and Macs can't read these cards over NFC.
+    /// iPads and Macs can't read these cards over NFC.
     static var isAvailable: Bool {
-        !AppVersion.isRelease && NFCTagReaderSession.readingAvailable
+        NFCTagReaderSession.readingAvailable
     }
 
     static let pinLength = 6
@@ -76,7 +75,7 @@ enum NFCCardError: LocalizedError {
                 ? "Wrong PIN. 1 try left before this card's PIN is blocked for good."
                 : "Wrong PIN. \(triesRemaining) tries left."
         case .pinBlocked:
-            return "This card's PIN is blocked after too many wrong tries, so any backup on it can no longer be read. Use your seed phrase instead."
+            return "This card's PIN is blocked after too many wrong tries, so any backup on it can no longer be read. Use your 12 or 24 words instead."
         case .noBackup:
             return "There's no backup on this card."
         case .noPIN:
@@ -94,7 +93,7 @@ enum NFCCardError: LocalizedError {
         case .saveNotConfirmed:
             return "The save couldn't be confirmed, so don't rely on this card. Try again."
         case .seedUnavailable:
-            return "This account's seed phrase couldn't be read on this device."
+            return "This account's 12 or 24 words couldn't be read on this device."
         case .cardFailed(let detail):
             return "The card reported a problem (\(detail)). Try again."
         }

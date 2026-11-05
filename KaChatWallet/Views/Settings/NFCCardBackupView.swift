@@ -36,7 +36,7 @@ struct NFCCardBackupView: View {
                     case .details: details
                     case .erase: erase
                     case .saved: finished(title: "Backup saved",
-                                          detail: "It was read back from the card and checked. To restore it, choose Import Existing Account, then Restore from NFC Card, and enter your PIN and passphrase. Your passphrase isn't on the card, so keep it and your written seed phrase safe.")
+                                          detail: "It was read back from the card and checked. To restore it, choose Import Existing Account, then Restore from NFC Card, and enter your PIN and passphrase. Your passphrase isn't on the card, so keep it and your written 12 or 24 words safe.")
                     case .erased: finished(title: "Backup erased",
                                            detail: pinCleared
                                                ? "The backup and PIN are gone from this card. The next backup on it will ask you to set a new PIN."
@@ -86,12 +86,12 @@ struct NFCCardBackupView: View {
         Group {
             Text("Back up to an NFC card")
                 .font(.title2.weight(.bold))
-            Text("Saves this account's seed phrase on your card, behind a 6-digit PIN.")
+            Text("Saves this account's 12 or 24 words on your card, behind a 6-digit PIN.")
                 .foregroundColor(.secondary)
             NFCCardNote(icon: "key.fill", tint: .accentColor,
                         text: "Your passphrase is never saved to the card. You'll enter it when you restore, and it's what keeps this account safe if someone gets past the PIN.")
             NFCCardNote(icon: "exclamationmark.triangle.fill", tint: .orange,
-                        text: "This isn't cold storage. The card only holds a copy and never creates keys, so keep your seed phrase and passphrase written down too.")
+                        text: "This isn't cold storage. The card only holds a copy and never creates keys, so keep your 12 or 24 words and passphrase written down too.")
             NFCCardNote(icon: "sdcard.fill", tint: .accentColor,
                         text: "Your card needs the KaChat-NFC software first. Load it from the NFC Card page in Kaspa Quick Start.")
             CreateWalletNextButton(title: "Scan Card", enabled: !busy, busy: busy) {

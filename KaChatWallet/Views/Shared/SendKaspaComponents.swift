@@ -834,8 +834,9 @@ struct SendFromCompactRow: View {
         .task(id: source) {
             availableSompi = nil
             guard let address = source.address else { return }
-            let utxos = (try? await NodePoolService.shared.getUtxosByAddresses([address])) ?? []
-            guard !Task.isCancelled else { return }
+            // A failed read says nothing about the balance: left unknown, not shown as 0.
+            let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
+            guard !Task.isCancelled, let utxos else { return }
             availableSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
         }
     }
@@ -1247,7 +1248,6 @@ struct SwipeUpLabels {
     var working: LocalizedStringKey = "Sending"
     var workingDetail: LocalizedStringKey = "Broadcasting to the Kaspa BlockDAG..."
     var done: LocalizedStringKey = "Sent"
-    var hint: LocalizedStringKey = "Let go past halfway to send."
     /// Before the recipient line: "to kaspa:..." or "for name.kachat".
     var recipientWord = "to"
     var failedFallback = "The send didn't go out."
@@ -1258,7 +1258,6 @@ struct SwipeUpLabels {
         working: "Buying",
         workingDetail: "Sending the purchase to the Kaspa BlockDAG...",
         done: "Name Bought",
-        hint: "Let go past halfway to buy.",
         recipientWord: "for",
         failedFallback: "The purchase didn't go out."
     )
@@ -1269,7 +1268,6 @@ struct SwipeUpLabels {
             working: "Sending",
             workingDetail: "Broadcasting to the Kaspa BlockDAG...",
             done: done,
-            hint: "Let go past halfway to confirm.",
             recipientWord: "for",
             failedFallback: "The transaction didn't go out."
         )
@@ -1279,7 +1277,6 @@ struct SwipeUpLabels {
         working: "Claiming",
         workingDetail: "Committing to the Kaspa BlockDAG...",
         done: "Claim Started",
-        hint: "Let go past halfway to claim.",
         recipientWord: "for",
         failedFallback: "The claim didn't start."
     )
@@ -1287,7 +1284,7 @@ struct SwipeUpLabels {
 
 /// A send screen's scroll view with "Swipe up to Send" pinned at the bottom. Press the bar and
 /// drag it up: the whole screen moves up with the finger, and the send screen rises from below
-/// in its place. Letting go past halfway up sends: the send screen takes over the full screen,
+/// in its place. Letting go about a third of the way up sends: the send screen takes over the full screen,
 /// a BlockDAG runs across it while the transaction goes out, and then it shows the
 /// confirmation (`sent`). Letting go sooner springs it back. A send that fails or never starts
 /// shows "Failed" there with the screen's error, and Try Again brings the form back as it was.
@@ -1317,6 +1314,8 @@ struct SwipeUpToSendScrollView<Content: View>: View {
     /// The screen's error for a send that failed, shown under "Failed".
     var failureMessage: String?
     var labels: SwipeUpLabels = .send
+    /// What the Face ID prompt says, when this screen does something other than send Kaspa.
+    var authReason: String? = nil
     /// For an action that ends without a `SentTransaction` (a .kachat claim): true once it
     /// worked, and `outcome` shows under the title in place of the transaction.
     var succeeded = false
@@ -1330,7 +1329,7 @@ struct SwipeUpToSendScrollView<Content: View>: View {
 
     /// How far the screen has been pushed up.
     @State private var lift: CGFloat = 0
-    /// Past halfway: letting go sends.
+    /// Past the threshold: letting go sends.
     @State private var armed = false
     @State private var phase: Phase = .form
     /// The DAG gets a moment on screen before the confirmation, however fast the send was.
@@ -1353,7 +1352,7 @@ struct SwipeUpToSendScrollView<Content: View>: View {
     var body: some View {
         GeometryReader { geometry in
             let height = geometry.size.height + geometry.safeAreaInsets.bottom
-            let threshold = max(160, height * 0.5)
+            let threshold = max(120, height * 0.3)
             ZStack(alignment: .top) {
                 form(threshold: threshold)
                     .offset(y: -lift)
@@ -1459,7 +1458,7 @@ struct SwipeUpToSendScrollView<Content: View>: View {
                 .onEnded { _ in
                     guard phase == .form else { return }
                     if armed && active {
-                        startSending()
+                        authenticateThenSend()
                     } else {
                         armed = false
                         withAnimation(Self.settle) { lift = 0 }
@@ -1474,8 +1473,21 @@ struct SwipeUpToSendScrollView<Content: View>: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
             guard active, phase == .form else { return }
-            startSending()
+            authenticateThenSend()
         }
+    }
+
+    /// Kaspa never leaves on the swipe alone: Face ID first, on every screen that swipes up.
+    /// Declined, the screen settles back with everything still filled in.
+    private func authenticateThenSend() {
+        DeviceAuth.authenticate(
+            reason: authReason ?? AppLocalization.string("Confirm sending Kaspa"),
+            onSuccess: { startSending() },
+            onFailure: {
+                armed = false
+                withAnimation(Self.settle) { lift = 0 }
+            }
+        )
     }
 
     private func startSending() {
@@ -1548,6 +1560,9 @@ private struct SendProgressScreen: View {
     /// Sent or failed: the DAG steps back and the outcome takes over.
     private var finished: Bool { done || failure != nil }
 
+    /// It may have gone through, so there's nothing to try again.
+    private var outcomeUnknown: Bool { failure == SendOutcomeUnknownError.message }
+
     private var explorerURL: URL? {
         sent.flatMap { AppSettings.load().kaspaExplorer.txURL(for: $0.txId) }
     }
@@ -1572,6 +1587,11 @@ private struct SendProgressScreen: View {
                         .font(.scaled(size: 72, weight: .semibold))
                         .foregroundStyle(.black, Color.accentColor)
                         .transition(.scale(scale: 0.4).combined(with: .opacity))
+                } else if outcomeUnknown {
+                    Image(systemName: "questionmark.circle.fill")
+                        .font(.scaled(size: 72, weight: .semibold))
+                        .foregroundStyle(.black, Color.orange)
+                        .transition(.scale(scale: 0.4).combined(with: .opacity))
                 } else if failure != nil {
                     Image(systemName: "xmark.circle.fill")
                         .font(.scaled(size: 72, weight: .semibold))
@@ -1581,7 +1601,7 @@ private struct SendProgressScreen: View {
             }
 
             VStack(spacing: 6) {
-                Text(done ? labels.done : failure != nil ? "Failed"
+                Text(done ? labels.done : outcomeUnknown ? "Not confirmed" : failure != nil ? "Failed"
                      : (isSending ? labels.working : (armed ? labels.release : "Keep Swiping")))
                     .font(.largeTitle.weight(.bold))
                 if let amount = sent?.amountSompi ?? amountSompi {
@@ -1597,8 +1617,9 @@ private struct SendProgressScreen: View {
                         .truncationMode(.middle)
                         .padding(.horizontal, 32)
                 }
-                if !finished {
-                    Text(isSending ? labels.workingDetail : labels.hint)
+                // Before that, the title above already says Keep Swiping or Release.
+                if !finished && isSending {
+                    Text(labels.workingDetail)
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .padding(.top, 8)
@@ -1614,7 +1635,7 @@ private struct SendProgressScreen: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                 }
                 .font(.subheadline)
-                .foregroundColor(.red)
+                .foregroundColor(outcomeUnknown ? .orange : .red)
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(sendKaspaGlass(cornerRadius: 14))
@@ -1669,7 +1690,7 @@ private struct SendProgressScreen: View {
 
             Spacer(minLength: 0)
 
-            if done {
+            if done || outcomeUnknown {
                 Button(action: onDone) {
                     Text("Done")
                         .font(.headline)
@@ -1912,8 +1933,9 @@ struct SendFromSection: View {
         .task(id: source) {
             availableSompi = nil
             guard let address = source.address else { return }
-            let utxos = (try? await NodePoolService.shared.getUtxosByAddresses([address])) ?? []
-            guard !Task.isCancelled else { return }
+            // A failed read says nothing about the balance: left unknown, not shown as 0.
+            let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
+            guard !Task.isCancelled, let utxos else { return }
             availableSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
         }
     }

@@ -1801,9 +1801,10 @@ struct KachatTxSheet<Inputs: View>: View {
             sent: txId.map { SentTransaction(txId: $0, amountSompi: spentSompi, recipient: swipe.recipient) },
             failureMessage: sendError,
             labels: swipe.labels,
+            authReason: authReason,
             outcome: txId.map { AnyView(KachatTxStageSteps(txId: $0)) },
             onDone: { dismiss() },
-            action: { authorize() }
+            action: { startSend() }
         ) {
             form
         }
@@ -1981,16 +1982,12 @@ struct KachatTxSheet<Inputs: View>: View {
         building = false
     }
 
-    private func authorize() {
-        // busy at once: the swipe-up's screen is already sending through the device check
+    /// The swipe-up has already asked for Face ID.
+    private func startSend() {
+        // busy at once: the swipe-up's screen is already sending
         sending = true
         sendError = nil
-        DeviceAuth.authenticate(reason: authReason) {
-            Task { @MainActor in await send() }
-        } onFailure: {
-            sendError = AppLocalization.string("Not confirmed on this device, so nothing was sent.")
-            sending = false
-        }
+        Task { @MainActor in await send() }
     }
 
     private func send() async {
@@ -2267,10 +2264,11 @@ struct KachatClaimSheet: View {
             sent: nil,
             failureMessage: startError,
             labels: .claim,
+            authReason: KachatLive.authReason,
             succeeded: progressId != nil,
             outcome: progressId.map { AnyView(KachatClaimOutcome(registrationId: $0)) },
             onDone: { dismiss() },
-            action: authorizeAndStart
+            action: startClaim
         ) {
             VStack(spacing: 16) {
                 if let notOpen {
@@ -2417,15 +2415,11 @@ struct KachatClaimSheet: View {
 
     /// The swipe let go: busy at once (the swipe screen is already sending), then the device
     /// check, then the commit.
-    private func authorizeAndStart() {
+    /// The swipe-up has already asked for Face ID.
+    private func startClaim() {
         starting = true
         startError = nil
-        DeviceAuth.authenticate(reason: KachatLive.authReason) {
-            Task { @MainActor in await start() }
-        } onFailure: {
-            startError = AppLocalization.string("Not confirmed on this device, so nothing was sent.")
-            starting = false
-        }
+        Task { @MainActor in await start() }
     }
 
     private func start() async {
@@ -4254,6 +4248,8 @@ struct KachatYearsText: View {
 @MainActor
 enum KachatDeepLink {
     static var pendingName: String?
+    /// `kapay://market`: open the Marketplace page.
+    static var pendingMarketplace = false
 }
 
 /// This wallet's .kachat names that have expired and sit in their grace period, for Profile's

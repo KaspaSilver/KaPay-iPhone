@@ -11,7 +11,6 @@ struct KaChatApp: App {
     @StateObject private var pushManager = PushNotificationManager.shared
     /// The blur over the app in the App Switcher and behind system prompts: balances and the
     /// seed screen used to sit in iOS's snapshot of the app in plain view.
-    @State private var showPrivacyCover = false
     @State private var lastActiveResyncAt: Date?
     @State private var hasCompletedFirstActiveTransition = false
     @Environment(\.scenePhase) private var scenePhase
@@ -37,13 +36,6 @@ struct KaChatApp: App {
                 .environmentObject(walletService)
                 .environmentObject(settingsViewModel)
                 .environmentObject(pushManager)
-                .overlay {
-                    if showPrivacyCover {
-                        PrivacyCoverView()
-                            .transition(.opacity)
-                    }
-                }
-                .animation(.easeOut(duration: 0.15), value: showPrivacyCover)
                 .onAppear {
                     WalletService.shared.settingsViewModel = settingsViewModel
                     applyWindowAppearanceOverride()
@@ -106,10 +98,15 @@ struct KaChatApp: App {
         }
     }
 
+    @MainActor
     private func handleScenePhaseChange(to newPhase: ScenePhase) {
         // Covered the moment the app stops being the thing in front (the switcher, a system
         // prompt, a call), uncovered when it is again.
-        showPrivacyCover = newPhase != .active
+        if newPhase == .active {
+            PrivacyCoverWindow.hide()
+        } else {
+            PrivacyCoverWindow.show()
+        }
         switch newPhase {
         case .background:
             if settingsViewModel.settings.backgroundFetchEnabled {
@@ -175,7 +172,9 @@ struct KaChatApp: App {
     /// A payment request link (`kachat://pay/...` or `https://kachat.app/pay/...`) opens Send
     /// Kaspa with it filled in. Nothing else is routed.
     private func handleIncomingURL(_ url: URL) {
-        if let link = KaChatInternalLink.parse(url) {
+        if KaChatInternalLink.isMarketLink(url) {
+            KaChatLinkRouter.openMarketplace()
+        } else if let link = KaChatInternalLink.parse(url) {
             KaChatLinkRouter.open(link)
         }
     }
@@ -187,6 +186,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
     /// orientation. This overrides the Info.plist keys.
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         UIDevice.current.userInterfaceIdiom == .pad ? .all : .portrait
+    }
+
+    /// No third-party keyboards anywhere in the app: the passphrase and the card PIN are typed on the
+    /// system keyboard, so a keyboard with Full Access never sees them. They're offered the system's.
+    func application(_ application: UIApplication, shouldAllowExtensionPointIdentifier extensionPointIdentifier: UIApplication.ExtensionPointIdentifier) -> Bool {
+        extensionPointIdentifier != .keyboard
     }
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
@@ -413,6 +418,15 @@ enum OwnAddressRoute {
 /// The single place an already-validated `KaChatInternalLink` becomes navigation.
 enum KaChatLinkRouter {
 
+    /// The .kachat Marketplace page. The pending routes survive a cold start and sign-in, where
+    /// the post below has no observer yet.
+    @MainActor
+    static func openMarketplace() {
+        KachatDeepLink.pendingMarketplace = true
+        PendingTabRoute.pending = .kachatNames
+        NotificationCenter.default.post(name: .openKachatName, object: nil)
+    }
+
     @MainActor
     static func open(_ link: KaChatInternalLink) {
         switch link {
@@ -442,6 +456,30 @@ extension Notification.Name {
     static let openOwnAddress = Notification.Name("openOwnAddress")
 }
 
+/// Puts `PrivacyCoverView` in a window of its own above the app. An overlay on the root view sat
+/// underneath presented sheets, which is where the 12 or 24 words and private keys are shown.
+@MainActor
+private enum PrivacyCoverWindow {
+    private static var window: UIWindow?
+
+    static func show() {
+        guard window == nil,
+              let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        let cover = UIWindow(windowScene: scene)
+        cover.windowLevel = .alert + 1
+        // the app's appearance (Settings' choice), which its own windows carry
+        cover.overrideUserInterfaceStyle = scene.windows.first?.overrideUserInterfaceStyle ?? .unspecified
+        cover.rootViewController = UIHostingController(rootView: PrivacyCoverView())
+        cover.isHidden = false
+        window = cover
+    }
+
+    static func hide() {
+        window?.isHidden = true
+        window = nil
+    }
+}
+
 /// What the App Switcher and a system prompt see instead of the app's contents.
 private struct PrivacyCoverView: View {
     /// The app's appearance (Settings' choice, or the system's): the logo follows it.
@@ -449,7 +487,8 @@ private struct PrivacyCoverView: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(.ultraThinMaterial)
+            // Solid: large words can still be read through a light blur.
+            Color(.systemBackground)
             // The wallet's own logo, rounded like its app icon: the dark-mode icon (near-black
             // tile, `tools/make_logo.py ... dark`) when the app is dark, the white one otherwise.
             Image(colorScheme == .dark ? "KaChatWalletLogoDark" : "KaChatWalletLogo")

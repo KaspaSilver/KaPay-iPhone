@@ -622,11 +622,17 @@ final class NodePoolService: ObservableObject {
     /// answer times out, and the node raced against it then rejects the same transaction
     /// ("already in the mempool", orphan, double spend). Reporting that as a failure invites a
     /// resend that pays twice. So before throwing, the transaction's own id (computed locally) is
-    /// looked up: found in a mempool or accepted, the send succeeded.
+    /// looked up: found in a mempool or accepted, the send succeeded. If a node may have received it
+    /// and never answered, the look-up goes on for longer, and a transaction still not found ends in
+    /// `SendOutcomeUnknownError` rather than a failure: it may yet land.
     func submitTransaction(_ transaction: KaspaRpcTransaction, allowOrphan: Bool = false) async throws -> (txId: String, endpoint: String) {
         do {
-            return try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: allowOrphan)
+            let sent = try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: allowOrphan)
+            return try await checkedSubmit(sent, rpcTransaction: transaction.toProtobuf(), expectedTxId: KasiaTransactionBuilder.computeTransactionId(transaction))
+        } catch let unknown as SendOutcomeUnknownError {
+            throw unknown
         } catch {
+            var answerLost = error is SubmitAnswerLostError
             // "Orphan where orphan is disallowed": its inputs came from a node that already has
             // their parent transaction (the UTXO query), but the node this submit reached hasn't
             // caught up yet - a reaction or message sent right after the previous one. Give the
@@ -634,10 +640,23 @@ final class NodePoolService: ObservableObject {
             // orphan until the parent arrives.
             if !allowOrphan, Self.isOrphanRejection(error) {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
-                if let sent = try? await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: false) { return sent }
-                if let sent = try? await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: true) {
+                let expectedTxId = KasiaTransactionBuilder.computeTransactionId(transaction)
+                do {
+                    let sent = try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: false)
+                    return try await checkedSubmit(sent, rpcTransaction: transaction.toProtobuf(), expectedTxId: expectedTxId)
+                } catch let unknown as SendOutcomeUnknownError {
+                    throw unknown
+                } catch {
+                    answerLost = answerLost || error is SubmitAnswerLostError
+                }
+                do {
+                    let sent = try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: true)
                     AppLog.log("[NodePool] %@ submitted as an orphan: its parent hadn't reached that node yet", String(sent.txId.prefix(12)))
-                    return sent
+                    return try await checkedSubmit(sent, rpcTransaction: transaction.toProtobuf(), expectedTxId: expectedTxId)
+                } catch let unknown as SendOutcomeUnknownError {
+                    throw unknown
+                } catch {
+                    answerLost = answerLost || error is SubmitAnswerLostError
                 }
             }
             let txId = KasiaTransactionBuilder.computeTransactionId(transaction)
@@ -646,6 +665,7 @@ final class NodePoolService: ObservableObject {
                            String(txId.prefix(12)), error.localizedDescription)
                 return (txId: txId, endpoint: "already-known")
             }
+            if answerLost { return try await confirmAfterLostAnswer(txId: txId) }
             throw error
         }
     }
@@ -655,15 +675,56 @@ final class NodePoolService: ObservableObject {
     /// For the version-1 builders (`.kachat`), whose transactions aren't `KaspaRpcTransaction`s.
     func submitRpcTransaction(_ rpcTransaction: Protowire_RpcTransaction, expectedTxId: String) async throws -> (txId: String, endpoint: String) {
         do {
-            return try await submitRpcTransaction(rpcTransaction)
+            let sent = try await submitRpcTransaction(rpcTransaction)
+            return try await checkedSubmit(sent, rpcTransaction: rpcTransaction, expectedTxId: expectedTxId)
+        } catch let unknown as SendOutcomeUnknownError {
+            throw unknown
         } catch {
             if await isTransactionKnown(txId: expectedTxId) {
                 AppLog.log("[NodePool] submit of %@ reported \"%@\" but the network has it: treated as sent",
                            String(expectedTxId.prefix(12)), error.localizedDescription)
                 return (txId: expectedTxId, endpoint: "already-known")
             }
+            if error is SubmitAnswerLostError { return try await confirmAfterLostAnswer(txId: expectedTxId) }
             throw error
         }
+    }
+
+    /// A node may have the transaction and its answer never came, so a resend could pay twice. Asks
+    /// the network for longer than `isTransactionKnown` does, for one that's still on its way.
+    private func confirmAfterLostAnswer(txId: String) async throws -> (txId: String, endpoint: String) {
+        for attempt in 0..<6 {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if await getMempoolEntry(txId: txId, attempt: attempt + 2) != nil { return (txId: txId, endpoint: "already-known") }
+            if await Self.isAcceptedViaREST(txId: txId) { return (txId: txId, endpoint: "already-known") }
+        }
+        AppLog.log("[NodePool] submit of %@ got no answer and the network doesn't have it yet: outcome unknown", String(txId.prefix(12)))
+        throw SendOutcomeUnknownError(txId: txId)
+    }
+
+    /// Nodes are unauthenticated, so a "sent" answer is only a claim. The id has to be the one this
+    /// device computed: any other answer is treated as no answer. Then, in the background, a
+    /// transaction the network can't see a moment later goes out again, in case the node that
+    /// answered kept it to itself. It's the same transaction, so sending it again can't pay twice.
+    private func checkedSubmit(
+        _ sent: (txId: String, endpoint: String),
+        rpcTransaction: Protowire_RpcTransaction,
+        expectedTxId: String
+    ) async throws -> (txId: String, endpoint: String) {
+        guard sent.txId.lowercased() == expectedTxId.lowercased() else {
+            AppLog.log("[NodePool] %@ answered a submit with a different id than %@", sent.endpoint, String(expectedTxId.prefix(12)))
+            if await isTransactionKnown(txId: expectedTxId) { return (txId: expectedTxId, endpoint: "already-known") }
+            return try await confirmAfterLostAnswer(txId: expectedTxId)
+        }
+        Task { [weak self] in
+            for _ in 0..<2 {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, await !self.isTransactionKnown(txId: expectedTxId) else { return }
+                AppLog.log("[NodePool] The network can't see %@ yet: sending it again", String(expectedTxId.prefix(12)))
+                _ = try? await self.submitRpcTransaction(rpcTransaction)
+            }
+        }
+        return sent
     }
 
     private static func isOrphanRejection(_ error: Error) -> Bool {
@@ -695,6 +756,18 @@ final class NodePoolService: ObservableObject {
     /// Submit an already-converted transaction. The version-1 (Toccata) builders fill
     /// `computeBudget`, `covenant` and `storageMass` themselves (`KachatNamesService`).
     func submitRpcTransaction(_ rpcTransaction: Protowire_RpcTransaction, allowOrphan: Bool = false) async throws -> (txId: String, endpoint: String) {
+        let answerLost = SubmitAnswerLostFlag()
+        do {
+            return try await hedgedSubmit(rpcTransaction, allowOrphan: allowOrphan, answerLost: answerLost)
+        } catch {
+            if answerLost.isSet { throw SubmitAnswerLostError(underlying: error) }
+            throw error
+        }
+    }
+
+    /// `answerLost` is set only around the request itself: a node that couldn't be connected to
+    /// never saw the transaction, and one that rejected it has answered.
+    private func hedgedSubmit(_ rpcTransaction: Protowire_RpcTransaction, allowOrphan: Bool, answerLost: SubmitAnswerLostFlag) async throws -> (txId: String, endpoint: String) {
         try await executeHedged(op: .submitTransaction) { conn in
             var msg = Protowire_KaspadMessage()
             var req = Protowire_SubmitTransactionRequestMessage()
@@ -702,7 +775,13 @@ final class NodePoolService: ObservableObject {
             req.allowOrphan = allowOrphan
             msg.submitTransactionRequest = req
 
-            let response = try await conn.sendRequest(msg, type: .submitTransaction, timeout: 15.0)
+            let response: Protowire_KaspadMessage
+            do {
+                response = try await conn.sendRequest(msg, type: .submitTransaction, timeout: 15.0)
+            } catch {
+                answerLost.set()
+                throw error
+            }
 
             guard case .submitTransactionResponse(let txResponse) = response.payload else {
                 throw KasiaError.networkError("Unexpected response")
@@ -714,6 +793,20 @@ final class NodePoolService: ObservableObject {
 
             return (txId: txResponse.transactionID, endpoint: conn.endpoint.key)
         }
+    }
+
+    /// A submit reached a node and no answer came back. Says what the underlying error says, since
+    /// callers read those messages.
+    private struct SubmitAnswerLostError: LocalizedError {
+        let underlying: Error
+        var errorDescription: String? { underlying.localizedDescription }
+    }
+
+    private final class SubmitAnswerLostFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool { lock.withLock { value } }
+        func set() { lock.withLock { value = true } }
     }
 
     /// A node answered a submit by rejecting the TRANSACTION (bad fee, spent input, orphan,

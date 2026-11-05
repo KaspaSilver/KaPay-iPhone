@@ -93,7 +93,9 @@ struct OnboardingView: View {
                         confirmSubtitle: "Deletes \(account.displayAlias) (\(account.shortPublicAddress)) and its local data from this device.",
                         notBackedUp: AccountBackupStatus.shared.isPending(account.publicAddress)
                     ) {
-                        removeSavedAccount(account)
+                        DeviceAuth.authenticate(reason: AppLocalization.string("Confirm deleting this account")) {
+                            removeSavedAccount(account)
+                        }
                     }
                 }
             }
@@ -433,7 +435,7 @@ struct OnboardingView: View {
     }
 }
 
-/// "Recovery Phrase Needed" for one saved account: shown when signing in to an account whose
+/// "12 or 24 Words Needed" for one saved account: shown when signing in to an account whose
 /// keys are not on this phone (after an iPhone restore - keys are locked to the phone they were
 /// made on, only the active account gets the full-screen WalletRecoveryView). Explains what
 /// happened and leads straight into Enter Recovery Phrase.
@@ -450,10 +452,10 @@ private struct AccountKeysNeededSheet: View {
                 .font(.scaled(size: 44, weight: .semibold))
                 .foregroundColor(.accentColor)
                 .padding(.top, 28)
-            Text("Recovery Phrase Needed")
+            Text("12 or 24 Words Needed")
                 .font(.title3.weight(.bold))
                 .multilineTextAlignment(.center)
-            Text(String(format: AppLocalization.string("%@ is on this iPhone, but its keys are not. That happens after restoring from a backup, because keys are locked to the phone they were made on. Enter the account's recovery phrase to sign in. Its history on this phone is kept."), account.displayAlias))
+            Text(String(format: AppLocalization.string("%@ is on this iPhone, but its keys are not. That happens after restoring from a backup, because keys are locked to the phone they were made on. Enter the account's 12 or 24 words to sign in. Its history on this phone is kept."), account.displayAlias))
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -476,7 +478,7 @@ private struct AccountKeysNeededSheet: View {
                 Button {
                     onEnterPhrase()
                 } label: {
-                    Text("Enter Recovery Phrase")
+                    Text("Enter 12 or 24 Words")
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)

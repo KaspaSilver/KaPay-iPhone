@@ -80,8 +80,7 @@ struct ColdStorageListView: View {
             .padding(.horizontal)
             .padding(.bottom, 16)
         }
-        .navigationTitle("Cold Storage")
-        .navigationBarTitleDisplayMode(.large)
+        .pinnedTabHeader("Cold Storage")
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 ConnectionStatusIndicator()

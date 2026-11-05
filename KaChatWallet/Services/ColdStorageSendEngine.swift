@@ -412,7 +412,9 @@ final class ColdStorageSendEngine {
     static func fetchQuotedFeeRateSompiPerGram() async -> UInt64 {
         let minimum = KaspaFeePolicy.minimumRelayFeePerGramSompi
         guard let decoded = await fetchFeeEstimateResponse() else { return minimum }
-        guard let quoted = decoded.normalBuckets.first?.feerate else { return minimum }
+        // One server answering NaN, infinity or 1e30 is ignored rather than paid (IOS-061).
+        guard let quoted = decoded.normalBuckets.first?.feerate,
+              quoted.isFinite, quoted >= 0, quoted <= KachatNames.maxFeerate else { return minimum }
         return max(UInt64(quoted.rounded(.up)), minimum)
     }
 

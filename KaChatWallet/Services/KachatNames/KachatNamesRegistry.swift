@@ -339,6 +339,17 @@ final class KachatNamesRegistry: ObservableObject {
 
     // MARK: - Reads
 
+    /// An indexer's answer is only a claim. Before a payment trusts it, the chain has to hold the name
+    /// record it describes: the script commits to the name and its owner, and carries the registry's
+    /// covenant id, so an indexer can't point a name at another address. Throws if it doesn't. A
+    /// record read from the chain itself needs no second look.
+    func confirmOnChain(_ n: KachatNames.NameInfo) async throws {
+        guard case .indexer? = source else { return }
+        guard let fields = n.fields else { throw KachatNames.Failure("the indexer's record can't be checked") }
+        let m = try await service.loadManifest()
+        _ = try await service.liveRegistryUtxo(script: m.name.script(fields.encoded), outpoint: n.outpoint)
+    }
+
     func lookup(_ raw: String) async throws -> KachatNames.Lookup {
         try await prepare()
         let name = KachatNames.Codec.normalize(raw)

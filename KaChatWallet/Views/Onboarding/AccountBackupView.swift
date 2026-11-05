@@ -1,53 +1,109 @@
 import SwiftUI
 import UIKit
 
-/// The Wallet tab's card above Manage Addresses while an account isn't backed up. It stays until
-/// the backup steps are finished, and turns red once the account holds funds.
-struct AccountBackupCard: View {
-    let hasFunds: Bool
-    let action: () -> Void
+/// The strip under the balance on every main screen while an account isn't backed up. It stays
+/// until the backup steps are finished, and turns red once the account holds funds.
+struct AccountBackupBanner: View {
+    @ObservedObject private var walletManager = WalletManager.shared
+    @ObservedObject private var backupStatus = AccountBackupStatus.shared
+    @State private var showBackup = false
+    /// Funds on a spending address count too: Receive hands those out.
+    @State private var spendingHoldsFunds = false
 
+    private var hasFunds: Bool { (walletManager.currentWallet?.balanceSompi ?? 0) > 0 || spendingHoldsFunds }
     private var tint: Color { hasFunds ? .red : .orange }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: "exclamationmark.shield.fill")
-                    .font(.scaled(size: 22, weight: .medium))
-                    .foregroundColor(tint)
-                    .frame(width: 48, height: 48)
-                    .background(Circle().fill(tint.opacity(0.15)))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Backup Your Account To Prevent Loss Of Funds")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.leading)
-                    Text(hasFunds
-                         ? "You now have funds that aren't backed up."
-                         : "If you lose this phone, your seed phrase is the only way back.")
-                        .font(.caption)
-                        .foregroundColor(hasFunds ? .red : .secondary)
-                        .multilineTextAlignment(.leading)
+        if backupStatus.isPending(walletManager.currentWallet?.publicAddress) {
+            Button {
+                AccountBackupView.unlock { showBackup = true }
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(.scaled(size: 18, weight: .medium))
+                        .foregroundColor(tint)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Backup Your Account To Prevent Loss Of Funds")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundColor(.primary)
+                            .multilineTextAlignment(.leading)
+                        Text(hasFunds
+                             ? "You now have funds that aren't backed up."
+                             : "If you lose this phone, your 12 or 24 words are the only way back.")
+                            .font(.caption2)
+                            .foregroundColor(hasFunds ? .red : .secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundColor(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(tint.opacity(0.12))
+                // solid under the tint: the screen scrolls behind this strip
+                .background(Color(.systemBackground))
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(tint.opacity(0.1))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(tint.opacity(0.5), lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 18))
-            .contentShape(RoundedRectangle(cornerRadius: 18))
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showBackup) {
+                AccountBackupView()
+                    .environmentObject(walletManager)
+            }
+            .task(id: walletManager.currentWallet?.publicAddress) { await loadSpendingFunds() }
+            .onReceive(NotificationCenter.default.publisher(for: .ownAddressUtxoActivity)) { _ in
+                Task { await loadSpendingFunds() }
+            }
         }
-        .buttonStyle(.plain)
+    }
+
+    private func loadSpendingFunds() async {
+        let all = walletManager.allSpendingAddresses()
+        guard !all.isEmpty else {
+            spendingHoldsFunds = false
+            return
+        }
+        // A failed read keeps what it last knew.
+        if let utxos = try? await NodePoolService.shared.getUtxosByAddresses(all) {
+            spendingHoldsFunds = utxos.contains { $0.amount > 0 }
+        }
+    }
+}
+
+extension View {
+    /// `AccountBackupBanner` under the navigation bar of one of the main tabs.
+    func accountBackupBanner() -> some View {
+        safeAreaInset(edge: .top, spacing: 0) { AccountBackupBanner() }
+    }
+
+    /// A main tab's title drawn above its list, with `AccountBackupBanner` just above it. A system
+    /// large title sat behind the strip. The bar runs inline, and the tab's principal item keeps it
+    /// from showing the title a second time.
+    func pinnedTabHeader(_ title: LocalizedStringKey) -> some View {
+        safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                AccountBackupBanner()
+                Text(title)
+                    .font(.largeTitle.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 2)
+                    .padding(.bottom, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color(.systemGroupedBackground))
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 /// Backing up an account's seed phrase and passphrase, in plain steps: why, getting ready, the
 /// words a few at a time, proving they were written down, then where to keep them. Words are
-/// written by hand: this flow never offers a copy (Settings > View Seed Phrase does).
+/// written by hand: this flow never offers a copy (Settings > Back Up Account > View 12 or 24 Words does).
 struct AccountBackupView: View {
     private enum Step: Int, CaseIterable {
         case why, prepare, words, wordCheck, passphrase, passphraseCheck, tips
@@ -59,7 +115,7 @@ struct AccountBackupView: View {
     /// Opens the steps behind the seed phrase's biometric gate, when enabled.
     static func unlock(_ show: @escaping () -> Void) {
         if AppSettings.load().biometricSeedPhraseEnabled {
-            DeviceAuth.authenticate(reason: "Unlock to view your seed phrase", onSuccess: show)
+            DeviceAuth.authenticate(reason: "Unlock to view your 12 or 24 words", onSuccess: show)
         } else {
             show()
         }
@@ -102,7 +158,7 @@ struct AccountBackupView: View {
                 if seedPhrase != nil {
                     stepContent
                 } else if loadFailed {
-                    Text("This account's seed phrase isn't available on this phone.")
+                    Text("This account's 12 or 24 words aren't available on this phone.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -133,7 +189,7 @@ struct AccountBackupView: View {
         .alert("Delete That Screenshot", isPresented: $showScreenshotWarning) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("A screenshot of your seed phrase can end up online. Delete it from your photos and write the words on paper instead.")
+            Text("A screenshot of your 12 or 24 words can end up online. Delete it from your photos and write the words on paper instead.")
         }
     }
 
@@ -229,7 +285,7 @@ struct AccountBackupView: View {
     private var whyStep: some View {
         screen(buttonTitle: "Start Backup", action: { go(to: .prepare) }) {
             heading("Protect your funds")
-            point("key.fill", "Your seed phrase is your account",
+            point("key.fill", "Your 12 or 24 words are your account",
                   "These secret words are created just for you. They are the master key to your funds.")
             point("iphone.slash", "Your phone can't be your only copy",
                   "If you lose, break or replace this phone, these words are the only way back to your account.")
@@ -238,7 +294,7 @@ struct AccountBackupView: View {
             NavigationLink {
                 SeedPhraseExplainerPage()
             } label: {
-                Label("What is a seed phrase?", systemImage: "questionmark.circle")
+                Label("What are my 12 or 24 words?", systemImage: "questionmark.circle")
                     .font(.subheadline.weight(.semibold))
             }
         }
@@ -248,7 +304,7 @@ struct AccountBackupView: View {
 
     private var prepareStep: some View {
         screen(
-            buttonTitle: "Show My Seed Phrase",
+            buttonTitle: "Show My 12 or 24 Words",
             buttonEnabled: hasPenAndPaper && isPrivate && noPhotos,
             action: { wordPage = 0; go(to: .words) }
         ) {
@@ -383,7 +439,7 @@ struct AccountBackupView: View {
     private var passphraseStep: some View {
         screen(buttonTitle: "I Wrote It Down", action: { passphraseAnswer = ""; passphraseWrong = false; go(to: .passphraseCheck) }) {
             heading("Write down your passphrase",
-                    "This account also needs its passphrase. Your seed phrase alone won't bring it back. Write it exactly, including capital letters and spaces.")
+                    "This account also needs its passphrase. Your 12 or 24 words alone won't bring it back. Write it exactly, including capital letters and spaces.")
             SecureView {
                 Text(verbatim: passphrase ?? "")
                     .font(.system(.title3, design: .monospaced).weight(.semibold))
@@ -451,10 +507,10 @@ struct AccountBackupView: View {
                   "Nobody needs your words. KaPay and real support will never ask for them. Anyone who asks is trying to take your funds.")
             if passphrase != nil {
                 point("square.split.2x1.fill", "Keep your passphrase apart",
-                      "Store it away from your seed phrase. You need both, and losing either one loses the account.")
+                      "Store it away from your 12 or 24 words. You need both, and losing either one loses the account.")
             }
             point("gearshape.fill", "You can see it again",
-                  "Your seed phrase stays available in Settings > View Seed Phrase.")
+                  "Your 12 or 24 words stay available in Settings > Back Up Account.")
         }
     }
 
@@ -589,7 +645,7 @@ struct BackupHygieneView: View {
             Text("Let's ensure your account is backed up in case you lose access to your phone.")
                 .font(.subheadline.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Enter these \(asked.count) words from your seed phrase. Each box shows the word's number.")
+            Text("Enter these \(asked.count) of your 12 or 24 words. Each box shows the word's number.")
                 .font(.footnote)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -620,7 +676,7 @@ struct BackupHygieneView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Now enter your passphrase")
                     .font(.subheadline.weight(.semibold))
-                Text("Your seed phrase alone won't bring this account back. Enter the passphrase from what you wrote down, exactly, including capital letters and spaces.")
+                Text("Your 12 or 24 words alone won't bring this account back. Enter the passphrase from what you wrote down, exactly, including capital letters and spaces.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

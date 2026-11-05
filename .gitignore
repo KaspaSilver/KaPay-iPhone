@@ -41,3 +41,10 @@ external/*
 
 # The local build counter (the "Local Build Number" script phase): per machine, never shared.
 KaChatWallet/.local-build-number
+
+# Signing material and local secrets: never in git
+*.p8
+*.p12
+*.mobileprovision
+.env
+.env.*

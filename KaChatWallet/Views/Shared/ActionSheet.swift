@@ -415,7 +415,7 @@ struct DeleteAccountSheet: View {
                     }
                 }
 
-                Text("Make sure your seed phrase is backed up, and your passphrase too if you have one. They are the only way to recover this account and its funds.")
+                Text("Make sure your 12 or 24 words are backed up, and your passphrase too if you have one. They are the only way to recover this account and its funds.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -424,13 +424,13 @@ struct DeleteAccountSheet: View {
                 if notBackedUp, let onBackUp {
                     ActionSheetRow(
                         title: "Back Up Account",
-                        subtitle: "Write down your seed phrase before you delete.",
+                        subtitle: "Write down your 12 or 24 words before you delete.",
                         systemImage: "exclamationmark.shield",
                         action: onBackUp
                     )
                 } else if let onViewSeedPhrase {
                     ActionSheetRow(
-                        title: "View Seed Phrase and Passphrase",
+                        title: "View 12 or 24 Words and Passphrase",
                         subtitle: "The passphrase shows too, if this account has one.",
                         systemImage: "key",
                         action: onViewSeedPhrase
@@ -672,48 +672,3 @@ struct UnderlineTabBar<Tab: Hashable>: View {
 
 // MARK: - Wallet action tile
 
-/// One square tile of the Wallet tab's Send and Receive half sheet - KaChat's create tile: an
-/// icon over a short title on the app's frosted card.
-struct WalletActionTile: View {
-    static let size: CGFloat = 104
-
-    let title: LocalizedStringKey
-    let hint: LocalizedStringKey
-    let systemImage: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundColor(.accentColor)
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
-            }
-            .padding(8)
-            .frame(width: Self.size, height: Self.size)
-            .background(sendKaspaGlass(cornerRadius: 18))
-        }
-        .buttonStyle(WalletActionTilePressStyle())
-        .accessibilityHint(Text(hint))
-    }
-}
-
-/// A light wash over the tile while it's held.
-private struct WalletActionTilePressStyle: ButtonStyle {
-    @Environment(\.colorScheme) private var colorScheme
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .overlay(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(colorScheme == .dark ? Color.white.opacity(0.22) : Color.black.opacity(0.10))
-                    .opacity(configuration.isPressed ? 1 : 0)
-            )
-    }
-}

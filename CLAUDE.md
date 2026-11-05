@@ -30,9 +30,9 @@ Five fixed tabs (`AppTab` in `KaChatWallet/Models/Models.swift`, rendered by
 |---|---|
 | Portfolio | `PortfolioView` (`Views/Portfolio/`) |
 | Cold Storage | `ColdStorageListView` (`Views/ColdStorage/`) |
-| Wallet | `ProfileView` (`Views/Contacts/ContactsView.swift`, `AppTab.profile`) - the home tab, where the app opens after logging in; receive, the Chatting Address, Manage Addresses, Your Domains, Contacts (`AddressBookView`, as a sheet), help, about; a floating up/down arrow (bottom right, as in KaChat) opens a half sheet: Send Kaspa, Receive Kaspa, Request Payment (`CreatePaymentRequestView`) |
+| Wallet | `ProfileView` (`Views/Contacts/ContactsView.swift`, `AppTab.profile`) - the home tab, where the app opens after logging in; as on KaChat's Wallet tab (`WalletView` there), the total balance split into chatting and spending (`WalletBalanceCard`), Send, Receive and Request (`CreatePaymentRequestView`), Backup Hygiene when due, and the Manage Addresses and Chatting Address squares; then Your Domains, Contacts (`AddressBookView`, its own pushed screen) and help. No profile card: those belong to KaChat and KaPost. About is in Settings |
 | .kachat | `KachatMarketView` (`Views/Ecosystem/`); dock icon `KachatTabIcon.domainsImage` (name tag with an @) - the full .kachat names marketplace: the logo and four numbered cards (Marketplace, Available, Expired, Activity), each opening its page; only the Marketplace has the name search. Search, buy, claim, sell, offers, activity |
-| Settings | `SettingsView(isDockTab: true)` (`Views/Settings/SettingsView.swift`, `AppTab.settings`) - no Done button as a tab; Delete Account (`DeleteAccountSheet`, the warning the sign-in screen's Delete also shows; `WalletManager.deleteCurrentAccount`) and Log Out are its last rows |
+| Settings | `SettingsView(isDockTab: true)` (`Views/Settings/SettingsView.swift`, `AppTab.settings`) - no Done button as a tab; alphabetical rows with no descriptive text, as in KaChat: Account Name, Back Up Account (Complete Your Backup, View 12 or 24 Words, Back Up to NFC Card), Connection, Customization, Diagnostics, Notifications, Security, Storage; then Delete Account (`DeleteAccountSheet`, the warning the sign-in screen's Delete also shows; `WalletManager.deleteCurrentAccount`) and Log Out |
 
 Account setup: `ContentView` -> `OnboardingView` (create / import a seed) -> `MainTabView`. Create
 New Account makes an account in one tap: 24 words, no passphrase, the next free default name
@@ -41,12 +41,12 @@ Passphrase" (`CreateWalletView`) is the only other way: also 24 words, through
 `PassphraseOptionView`. Import still takes 12 or 24 words. Creating never shows the seed phrase: an
 account made here is owed a backup (`AccountBackupStatus`), and until the backup steps
 (`AccountBackupView`: why, get ready, the words six at a time, a check of four random words, the
-passphrase and its check if there is one, where to keep them) are finished, the Wallet tab shows
-`AccountBackupCard` above Manage Addresses (red once the account holds funds), Receive shows a
-reminder and the Delete Account warning leads with Back Up Account; deleting is never blocked. The
-steps never offer a copy; Settings > View Seed Phrase does. Imported and older accounts are never
+passphrase and its check if there is one, where to keep them) are finished, every tab shows
+`AccountBackupBanner` under the balance and just above each tab's title (`pinnedTabHeader`; .kachat has no title) (red once the account holds funds, spending addresses
+included) and the Delete Account warning leads with Back Up Account; deleting is never blocked. The
+steps never offer a copy; Settings > Back Up Account > View 12 or 24 Words does. Imported and older accounts are never
 owed one. Finishing the steps or importing starts a six-month timer (`AccountBackupStatus`); when
-it runs out the Wallet tab shows `BackupHygieneCard` in the same place, and `BackupHygieneView` asks for five
+it runs out the Wallet tab shows `BackupHygieneCard` under Send, Receive and Request, and `BackupHygieneView` asks for five
 random words in random order on `SeedPhraseKeyboardView`, then the passphrase if the account has
 one. Passing, or Can't Complete This and the backup steps again, starts the timer over; closing
 leaves the card up. The passphrase entry screen (`PassphraseAddressPreview`) shows the chatting address and its
@@ -56,27 +56,26 @@ imports onto the chosen one (`WalletManager.findChattingAddresses`). Every sign-
 `signInSession`, the `MainTabView` id, bumped on sign-out), opening on Wallet; without it SwiftUI
 brought the last account's tabs back, on Settings and with no onAppear.
 
-**NFC card backup** (`Services/NFCCard.swift`, beta only: `NFCCard.isAvailable`, hidden once
-`KACHAT_IS_RELEASE` is YES and where NFC can't read): an extra copy of the words of a seed phrase
+**NFC card backup** (`Services/NFCCard.swift`, in production builds since 2026-11-04;
+`NFCCard.isAvailable` hides it where NFC can't read these cards, such as iPad): an extra copy of the words of a seed phrase
 the user already has, on a Java Card loaded with
 [KaChat-NFC](https://github.com/KaspaSilver/KaChat-NFC) through Kaspa Quick Start's NFC Card page.
 Not cold storage: the card never generates or uses a key. The card commands and backup format are
-that repo's `docs/PROTOCOL.md`, shared across apps; change them there first. Settings > Back Up to
-NFC Card (`NFCCardBackupView`, behind the seed phrase's biometric gate) only exists for an account
+that repo's `docs/PROTOCOL.md`, shared across apps; change them there first. Settings > Back Up
+Account > Back Up to NFC Card (`NFCCardBackupView`, behind the seed phrase's biometric gate) only exists for an account
 with a passphrase, which is what protects it: it's never written to the card. The Import chooser's
 Restore from NFC Card (`NFCCardRestoreView`) reads with the 6-digit PIN, asks for the passphrase and
-checks it against the saved chatting address. Saving to a card never clears the backup card. Before
-an App Store submission without this feature, remove the NFC entitlement in
-`KaChatWallet.entitlements` and `KaChatWalletRelease.entitlements` and the NFC keys in `Info.plist`.
-The App ID needs Near Field Communication Tag Reading on.
+checks it against the saved chatting address. Saving to a card never clears the backup warning. The
+App ID needs Near Field Communication Tag Reading on.
 
 The sign-in screen says "KaPay" with the wallet logo and no tagline. The rename kept every identifier
 (bundle ID, keychain group, URL scheme, folder and target names `KaChatWallet`): only what people
 read says KaPay. Texts about the KaChat ecosystem (KaChat profiles, .kachat names, the Nextcloud
 `KaChat` folder) still say KaChat.
 
-The Wallet tab keeps KaChat's profile (Receive, Chatting Address, Edit KaChat Profile, Your Domains,
-share link); Help has only the .kachat names guide. The bell (`GlobalNotificationCenter`) lists
+The Wallet tab keeps Your Domains; a profile is edited and shared in KaChat or KaPost, not here. Help has only the .kachat names guide. People read "12 or 24 words" rather than "seed phrase" or "recovery phrase",
+as in KaChat; the code keeps its names (`SeedPhrase`, `SeedPhraseView`). The Chatting Address is
+address #0, so the legacy chain's first spending slot shows as #1 (`WalletManager.addressNumber`). The bell (`GlobalNotificationCenter`) lists
 "Received" and .kachat notifications.
 
 ## Send Kaspa (and every other send)
@@ -125,6 +124,28 @@ Where each screen uses them:
   (`PendingRegistration.customFeerate`). Search results say only Available or Taken: no price
   per year, since a name's first year and later years cost differently.
 
+**A send with no answer**: a node that took a transaction and never answered gets a longer look-up,
+then `SendOutcomeUnknownError`: the screen says "Not confirmed" and offers only Done, since Try Again
+could pay twice. A node's answer only counts if its id is the one computed here, and a transaction the
+network can't see 5 s later is sent again (same transaction, so it can't pay twice).
+
+**Security**: the words and passphrase are `WhenUnlocked` in the Keychain; other keys stay
+`AfterFirstUnlock`, since push sign-in uses the private key while the phone is locked. So anything that
+may run locked gets addresses from `DerivedAddressStore`, never the seed. `PrivacyCoverWindow` covers
+the app, sheets included, whenever it isn't active. Third-party keyboards are refused app-wide. After a
+reinstall (`noteKeysLeftByEarlierInstallIfNeeded`) leftover keys become saved accounts to open or delete,
+and are never erased automatically. Biometrics for Account Login is off by default, and switched off once
+on existing installs, so a phone with no passcode can still see its account; the words, private keys and
+sends still need the phone's lock. A `.kachat` name resolves only if the chain holds its record
+(`confirmOnChain`), and Accept Offer checks the on-chain amount against what was shown.
+
+**Face ID**: `SwipeUpToSendScrollView` asks `DeviceAuth` before every swipe, whether Send Kaspa,
+Cold Storage's broadcast or a .kachat transaction (its `authReason`). Declined, the screen settles
+back with everything filled in. Both Delete Account sheets ask too. A device with no passcode can't
+do either (`DeviceAuth` refuses and says why).
+
+**Fees**: change too small to keep goes to the fee, and the review counts it (`SendFeeEstimate`).
+
 ## Services
 
 - `WalletService` (`Services/WalletService*.swift`): the node connection, the live UTXO
@@ -132,22 +153,39 @@ Where each screen uses them:
   cold account or a new primary appears), sending (`WalletService+Sending`) and Kaspa REST reads
   (`WalletService+Transactions`). Live batches go to `AddressActivityNotifier` and a balance
   refresh; without a subscription a 60s poll refreshes the balance and catches up receives.
+- `HotWalletBalance`: the chatting address plus every spending address (hidden ones too, cold
+  storage not), or a dash until both are known. The top bar on every tab and the Wallet tab's card
+  read it; a single address's screen still shows that address.
 - `WalletManager`: accounts, keys, spending addresses. `AddressBookManager`, `ColdStorageManager`,
   `PortfolioManager`/`PortfolioViewModel`, `KNSService` and `KachatNames*` as their names say.
-- `NextcloudService`: backs up Contacts and the Portfolio, nothing else, as two plain
-  JSON files in the `KaChat` folder - never KaChat's `kachat-backup.json`:
-  `KaPay Contacts.json` (the contacts export file, `AddressBookManager.ExportFile`,
-  with photos) and `KaPay Portfolio.json` (`PortfolioBackupFile`: portfolios,
-  transactions, fees and deletion tombstones); a restore falls back to the earlier names
-  (`KaPay Address Book.json`, then `KaChat Wallet …`). Connect with an app password. Automatic Backup
-  (off by default) uploads a few seconds after either changes and on background, and merges in
-  what's on the server when the app opens, at most once a minute (`syncWithServerOnOpen`). Every
-  backup merges the server's copies in first (`PortfolioSync.merge`,
-  `AddressBookManager.mergeBackup`; newest edit or deletion wins, the Contacts file carries its
-  deletions in `deleted`), so two devices don't overwrite each other. A Contacts file uploaded by
-  another account (`walletAddress`) isn't merged. Restore and a fresh connection merge both back
-  (`AddressBookManager.importExport`, `PortfolioViewModel.importFromArchive`). Contacts and
-  Portfolio import/export can also use the KaChat folder.
+- `NextcloudService`: backs up Contacts and the Portfolio, nothing else. Connect with an app
+  password.
+  - Contacts: KaChat's way, in the same file with the same key, so a contact added or deleted in
+    either app reaches the other: `kachat-contacts.json` in the backup folder (`KaChat` by default;
+    found on connect, or chosen in Settings), always in the encrypted v1 envelope (`BackupEnvelope`;
+    the key comes from the chatting address's private key). Inside is the contacts export file
+    (`AddressBookManager.ExportFile`, with photos and `deleted`). One sync reads, merges (newest edit
+    or deletion wins) and writes only if the file is missing something this device has. With
+    Automatic Sync on (off by default): 15 s after a contact changes, at most every 90 s (300 s on
+    metered networks), on background, and a foreground ETag poll every 30 s (60 s) brings in other
+    devices' changes. A file this account can't read throws before any write, except its own damaged
+    one, which is replaced. So two accounts on one Nextcloud login need different Backup Folders.
+    KaChat's NEXTCLOUD_SYNC.md, "Contacts only", is the contract.
+  - The earlier plain files (`KaPay Contacts.json` and the older names, all of them) are merged in once per account
+    and never written again. Never KaChat's `kachat-backup.json`.
+  - Portfolio: plain JSON, one file per portfolio in the backup folder, named what the portfolio is
+    named ("Long Term.json"; "Long Term 2.json" only if another file has that name). Never one
+    `KaPay Portfolio.json`: that earlier file is merged in once per account and never written again.
+    Each file (`PortfolioBackupFile`, `type` "kapay-portfolio") holds that portfolio's transactions
+    and fees, every deletion the account knows of, and the owning `walletAddress`. Another account's
+    file, or any other file, is left alone. A renamed or deleted portfolio's old file is removed;
+    the other files carry the deletion. With Automatic Sync on they upload a few seconds after a change
+    and on background, and merge in what's on the server when the app opens, at most once a minute.
+    A CSV export is named the same way ("Long Term.csv").
+  - A manual backup merges the server's copy in first, and a fresh connection merges both in once,
+    which is why there's no Restore button. Contacts and Portfolio import/export use the `KaChat`
+    folder and stay plain. A 401 stops automatic sync (`needsReconnect`) and Settings says so.
+    Disconnect revokes the app password on the server.
 - `KachatNamesRegistry` reads .kachat names through `AppSettings.indexerURL` (Settings >
   Connection > Domains, editable so anyone can run their own indexer; blank = the network's
   default) while it serves this registry and keeps up, else walks the chain itself; the Domains
@@ -171,7 +209,7 @@ for v in light dark tinted; do python3 tools/make_logo.py KaChatWallet/Resources
 
 - Bundle ID `com.kachat.wallet`, keychain group `$(AppIdentifierPrefix)com.kachat.wallet`, URL
   schemes `kapay` (what KaPost opens to pay a request: `kapay://pay/<address>?...`, the same
-  tail as `kachat://pay/`) and `kachatwallet` (its old name, still accepted), background task `com.kachat.wallet.messageFetch` (the name is historical;
+  tail as `kachat://pay/`; `kapay://market` opens the .kachat Marketplace page) and `kachatwallet` (its old name, still accepted), background task `com.kachat.wallet.messageFetch` (the name is historical;
   it refreshes the balance). None of these are shared with KaChat, so the two apps never read each
   other's keychain or storage.
 - Team `RP4Z22SFSD` (the KaChat developer's Apple team; the wallet ships under that account)

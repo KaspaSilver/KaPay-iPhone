@@ -118,6 +118,8 @@ struct KachatMarketView: View {
     @State private var claimTarget: KachatClaimTarget?
     /// A name opened from a notification (`KachatDeepLink`).
     @State private var nameRoute: KachatNameRoute?
+    /// The Marketplace page, opened by `kapay://market`.
+    @State private var showMarketplace = false
 
     var body: some View {
         NavigationStack {
@@ -131,29 +133,36 @@ struct KachatMarketView: View {
             }
             // Pull to refresh on testnet only; mainnet has nothing to refresh.
             .modifier(KachatRefreshable(enabled: live.isLive) { await live.refresh() })
+            .accountBackupBanner()
             .task { await live.start() }
             .onReceive(KachatNamesRegistry.shared.$revision.dropFirst()) { _ in
                 guard live.isLive else { return }
                 Task { await live.reload() }
             }
             .modifier(KachatNameRouteDestination(route: $nameRoute))
+            .navigationDestination(isPresented: $showMarketplace) { pageScreen(.market) }
             // A notification that opened this screen fresh (a cold start, or .kachat not the open
             // tab) leaves its name pending: open it once the screen is up. Pushing in
             // the same update as the stack's first appearance came up as a blank screen.
             .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { takePendingName() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    takePendingName()
+                    takePendingMarketplace()
+                }
             }
             // after the tab switch to this screen has landed: a push onto a stack that isn't on
             // screen yet came up blank
             .onReceive(NotificationCenter.default.publisher(for: .openKachatName)) { _ in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { takePendingName() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    takePendingName()
+                    takePendingMarketplace()
+                }
             }
             .background(Color(.systemGroupedBackground))
             .navigationTitle(".kachat")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { ConnectionStatusIndicator() }
-                // the marketplace buys with the chatting address, like every other screen pays
                 ToolbarItem(placement: .principal) { BalanceToolbarLabel() }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 14) {
@@ -242,6 +251,12 @@ struct KachatMarketView: View {
             case .activity: activityPage
             }
         }
+    }
+
+    private func takePendingMarketplace() {
+        guard KachatDeepLink.pendingMarketplace else { return }
+        KachatDeepLink.pendingMarketplace = false
+        showMarketplace = true
     }
 
     /// Opens the name a tapped notification pointed at (testnet only, where names are live).

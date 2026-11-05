@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 // The Address Book (Wallet > Address Book): saved Kaspa addresses with a name and a note, per
 // wallet. It replaced syncing with the phone's Contacts - see `AddressBookManager`.
 
-/// Wallet > Address Book, opened as a sheet.
+/// Wallet > Contacts, its own screen on the Wallet tab's navigation stack.
 struct AddressBookView: View {
     @ObservedObject private var book = AddressBookManager.shared
     @ObservedObject private var nextcloud = NextcloudService.shared
@@ -19,9 +19,6 @@ struct AddressBookView: View {
     @State private var toastMessage: String?
     @State private var toastStyle: ToastStyle = .success
     @State private var toastToken = UUID()
-    @Environment(\.dismiss) private var dismiss
-    /// Opened as a sheet from the Wallet tab: a Done button closes it.
-    var showsDoneButton = false
 
     private var shown: [AddressBookEntry] { book.search(search) }
 
@@ -32,72 +29,62 @@ struct AddressBookView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if book.entries.isEmpty {
-                    emptyState
-                } else {
-                    List {
-                        ForEach(shown) { entry in
-                            NavigationLink {
-                                AddressBookEntryDetail(address: entry.address)
-                            } label: {
-                                AddressBookRow(entry: entry)
-                            }
-                        }
-                        .onDelete { offsets in
-                            for i in offsets { book.remove(address: shown[i].address) }
+        Group {
+            if book.entries.isEmpty {
+                emptyState
+            } else {
+                List {
+                    ForEach(shown) { entry in
+                        NavigationLink {
+                            AddressBookEntryDetail(address: entry.address)
+                        } label: {
+                            AddressBookRow(entry: entry)
                         }
                     }
-                    .listStyle(.insetGrouped)
-                    // Always showing: hidden until you pull the list down, it read as pull-to-refresh.
-                    .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
-                                prompt: Text("Search names and addresses"))
-                }
-            }
-            .navigationTitle("Contacts")
-            // Large, so the title shows under the bar (the balance holds the bar's middle),
-            // as the tabs show their titles.
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    ConnectionStatusIndicator()
-                }
-                ToolbarItem(placement: .principal) {
-                    BalanceToolbarLabel()
-                }
-                if showsDoneButton {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") { dismiss() }
+                    .onDelete { offsets in
+                        for i in offsets { book.remove(address: shown[i].address) }
                     }
                 }
+                .listStyle(.insetGrouped)
+                // Always showing: hidden until you pull the list down, it read as pull-to-refresh.
+                .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always),
+                            prompt: Text("Search names and addresses"))
             }
-            // Add and Import / Export live behind one floating +, not in the bar.
-            .overlay(alignment: .bottomTrailing) { actionsButton }
-            .sheet(isPresented: $showAdd) {
-                AddressBookEntryEditor(address: nil) { _ in }
-            }
-            .sheet(isPresented: $showImportExport) { actionsSheet }
-            .sheet(item: $exportFile) { file in
-                AddressBookShareSheet(fileURL: file.url)
-            }
-            .sheet(isPresented: $showNextcloudImporter) {
-                NextcloudFileSelectView(allowedExtensions: ["json"]) { file in
-                    importFromNextcloud(file)
-                }
-            }
-            .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.json]) { result in
-                guard case .success(let url) = result else { return }
-                let accessed = url.startAccessingSecurityScopedResource()
-                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url) else {
-                    showToast(AppLocalization.string("Couldn't read that file."), style: .error)
-                    return
-                }
-                runImport(data)
-            }
-            .toast(message: toastMessage, style: toastStyle)
         }
+        .navigationTitle("Contacts")
+        // Large, so the title shows under the bar (the balance holds the bar's middle),
+        // as the tabs show their titles.
+        .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                BalanceToolbarLabel()
+            }
+        }
+        // Add and Import / Export live behind one floating +, not in the bar.
+        .overlay(alignment: .bottomTrailing) { actionsButton }
+        .sheet(isPresented: $showAdd) {
+            AddressBookEntryEditor(address: nil) { _ in }
+        }
+        .sheet(isPresented: $showImportExport) { actionsSheet }
+        .sheet(item: $exportFile) { file in
+            AddressBookShareSheet(fileURL: file.url)
+        }
+        .sheet(isPresented: $showNextcloudImporter) {
+            NextcloudFileSelectView(allowedExtensions: ["json"]) { file in
+                importFromNextcloud(file)
+            }
+        }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.json]) { result in
+            guard case .success(let url) = result else { return }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            guard let data = try? Data(contentsOf: url) else {
+                showToast(AppLocalization.string("Couldn't read that file."), style: .error)
+                return
+            }
+            runImport(data)
+        }
+        .toast(message: toastMessage, style: toastStyle)
     }
 
     // MARK: Add / import / export

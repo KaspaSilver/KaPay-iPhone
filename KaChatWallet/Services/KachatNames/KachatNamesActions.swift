@@ -765,7 +765,13 @@ final class KachatNamesActions: ObservableObject {
                 throw KachatNames.Failure(AppLocalization.string("This offer was made before the name changed hands, so it's declined and going back to the buyer."))
             }
             try Self.validateKey(o.buyer, AppLocalization.string("The buyer"))
-            plan = try b.acceptOffer(env: env, name: try await liveName(n, m), offer: try await liveOffer(o, m))
+            // The offer's script doesn't commit to its amount, so the amount the screen showed is only
+            // the indexer's word. The name doesn't go unless the coins really are there.
+            let liveOffered = try await liveOffer(o, m)
+            guard liveOffered.value == o.amount else {
+                throw KachatNames.Failure(AppLocalization.string("This offer holds a different amount than was shown. Nothing was sent."))
+            }
+            plan = try b.acceptOffer(env: env, name: try await liveName(n, m), offer: liveOffered)
         case .decline(let o):
             plan = try b.declineOffer(env: env, offer: try await liveOffer(o, m))
         case .release(let n):

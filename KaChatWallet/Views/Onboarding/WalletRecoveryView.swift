@@ -24,10 +24,10 @@ struct WalletRecoveryView: View {
                     .font(.scaled(size: 52, weight: .semibold))
                     .foregroundColor(.accentColor)
                 VStack(spacing: 10) {
-                    Text("Recovery Phrase Needed")
+                    Text("12 or 24 Words Needed")
                         .font(.title2.weight(.bold))
                         .multilineTextAlignment(.center)
-                    Text("This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your recovery phrase to unlock it here.")
+                    Text("This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -51,7 +51,7 @@ struct WalletRecoveryView: View {
                     Button {
                         showImport = true
                     } label: {
-                        Text("Enter Recovery Phrase")
+                        Text("Enter 12 or 24 Words")
                             .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
@@ -85,7 +85,7 @@ struct WalletRecoveryView: View {
                 Button("Remove", role: .destructive) { remove() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The account and its data are deleted from this phone. Nothing on the blockchain changes, and you can add the account again later with its recovery phrase.")
+                Text("The account and its data are deleted from this phone. Nothing on the blockchain changes, and you can add the account again later with its 12 or 24 words.")
             }
             .alert("Couldn't remove", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK", role: .cancel) {}

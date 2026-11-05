@@ -31,6 +31,12 @@ struct SavedAccountSummary: Identifiable, Equatable, Codable {
         return "\(publicKey.prefix(12))...\(publicKey.suffix(8))"
     }
 
+    init(alias: String, publicAddress: String, publicKey: String) {
+        self.alias = alias
+        self.publicAddress = publicAddress
+        self.publicKey = publicKey
+    }
+
     init(wallet: Wallet) {
         self.alias = wallet.alias
         self.publicAddress = wallet.publicAddress
@@ -157,6 +163,8 @@ final class WalletManager: ObservableObject {
     private let balanceCachePrefix = "kachat_balance_cache_"
     private let logoutFlagKey = "kachat_session_logged_out"
     private let savedAccountsKey = "kachat_saved_accounts"
+    /// Set on the first launch of an install: UserDefaults is deleted with the app, the Keychain isn't.
+    private let installSeenKey = "kapay_install_seen"
 
     private init() {
         LaunchTrace.startWatchdog()
@@ -219,6 +227,7 @@ final class WalletManager: ObservableObject {
 
     func loadWallet(force: Bool = false) async {
         isLoading = true
+        noteKeysLeftByEarlierInstallIfNeeded()
         defer { isLoading = false }
 
         do {
@@ -439,7 +448,10 @@ final class WalletManager: ObservableObject {
         // sweep as Manage Addresses' Discover Addresses - so balances and change rotation are
         // right without anyone knowing to tap it (owner's call, 2026-10-21). Only this path: a
         // typed-in recovery phrase; creating or switching accounts doesn't scan.
-        Task { await self.discoverSpendingAddresses() }
+        Task {
+            await self.discoverSpendingAddresses()
+            await HotWalletBalance.shared.refresh(force: true)
+        }
         return wallet
     }
 
@@ -888,6 +900,28 @@ final class WalletManager: ObservableObject {
             persistSavedAccountsToStorage()
         }
         hasStoredWallet = !savedAccounts.isEmpty
+    }
+
+    /// The first launch after a reinstall, with keys still in the Keychain: they're listed as saved
+    /// accounts and nothing opens by itself, so someone chooses to open or delete each. Keys are never
+    /// erased here: for someone with no backup, they may be the only copy. An update has its saved
+    /// accounts list, which a reinstall doesn't.
+    private func noteKeysLeftByEarlierInstallIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: installSeenKey) else { return }
+        defaults.set(true, forKey: installSeenKey)
+        guard defaults.data(forKey: savedAccountsKey) == nil else { return }
+        if (try? keychainService.loadWallet()) != nil {
+            defaults.set(true, forKey: logoutFlagKey)
+        }
+        let leftover = keychainService.accountSnapshotAddresses().filter { address in
+            !savedAccounts.contains { $0.publicAddress == address }
+        }
+        guard !leftover.isEmpty else { return }
+        AppLog.log("%@", "[WalletManager] Listing \(leftover.count) saved account(s) left by an earlier install")
+        savedAccounts += leftover.map { SavedAccountSummary(alias: "", publicAddress: $0, publicKey: "") }
+        persistSavedAccountsToStorage()
+        hasStoredWallet = true
     }
 
     /// Renames a saved account entry (Onboarding's saved-accounts list). If this account

@@ -1,5 +1,81 @@
 import SwiftUI
 
+// MARK: - Folder selection (Settings > Storage > Nextcloud > Backup Folder)
+
+/// Browses the connected account's folders and hands back the one chosen ("" = the files root).
+struct NextcloudFolderSelectView: View {
+    let onSelect: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            NextcloudFolderSelectList(path: "", title: "All Files") { selected in
+                dismiss()
+                onSelect(selected)
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+private struct NextcloudFolderSelectList: View {
+    let path: String
+    let title: String
+    let onChoose: (String) -> Void
+
+    @State private var folders: [NextcloudFile] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section {
+                Button {
+                    onChoose(path)
+                } label: {
+                    Label(path.isEmpty ? "Use All Files" : "Use This Folder", systemImage: "checkmark.circle")
+                }
+            }
+            Section {
+                ForEach(folders) { folder in
+                    NavigationLink {
+                        NextcloudFolderSelectList(path: folder.path, title: folder.name, onChoose: onChoose)
+                    } label: {
+                        Label(folder.name, systemImage: "folder")
+                    }
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+                if !isLoading && folders.isEmpty && errorMessage == nil {
+                    Text("No subfolders.")
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: path) {
+            isLoading = true
+            errorMessage = nil
+            do {
+                // Newest-first comes from listFolder; this only drops the non-folder entries.
+                folders = try await NextcloudService.shared.listFolder(path)
+                    .filter(\.isDirectory)
+            } catch {
+                errorMessage = UserFacingError.message(for: error)
+            }
+            isLoading = false
+        }
+    }
+}
+
 // MARK: - File selection (Address Book and Portfolio > Import from Nextcloud)
 
 /// Browses the connected account's files and hands back the file the user taps. Starts in the

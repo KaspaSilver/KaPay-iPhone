@@ -56,7 +56,8 @@ extension KachatNames {
 
         /// The on-chain state, when the period start is known.
         var fields: NameFields? {
-            periodStart.map { NameFields(key: key, paddedName: Codec.padded(name), owner: owner, price: Int64(price), periodStart: $0, expiresAt: expiresAt) }
+            guard let periodStart, let price = Int64(exactly: price) else { return nil }
+            return NameFields(key: key, paddedName: Codec.padded(name), owner: owner, price: price, periodStart: periodStart, expiresAt: expiresAt)
         }
 
         func status(graceMs: Int64, nowMs: Int64 = KachatNames.nowMs()) -> Status {

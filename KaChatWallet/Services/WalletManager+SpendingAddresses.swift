@@ -807,17 +807,26 @@ extension WalletManager {
         guard let index = Self.ownAddressIndexCache?.map[target] else { return nil }
         let named = spendingLabels[index]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !named.isEmpty { return named }
-        return "Address #\(Self.isQuantumIndex(index) ? index - Self.quantumIndexBase : index)"
+        return "Address #\(Self.addressNumber(forIndex: index))"
+    }
+
+    /// The number people see for a spending address. The Chatting Address is #0, so the legacy
+    /// chain's first slot shows as #1; the quantum chain has no chatting address and starts at #0.
+    nonisolated static func addressNumber(forIndex index: Int) -> Int {
+        isQuantumIndex(index) ? index - quantumIndexBase : index + 1
     }
 
     private static var ownAddressIndexCache: (key: String, map: [String: Int])?
 
     func allSpendingAddresses() -> [String] {
-        guard let changeKey = spendingChangeKey() else { return [] }
-        var out = (0...maxSpendingAddressIndex).compactMap { spendingAddress(at: $0, changeKey: changeKey) }
+        // Through the address cache: the seed can't be read while the phone is locked, and a
+        // background wake-up must still know these addresses.
+        let legacy = spendingAddresses(inRange: 0..<(max(0, maxSpendingAddressIndex) + 1))
+        var out = legacy.keys.sorted().compactMap { legacy[$0] }
         let quantumMax = maxQuantumAddressIndex
-        if quantumMax >= 0, let chainKey = quantumChainKey() {
-            out += (0...quantumMax).compactMap { quantumAddress(at: Self.quantumIndexBase + $0, chainKey: chainKey) }
+        if quantumMax >= 0 {
+            let quantum = spendingAddresses(inRange: Self.quantumIndexBase..<(Self.quantumIndexBase + quantumMax + 1))
+            out += quantum.keys.sorted().compactMap { quantum[$0] }
         }
         return out
     }

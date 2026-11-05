@@ -338,20 +338,28 @@ struct PortfolioSync: Equatable {
     }
 }
 
-/// The Portfolio backup on Nextcloud (`NextcloudService.portfolioFileName`): one wallet's
-/// `PortfolioSync` as plain JSON. Dates are kept exact (the default encoding), since a merge
-/// compares edit stamps.
+/// One portfolio's backup on Nextcloud, as plain JSON in a file named after it
+/// (`NextcloudService`): that portfolio with its transactions and fees, and every deletion the
+/// wallet knows of, so a device reading any one file learns what was deleted. Version 1 was the one
+/// file holding every portfolio, with no `type` or owner. Dates are kept exact (the default
+/// encoding), since a merge compares edit stamps.
 struct PortfolioBackupFile: Codable {
-    static let currentVersion = 1
+    static let kind = "kapay-portfolio"
+    static let currentVersion = 2
 
     var version = currentVersion
+    var type: String?
+    /// The account it belongs to. Another account's file is never read or written over.
+    var walletAddress: String?
     var exportedAt: Date
     var portfolios: [Portfolio]
     var transactions: [PortfolioTransaction]
     var fees: [PortfolioFeeRecord]
     var tombstones: [PortfolioTombstone]
 
-    init(_ sync: PortfolioSync, exportedAt: Date = Date()) {
+    init(_ sync: PortfolioSync, walletAddress: String, exportedAt: Date = Date()) {
+        type = Self.kind
+        self.walletAddress = walletAddress
         self.exportedAt = exportedAt
         portfolios = sync.portfolios
         transactions = sync.transactions

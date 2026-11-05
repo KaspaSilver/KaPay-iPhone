@@ -29,15 +29,6 @@ enum KaChatInternalLink: Equatable {
     /// KaChat-iPhone).
     static let universalLinkHost = "kachat.app"
 
-    /// The one profile link every share button hands out - your own (Profile, beside the title)
-    /// and anyone else's (User Info > Share) - so the two can never drift apart:
-    /// `https://kachat.app/u/<address without kaspa:>`, lowercased and trimmed.
-    static func profileShareURL(for address: String) -> URL? {
-        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !normalized.isEmpty else { return nil }
-        return URL(string: KaChatInternalLink.profile(address: normalized).universalLinkString)
-    }
-
     /// The custom-scheme form of the link.
     var shareLinkString: String {
         switch self {
@@ -60,6 +51,13 @@ enum KaChatInternalLink: Equatable {
 
 
     // MARK: Parsing
+
+    /// `kapay://market`: KaPay's .kachat Marketplace, which KaChat's "Get a domain" opens. Not a
+    /// case of this enum, since it carries nothing to share or detect in pasted text.
+    static func isMarketLink(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "kapay" || scheme == "kachatwallet" else { return false }
+        return url.host?.lowercased() == "market" && url.pathComponents.allSatisfy { $0 == "/" }
+    }
 
     /// Both link forms -> a validated target, or nil for anything else (including a
     /// well-formed-looking link whose payload fails validation).

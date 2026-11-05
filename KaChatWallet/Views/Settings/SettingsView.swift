@@ -7,12 +7,15 @@ import UIKit
 struct SettingsView: View {
     @EnvironmentObject var walletManager: WalletManager
     @EnvironmentObject var settingsViewModel: SettingsViewModel
+    @ObservedObject private var hotWallet = HotWalletBalance.shared
     @Environment(\.dismiss) private var dismiss
     /// KaPay shows Settings as its own dock tab: no Done button there.
     var isDockTab = false
 
     @State private var showSeedPhrase = false
     @State private var showNFCCardBackup = false
+    /// The backup steps from Back Up Account. Finishing them clears the backup banner.
+    @State private var showAccountBackup = false
     @State private var accountHasPassphrase = false
     @State private var showLogoutConfirmation = false
     @State private var showDeleteAccountConfirmation = false
@@ -31,53 +34,34 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                settingsCategoryRow("Customization", icon: "paintbrush.pointed", tint: .accentColor) {
-                    customizationPage
+                // Alphabetical. Delete Account and Log Out stay apart below.
+                settingsCategoryRow("About", icon: "info.circle", tint: .accentColor) {
+                    AccountAboutPage()
                 }
-                settingsCategoryRow("Security", icon: "lock.shield", tint: .accentColor) {
-                    SecuritySettingsPage()
+                settingsCategoryRow("Account Name", icon: "pencil", tint: .accentColor) {
+                    AccountNamePage()
+                }
+                settingsCategoryRow("Back Up Account", icon: "key", tint: .accentColor) {
+                    backUpAccountPage
                 }
                 settingsCategoryRow("Connection", icon: "antenna.radiowaves.left.and.right", tint: .accentColor) {
                     ConnectionHubPage()
                 }
-                settingsCategoryRow("Notifications", icon: "bell.badge", tint: .accentColor) {
-                    NotificationsHubPage()
-                }
-                settingsCategoryRow("Storage", icon: "internaldrive", tint: .accentColor) {
-                    storagePage
+                settingsCategoryRow("Customization", icon: "paintbrush.pointed", tint: .accentColor) {
+                    customizationPage
                 }
                 settingsCategoryRow("Diagnostics", icon: "stethoscope", tint: .accentColor) {
                     DiagnosticsSettingsPage()
                 }
-                // Direct action, not a sub-page: straight into the seed phrase (behind the
-                // biometric gate when enabled).
-                Button {
-                    unlockSeedPhrase { showSeedPhrase = true }
-                } label: {
-                    Label {
-                        Text("View Seed Phrase")
-                            .foregroundColor(.primary)
-                    } icon: {
-                        Image(systemName: "key")
-                            .foregroundColor(.accentColor)
-                    }
+                settingsCategoryRow("Notifications", icon: "bell.badge", tint: .accentColor) {
+                    NotificationsHubPage()
                 }
-                #if canImport(CoreNFC) && !targetEnvironment(macCatalyst)
-                // Without a passphrase, nothing would protect the seed if someone got past the PIN.
-                if NFCCard.isAvailable && accountHasPassphrase {
-                    Button {
-                        unlockSeedPhrase { showNFCCardBackup = true }
-                    } label: {
-                        Label {
-                            Text("Back Up to NFC Card")
-                                .foregroundColor(.primary)
-                        } icon: {
-                            Image(systemName: "wave.3.right")
-                                .foregroundColor(.accentColor)
-                        }
-                    }
+                settingsCategoryRow("Security", icon: "lock.shield", tint: .accentColor) {
+                    SecuritySettingsPage()
                 }
-                #endif
+                settingsCategoryRow("Storage", icon: "internaldrive", tint: .accentColor) {
+                    storagePage
+                }
                 // Moved here from the Wallet tab (owner's call, 2026-10-27).
                 Section {
                     Button(role: .destructive) {
@@ -104,8 +88,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.large)
+            .pinnedTabHeader("Settings")
             .toast(message: toastMessage, style: toastStyle)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -124,6 +107,9 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showSeedPhrase) {
                 SeedPhraseView()
+            }
+            .sheet(isPresented: $showAccountBackup) {
+                AccountBackupView()
             }
             .task(id: walletManager.currentWallet?.publicAddress) {
                 let passphrase = (try? walletManager.getSeedPhrase())?.passphrase ?? ""
@@ -153,7 +139,9 @@ struct SettingsView: View {
                     notBackedUp: backupStatus.isPending(walletManager.currentWallet?.publicAddress),
                     onBackUp: { AccountBackupView.unlock { showBackupOverDeleteWarning = true } }
                 ) {
-                    Task { await walletManager.deleteCurrentAccount() }
+                    DeviceAuth.authenticate(reason: AppLocalization.string("Confirm deleting this account")) {
+                        Task { await walletManager.deleteCurrentAccount() }
+                    }
                 }
                 .sheet(isPresented: $showSeedPhraseOverDeleteWarning) {
                     SeedPhraseView()
@@ -171,13 +159,64 @@ struct SettingsView: View {
     /// The seed phrase, behind the biometric gate when enabled.
     private func unlockSeedPhrase(_ show: @escaping () -> Void) {
         if settingsViewModel.settings.biometricSeedPhraseEnabled {
-            DeviceAuth.authenticate(reason: "Unlock to view your seed phrase", onSuccess: show)
+            DeviceAuth.authenticate(reason: "Unlock to view your 12 or 24 words", onSuccess: show)
         } else {
             show()
         }
     }
 
     // MARK: - Settings categories (each section is its own page)
+
+    private var backUpAccountPage: some View {
+        Form {
+            if backupStatus.isPending(walletManager.currentWallet?.publicAddress) {
+                Section {
+                    Button {
+                        AccountBackupView.unlock { showAccountBackup = true }
+                    } label: {
+                        Label {
+                            Text("Complete Your Backup")
+                                .foregroundColor(.primary)
+                        } icon: {
+                            Image(systemName: "exclamationmark.shield.fill")
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+            }
+            Section {
+                Button {
+                    unlockSeedPhrase { showSeedPhrase = true }
+                } label: {
+                    Label {
+                        Text("View 12 or 24 Words")
+                            .foregroundColor(.primary)
+                    } icon: {
+                        Image(systemName: "key")
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                #if canImport(CoreNFC) && !targetEnvironment(macCatalyst)
+                // Without a passphrase, nothing would protect the seed if someone got past the PIN.
+                if NFCCard.isAvailable && accountHasPassphrase {
+                    Button {
+                        unlockSeedPhrase { showNFCCardBackup = true }
+                    } label: {
+                        Label {
+                            Text("Back Up to NFC Card")
+                                .foregroundColor(.primary)
+                        } icon: {
+                            Image(systemName: "wave.3.right")
+                                .foregroundColor(.accentColor)
+                        }
+                    }
+                }
+                #endif
+            }
+        }
+        .navigationTitle("Back Up Account")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 
     private var customizationPage: some View {
         Form {
@@ -219,8 +258,6 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("On This Device")
-            } footer: {
-                Text("Photos you assigned to contacts, for every wallet on this device. They're kept until you remove them, and they're included in your contacts backup.")
             }
             .task { await refreshAddressBookPhotoBytes() }
             .sheet(isPresented: $confirmRemoveAddressBookPhotos) {
@@ -242,8 +279,6 @@ struct SettingsView: View {
                 settingsCategoryRow("Cache", icon: "trash", tint: .accentColor) {
                     CacheSettingsPage()
                 }
-            } footer: {
-                Text("Images and files the app can always download again. Clearing them frees space and loses nothing.")
             }
 
             Section {
@@ -254,8 +289,6 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("Backup")
-            } footer: {
-                Text("Back up your contacts and Portfolio to the KaChat folder on your own Nextcloud server. Nothing is stored in iCloud.")
             }
         }
         .navigationTitle("Storage")
@@ -269,7 +302,7 @@ struct SettingsView: View {
     }
 
     private var balanceToolbarView: some View {
-        let sompi = walletManager.currentWallet?.balanceSompi
+        let sompi = hotWallet.totalSompi(for: walletManager.currentWallet)
         let exact = sompi.map(formatKaspaExact) ?? "--"
         // Kaspa logo + bold, matching the balance style on every other screen's top bar.
         return HStack(spacing: 6) {
@@ -287,6 +320,9 @@ struct SettingsView: View {
             UIPasteboard.general.string = exact
             Haptics.success()
             showToast("Balance copied to clipboard.")
+        }
+        .task(id: walletManager.currentWallet?.publicAddress) {
+            await hotWallet.refreshUntilKnown()
         }
     }
 
@@ -309,6 +345,85 @@ struct SettingsView: View {
     private func formatKaspaExact(_ sompi: UInt64) -> String {
         let kas = Double(sompi) / 100_000_000.0
         return String(format: "%.8f", kas)
+    }
+}
+
+// MARK: - About
+
+/// Settings > About: this account's created date, then the app's version, links and licenses.
+private struct AccountAboutPage: View {
+    @EnvironmentObject private var walletManager: WalletManager
+
+    @State private var showOpenSourceLicenses = false
+
+    private static let websiteURL = URL(string: "https://home.kachat.app")!
+    private static let privacyPolicyURL = URL(string: "https://home.kachat.app/privacy/")!
+    private static let supportEmailURL = URL(string: "mailto:kaspasilver@gmail.com")!
+
+    var body: some View {
+        Form {
+            Section {
+                if let wallet = walletManager.currentWallet {
+                    HStack {
+                        Text("Created")
+                        Spacer()
+                        Text(SharedFormatting.mediumDateShortTime.string(from: wallet.createdAt))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text(AppVersion.display)
+                        .foregroundColor(.secondary)
+                }
+                Link(destination: Self.websiteURL) {
+                    HStack {
+                        Text("Website")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text(verbatim: "home.kachat.app")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Link(destination: Self.supportEmailURL) {
+                    HStack {
+                        Text("Support Email")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text(verbatim: "kaspasilver@gmail.com")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Link(destination: Self.privacyPolicyURL) {
+                    HStack {
+                        Text("Privacy Policy")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Button {
+                    showOpenSourceLicenses = true
+                } label: {
+                    HStack {
+                        Text("Open Source Licenses")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .navigationTitle("About")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showOpenSourceLicenses) {
+            OpenSourceLicensesView()
+        }
     }
 }
 
@@ -341,6 +456,35 @@ fileprivate func settingsCategoryRow<Destination: View>(
 // regardless of which account is active, which is why the accounts-list screen's App Settings
 // (see AppSettingsView) can host the SAME views without a wallet loaded. The in-account
 // SettingsView embeds them unchanged, so there's exactly one source of truth per page.
+
+// MARK: - Account Name
+
+/// Settings > Account Name: your own label for this account, saved when you leave the page.
+private struct AccountNamePage: View {
+    @EnvironmentObject private var walletManager: WalletManager
+    @State private var name = ""
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Account name", text: $name)
+                    .submitLabel(.done)
+            }
+        }
+        .navigationTitle("Account Name")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { name = walletManager.currentWallet?.alias ?? "" }
+        .onDisappear(perform: save)
+    }
+
+    private func save() {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let wallet = walletManager.currentWallet, !trimmed.isEmpty, trimmed != wallet.alias,
+              let account = walletManager.savedAccounts.first(where: { $0.publicAddress == wallet.publicAddress })
+        else { return }
+        walletManager.renameSavedAccount(account, to: trimmed)
+    }
+}
 
 /// Security page: the biometric toggles. All fields live in the global AppSettings blob - nothing
 /// here needs an active account, so it is reachable from the accounts list too.
@@ -376,8 +520,8 @@ struct SecuritySettingsPage: View {
         Form {
             Section("Security") {
                 biometricToggle(
-                    "Biometrics for Seed Phrase",
-                    reason: "Unlock to change the seed phrase biometric lock",
+                    "Biometrics for 12 or 24 Words",
+                    reason: "Unlock to change the 12 or 24 words biometric lock",
                     isOn: $settingsViewModel.settings.biometricSeedPhraseEnabled
                 )
                 biometricToggle(
@@ -533,7 +677,7 @@ struct DiagnosticsSettingsPage: View {
                                 ProgressView()
                             }
                         }
-                        Text("Exports the app version, iOS version, the wallet's settings and connection state, the Kaspa node pool and the last day of the app's own logs as a zip, for troubleshooting with support. No private keys, seed phrases, addresses, contacts or portfolios are included.")
+                        Text("Exports the app version, iOS version, the wallet's settings and connection state, the Kaspa node pool and the last day of the app's own logs as a zip, for troubleshooting with support. No private keys, 12 or 24 words, addresses, contacts or portfolios are included.")
                             .font(.footnote)
                             .foregroundColor(.secondary)
                     }
@@ -556,8 +700,6 @@ struct DiagnosticsSettingsPage: View {
                         // flag with a stale in-memory copy.
                         NotificationCenter.default.post(name: .settingsDidChange, object: nil)
                     }
-            } footer: {
-                Text("Logs every indexer request with full connection and timing detail. Leave off for normal use: failed and slow requests are always logged, and heavy logging can cause iOS to drop the app's log messages.")
             }
         }
         .navigationTitle("Diagnostics")
@@ -802,10 +944,6 @@ struct NotificationsHubPage: View {
                     }
                 }
                 .disabled(isEnablingPush)
-            } footer: {
-                Text(pushEnabled
-                     ? "Everything you have switched on below can reach you, even when the app is closed. Turning this off silences all of it."
-                     : "Turn this on to receive anything you have switched on below, even when the app is closed.")
             }
 
             Section {
@@ -813,8 +951,6 @@ struct NotificationsHubPage: View {
                     .onChange(of: settingsViewModel.settings.addressActivityNotificationsEnabled) { _ in
                         settingsViewModel.saveSettings()
                     }
-            } footer: {
-                Text("Notify when Kaspa from someone else arrives at your chatting address, a spending address or a cold storage address. Transfers between your own addresses are ignored. Spending addresses and each cold storage account also have their own switch.")
             }
 
             Section {
@@ -829,8 +965,6 @@ struct NotificationsHubPage: View {
                     }
             } header: {
                 Text("Sound & Vibration")
-            } footer: {
-                Text("For Received notifications, and for any notification while the app is open. With sound off, Vibration gives a light tap instead while the app is open.")
             }
         }
         .navigationTitle("Notifications")
@@ -1140,11 +1274,11 @@ struct SeedPhraseView: View {
                         .font(.headline)
                         .foregroundColor(.orange)
 
-                    Text("Anyone with your seed phrase can access your account. Never share it with anyone.")
+                    Text("Anyone with your 12 or 24 words can access your account. Never share them with anyone.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
 
-                    Text("Best practice is to write your seed phrase down to back it up, and never store it online.")
+                    Text("Best practice is to write your 12 or 24 words down to back them up, and never store it online.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -1213,9 +1347,9 @@ struct SeedPhraseView: View {
                             Button {
                                 copySensitiveToClipboard(seedPhrase.words.joined(separator: " "))
                                 Haptics.success()
-                                showToast("Seed phrase copied. Clipboard will clear in 30s.")
+                                showToast("Words copied. Clipboard will clear in 30s.")
                             } label: {
-                                Label("Copy Seed Phrase", systemImage: "doc.on.doc")
+                                Label("Copy 12 or 24 Words", systemImage: "doc.on.doc")
                             }
                             Button {
                                 guard let privateKey = walletManager.getPrivateKey() else {
@@ -1244,7 +1378,7 @@ struct SeedPhraseView: View {
                             VStack(spacing: 12) {
                                 Image(systemName: "eye.slash.fill")
                                     .font(.largeTitle)
-                                Text("Tap to reveal seed phrase")
+                                Text("Tap to reveal your 12 or 24 words")
                                     .font(.subheadline)
                             }
                             .frame(maxWidth: .infinity)
@@ -1264,7 +1398,7 @@ struct SeedPhraseView: View {
                 Spacer()
             }
             .padding()
-            .navigationTitle("Seed Phrase")
+            .navigationTitle("12 or 24 Words")
             .navigationBarTitleDisplayMode(.inline)
             .toast(message: toastMessage, style: toastStyle)
             .toolbar {
@@ -1346,8 +1480,6 @@ struct KaspaExplorerSettingsView: View {
                 }
             } header: {
                 Text("Explorer")
-            } footer: {
-                Text("Used to build \"view transaction\" links throughout the app.")
             }
         }
         .navigationTitle("Kaspa Explorer")
@@ -1424,8 +1556,6 @@ struct ConnectionSettingsView: View {
             }
         } header: {
             Text("Push Registration")
-        } footer: {
-            Text("Used only for push registration and updates")
         }
 
     }
@@ -1464,8 +1594,6 @@ struct ConnectionSettingsView: View {
             }
         } header: {
             Text("Kaspa Node")
-        } footer: {
-            Text("Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Doesn't affect the indexers, domains or explorer on the other tabs. Add custom addresses to the IP Address Book below to select them here.")
         }
 
         Section {
@@ -1540,8 +1668,6 @@ struct ConnectionSettingsView: View {
             }
         } header: {
             Text("IP Address Book")
-        } footer: {
-            Text("Save your own node addresses here, then tap one to copy it and paste into the Kaspa Node field above.")
         }
     }
 
@@ -1572,8 +1698,6 @@ struct ConnectionSettingsView: View {
             .task { await kachatRegistry.refreshIfStale() }
         } header: {
             Text(".kachat Names")
-        } footer: {
-            Text("Resolved first, everywhere you can type an address. Leave the indexer blank for KaChat's own, or enter one you run yourself. If it can't be reached, serves a different registry or falls behind the network, names are read straight from the chain instead, which is slower. Buying, selling and claiming always re-check the chain.")
         }
         // The other name services this app reads (see `NameServicesClient`). Shown, not
         // editable. The .kas URL had no empty-string fallback, so saving it blank wrote "" and
@@ -1602,8 +1726,6 @@ struct ConnectionSettingsView: View {
             }
         } header: {
             Text("Other Domains")
-        } footer: {
-            Text("Looked up after .kachat, and listed under Other domains when a typed name also exists there.")
         }
     }
 
@@ -1652,8 +1774,6 @@ struct ConnectionSettingsView: View {
             }
         } header: {
             Text("Kaspa Explorer API")
-        } footer: {
-            Text("REST API for transaction history and balance lookups")
         }
 
     }
@@ -1930,8 +2050,6 @@ struct KaspaNodeQuickAccessSections: View {
             }
         } header: {
             Text("Kaspa Node")
-        } footer: {
-            Text("Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Manage saved addresses in Settings > Connection Settings > IP Address Book.")
         }
     }
 
@@ -2017,11 +2135,17 @@ struct ConnectionStatusIndicator: View {
     }
 }
 
-/// Kaspa-logo main-address balance for navigation bars - shared by the main pages
-/// (Cold Storage, Portfolio, Address Book, .kachat) so the centered header reads identically
-/// across tabs.
+/// Kaspa-logo balance of the whole hot wallet (`HotWalletBalance`) for navigation bars - shared by
+/// the main pages (Cold Storage, Portfolio, Address Book, .kachat) so the centered header reads
+/// identically across tabs.
 struct BalanceToolbarLabel: View {
     @EnvironmentObject var walletManager: WalletManager
+    @ObservedObject private var hotWallet = HotWalletBalance.shared
+
+    private var amountText: String {
+        hotWallet.totalSompi(for: walletManager.currentWallet)
+            .map { String(format: "%.8f", Double($0) / 100_000_000.0) } ?? "--"
+    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -2029,13 +2153,16 @@ struct BalanceToolbarLabel: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: 15, height: 15)
-            Text(verbatim: "\(String(format: "%.8f", Double(walletManager.currentWallet?.balanceSompi ?? 0) / 100_000_000.0)) \(KaspaUnit.symbol)")
+            Text(verbatim: "\(amountText) \(KaspaUnit.symbol)")
                 .font(.footnote.weight(.semibold))
                 .monospacedDigit()
                 .foregroundColor(.secondary)
         }
         .task {
             _ = try? await walletManager.refreshBalance()
+        }
+        .task(id: walletManager.currentWallet?.publicAddress) {
+            await hotWallet.refreshUntilKnown()
         }
     }
 }
@@ -2268,7 +2395,7 @@ struct ConnectionStatusDetailView: View {
         }
     }
 
-    /// Refresh Pool, Clear Pool, Reconnect.
+    /// Refresh Pool, Clear Pool, Reconnect, and the way into Connection Settings.
     @ViewBuilder
     private var actionsSection: some View {
         // Actions Section (pool refresh/clear only apply in automatic mode;
@@ -2312,6 +2439,12 @@ struct ConnectionStatusDetailView: View {
                 }
             }
             .disabled(nodePool.isRefreshing || isReconnecting)
+
+            NavigationLink {
+                ConnectionSettingsView()
+            } label: {
+                Text("Connection Settings")
+            }
         } header: {
             Text("Actions")
         } footer: {
@@ -2357,8 +2490,6 @@ struct ConnectionStatusDetailView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-        } footer: {
-            Text("Tap a node to copy host:port.")
         }
 
         // All Nodes Section
@@ -2393,8 +2524,6 @@ struct ConnectionStatusDetailView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-        } footer: {
-            Text("All discovered nodes sorted by state and latency. Nodes are deduplicated by host:port.")
         }
         }
     }
@@ -2827,8 +2956,8 @@ private struct AllNodesRow: View {
         .environmentObject(WalletService.shared)
 }
 
-/// Settings > Storage > Nextcloud: connect the user's own Nextcloud server, and back the Address
-/// Book up to its KaChat folder. Credentials are verified against the OCS user endpoint before
+/// Settings > Storage > Nextcloud: connect the user's own Nextcloud server, and back Contacts and
+/// the Portfolio up to it. Credentials are verified against the OCS user endpoint before
 /// being stored in the Keychain (see NextcloudService).
 struct NextcloudSettingsView: View {
     @ObservedObject private var service = NextcloudService.shared
@@ -2841,8 +2970,7 @@ struct NextcloudSettingsView: View {
     @State private var showDisconnectConfirm = false
     @State private var backupInfo = NextcloudService.BackupInfo()
     @State private var isBackingUp = false
-    @State private var isRestoring = false
-    @State private var showRestoreConfirm = false
+    @State private var showBackupFolderPicker = false
     @State private var backupStatusMessage: String?
     @State private var backupErrorMessage: String?
 
@@ -2860,8 +2988,6 @@ struct NextcloudSettingsView: View {
             Form {
                 Section {
                     Label("Nextcloud is off while Testnet is on.", systemImage: "icloud.slash")
-                } footer: {
-                    Text("The backup works on mainnet only, so testnet can never overwrite your mainnet backup. Turn off Testnet in Settings > Connection and your Nextcloud connection comes back as it was.")
                 }
             }
         } else {
@@ -2890,65 +3016,104 @@ struct NextcloudSettingsView: View {
                             .foregroundColor(.secondary)
                     }
                 }
+                if service.needsReconnect {
+                    Section {
+                        Text("Nextcloud refused this login. Disconnect, then connect again with a new app password.")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                }
                 Section {
-                    Toggle("Automatic Backup", isOn: Binding(
+                    Toggle("Automatic Sync", isOn: Binding(
                         get: { service.autoBackupEnabled },
                         set: { service.setAutoBackupEnabled($0) }
                     ))
 
+                    if let lastSynced = service.lastAutoSyncAt {
+                        HStack {
+                            Text("Last synced")
+                            Spacer()
+                            Text(lastSynced.formatted(date: .abbreviated, time: .shortened))
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                    }
+
                     Button {
-                        backUpNow()
+                        showBackupFolderPicker = true
                     } label: {
                         HStack {
-                            Label("Back Up Now", systemImage: "arrow.up.doc")
+                            Text("Backup Folder")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(account.backupFolder.map { $0.isEmpty ? AppLocalization.string("All Files") : $0 }
+                                 ?? "\(NextcloudService.backupFolderName) (default)")
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                    }
+
+                    Button {
+                        backUp(success: "Contacts backed up.") {
+                            try await NextcloudService.shared.runContactsBackup()
+                        }
+                    } label: {
+                        HStack {
+                            Label("Back Up Contacts Now", systemImage: "arrow.up.doc")
                             Spacer()
                             if isBackingUp { ProgressView() }
                         }
                     }
-                    .disabled(isBackingUp || isRestoring)
+                    .disabled(isBackingUp)
 
+                    lastBackupRow(backupInfo.contacts)
+                } header: {
+                    Text("Contact Backup")
+                } footer: {
+                    Text("Your contacts are backed up here, encrypted, in the same file KaChat uses.")
+                }
+
+                Section {
                     Button {
-                        showRestoreConfirm = true
+                        backUp(success: "Portfolio backed up.") {
+                            try await NextcloudService.shared.runPortfolioBackup()
+                        }
                     } label: {
                         HStack {
-                            Label("Restore Backup", systemImage: "arrow.down.doc")
+                            Label("Back Up Portfolio Now", systemImage: "arrow.up.doc")
                             Spacer()
-                            if isRestoring { ProgressView() }
+                            if isBackingUp { ProgressView() }
                         }
                     }
-                    .disabled(isBackingUp || isRestoring || backupInfo.isEmpty)
+                    .disabled(isBackingUp)
 
-                    if backupInfo.isEmpty {
-                        Text("No backup on this server yet.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    } else {
-                        backupFileRow("Contacts", file: backupInfo.addressBook)
-                        backupFileRow("Portfolio", file: backupInfo.portfolio)
-                    }
-
-                    if let backupStatusMessage {
-                        Text(backupStatusMessage)
-                            .font(.caption)
-                            .foregroundColor(.green)
-                    }
-                    if let backupErrorMessage {
-                        Text(backupErrorMessage)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
+                    lastBackupRow(backupInfo.portfolio)
                 } header: {
-                    Text("Backup")
+                    Text("Portfolio Backup")
                 } footer: {
-                    Text("Your contacts (names, notes and photos) are saved as \"\(NextcloudService.addressBookFileName)\" and your portfolios with their transactions as \"\(NextcloudService.portfolioFileName)\", both in the \(NextcloudService.backupFolderName) folder. Automatic Backup uploads them a few seconds after you change either, and brings in changes from your other devices when you open the app. Restoring merges the backup into this device: no address is deleted, and a portfolio or transaction deleted on another device is removed here too. Connecting a wallet to a server that has a backup restores it once by itself.")
+                    Text("Each portfolio has its own file, named after it. These files aren't encrypted.")
+                }
+
+                if backupStatusMessage != nil || backupErrorMessage != nil {
+                    Section {
+                        if let backupStatusMessage {
+                            Text(backupStatusMessage)
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
+                        if let backupErrorMessage {
+                            Text(backupErrorMessage)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                        }
+                    }
                 }
 
                 Section {
                     Button("Disconnect", role: .destructive) {
                         showDisconnectConfirm = true
                     }
-                } footer: {
-                    Text("Disconnecting removes the stored app password from this device. The backup stays on your Nextcloud server.")
                 }
             } else {
                 Section {
@@ -2969,8 +3134,6 @@ struct NextcloudSettingsView: View {
                     RevealableSecureField("App password", text: $appPasswordInput)
                 } header: {
                     Text("Server")
-                } footer: {
-                    Text("Connect your own Nextcloud to back up your contacts and Portfolio to its KaChat folder. Create an app password in Nextcloud under Settings → Security → Devices & sessions — don't use your account password. It is stored in the device Keychain.")
                 }
 
                 if let errorMessage {
@@ -3006,13 +3169,14 @@ struct NextcloudSettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The app password is removed from this device's Keychain. You can reconnect any time.")
+            Text("This revokes the app password on your Nextcloud and removes it from this device. Reconnecting needs a new one, and KaChat will too if it uses the same one.")
         }
-        .alert("Restore Backup", isPresented: $showRestoreConfirm) {
-            Button("Restore") { restore() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Your contacts and Portfolio from the backup are merged into this device. No contact is deleted; portfolios and transactions deleted on another device are removed here too.")
+        .sheet(isPresented: $showBackupFolderPicker) {
+            NextcloudFolderSelectView { path in
+                service.setBackupFolder(path)
+                // The contacts file lives per folder: re-check what exists at the new destination.
+                Task { backupInfo = await NextcloudService.shared.fetchBackupInfo() }
+            }
         }
         .task(id: service.account?.serverURLString) {
             guard service.isConnected else { return }
@@ -3020,16 +3184,18 @@ struct NextcloudSettingsView: View {
         }
     }
 
-    private func backUpNow() {
+    /// Merge-on-upload: both read the server's copy first, so a manual backup can never undo another
+    /// device's newer change, and it brings those changes in here.
+    private func backUp(success: String, _ work: @escaping () async throws -> Void) {
         guard !isBackingUp else { return }
         isBackingUp = true
         backupStatusMessage = nil
         backupErrorMessage = nil
         Task {
             do {
-                try await NextcloudService.shared.runBackup()
+                try await work()
                 backupInfo = await NextcloudService.shared.fetchBackupInfo()
-                backupStatusMessage = AppLocalization.string("Contacts and Portfolio backed up.")
+                backupStatusMessage = AppLocalization.string(success)
             } catch {
                 backupErrorMessage = UserFacingError.message(for: error)
             }
@@ -3037,53 +3203,22 @@ struct NextcloudSettingsView: View {
         }
     }
 
-    private func restore() {
-        guard !isRestoring else { return }
-        isRestoring = true
-        backupStatusMessage = nil
-        backupErrorMessage = nil
-        Task {
-            do {
-                let result = try await NextcloudService.shared.restoreBackup()
-                backupStatusMessage = Self.restoreMessage(result)
-            } catch {
-                backupErrorMessage = UserFacingError.message(for: error)
-            }
-            isRestoring = false
-        }
-    }
-
     /// One backup file's last upload, or that it isn't on the server yet.
-    private func backupFileRow(_ title: LocalizedStringKey, file: NextcloudFile?) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Group {
-                if let file, let modified = file.modified {
-                    Text("\(modified.formatted(date: .abbreviated, time: .shortened))\(file.size.map { " · \(ByteCountFormatter.string(fromByteCount: $0, countStyle: .file))" } ?? "")")
-                } else if file != nil {
-                    Text("Backed up")
-                } else {
-                    Text("Not backed up yet")
-                }
+    @ViewBuilder
+    private func lastBackupRow(_ file: NextcloudFile?) -> some View {
+        if let file, let modified = file.modified {
+            HStack {
+                Text("Last backup")
+                Spacer()
+                Text("\(modified.formatted(date: .abbreviated, time: .shortened))\(file.size.map { " · \(ByteCountFormatter.string(fromByteCount: $0, countStyle: .file))" } ?? "")")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
             }
-            .foregroundColor(.secondary)
-            .font(.caption)
+        } else if file == nil {
+            Text("No backup on this server yet.")
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
-    }
-
-    private static func restoreMessage(_ result: NextcloudService.RestoreResult) -> String {
-        guard result.changedAnything else {
-            return AppLocalization.string("Already up to date. Everything in the backup is on this device.")
-        }
-        var parts: [String] = []
-        if result.addresses > 0 {
-            parts.append(String(format: AppLocalization.string("Contacts: %lld added, %lld updated."), result.addressesAdded, result.addressesUpdated))
-        }
-        if result.portfolioChanged {
-            parts.append(AppLocalization.string("Portfolio restored."))
-        }
-        return parts.joined(separator: " ")
     }
 
     private func connect() {
@@ -3138,8 +3273,6 @@ struct CacheSettingsPage: View {
                             .monospacedDigit()
                     }
                 }
-            } footer: {
-                Text("Everything here is downloaded or generated again when it is needed, so clearing it costs a little data and nothing else.")
             }
 
             Section("What's Cached") {

@@ -50,9 +50,30 @@ private final class AppSettingsCache: @unchecked Sendable {
 
 /// Extension to load settings from any context (not MainActor-isolated)
 extension AppSettings {
+    /// Biometrics for Account Login went from on to off by default (owner's call, 2026-11-05) and
+    /// saved settings hold the old `true`. Switched off once per install, so turning it back on
+    /// sticks. It runs ahead of the first read, and every in-memory copy of the settings starts
+    /// from `load()`, so nothing can save the old value back over it. A `static let` so one thread
+    /// does this while any others wait, which is also why it posts no change notification: an
+    /// observer calling `load()` from inside this would never return.
+    private static let accountLoginBiometricsOffMigration: Void = {
+        let defaults = UserDefaults.standard
+        let doneKey = "kachat_account_login_biometrics_off_migrated"
+        guard !defaults.bool(forKey: doneKey) else { return }
+        if let data = defaults.data(forKey: "kachat_app_settings"),
+           var settings = try? JSONDecoder().decode(AppSettings.self, from: data) {
+            settings.biometricAccountLoginEnabled = false
+            if let updated = try? JSONEncoder().encode(settings) {
+                defaults.set(updated, forKey: "kachat_app_settings")
+            }
+        }
+        defaults.set(true, forKey: doneKey)
+    }()
+
     /// Load settings from UserDefaults (can be called from any context). Cached - see
     /// `AppSettingsCache`.
     static func load() -> AppSettings {
+        _ = accountLoginBiometricsOffMigration
         if let cached = AppSettingsCache.shared.get() { return cached }
         guard let data = UserDefaults.standard.data(forKey: "kachat_app_settings"),
               let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {

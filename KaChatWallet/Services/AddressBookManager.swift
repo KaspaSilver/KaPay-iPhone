@@ -11,7 +11,7 @@ struct AddressBookTombstone: Codable, Equatable, Hashable {
 /// The Address Book (Wallet > Address Book): saved Kaspa addresses with a name and a note.
 /// - one per wallet, so switching wallets never shows who another wallet knows;
 /// - on this device (UserDefaults), and on the user's Nextcloud when they connect one
-///   (`NextcloudService`: the export file in the KaChat folder), so a restore or another device
+///   (`NextcloudService`: the export file, encrypted, in `kachat-contacts.json`), so a restore or another device
 ///   brings it back. Never in the phone's Contacts.
 ///
 /// A saved name is how the app shows that address (`displayName(for:)`).
@@ -38,6 +38,9 @@ final class AddressBookManager: ObservableObject {
     private static let deletedKeyPrefix = "kachat_address_book_deleted_wallet_"
 
     private let photoCache = NSCache<NSString, UIImage>()
+    /// Addresses known to have no photo. Every avatar in the app asks on every redraw, and most
+    /// addresses have none, so that answer mustn't cost a hash and a file read.
+    private var photolessAddresses = Set<String>()
 
     private init() {
         photoCache.countLimit = 200
@@ -64,6 +67,7 @@ final class AddressBookManager: ObservableObject {
         entries = Self.sorted(stored)
         rebuildIndex()
         photoCache.removeAllObjects()
+        photolessAddresses.removeAll()
         photoVersion &+= 1
     }
 
@@ -184,10 +188,15 @@ final class AddressBookManager: ObservableObject {
 
     /// The photo you assigned to `address`, if any.
     func photo(for address: String?) -> UIImage? {
-        guard let address, let url = photoURL(for: Self.normalize(address)) else { return nil }
+        guard let address else { return nil }
+        let normalized = Self.normalize(address)
+        guard !photolessAddresses.contains(normalized), let url = photoURL(for: normalized) else { return nil }
         let key = url.path as NSString
         if let cached = photoCache.object(forKey: key) { return cached }
-        guard let image = UIImage(contentsOfFile: url.path) else { return nil }
+        guard let image = UIImage(contentsOfFile: url.path) else {
+            photolessAddresses.insert(normalized)
+            return nil
+        }
         photoCache.setObject(image, forKey: key)
         return image
     }
@@ -253,8 +262,9 @@ final class AddressBookManager: ObservableObject {
         }
         if let root = Self.photosRoot { try? FileManager.default.removeItem(at: root) }
         photoCache.removeAllObjects()
+        photolessAddresses.removeAll()
         photoVersion &+= 1
-        if walletAddress != nil { NextcloudService.shared.noteBackupDataChanged() }
+        if walletAddress != nil { NextcloudService.shared.noteContactActivity() }
     }
 
     private nonisolated static var photosRoot: URL? {
@@ -285,6 +295,7 @@ final class AddressBookManager: ObservableObject {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
         photoCache.removeObject(forKey: url.path as NSString)
+        photolessAddresses.remove(normalizedAddress)
         photoVersion &+= 1
     }
 
@@ -292,6 +303,7 @@ final class AddressBookManager: ObservableObject {
         guard let url = photoURL(for: normalizedAddress), FileManager.default.fileExists(atPath: url.path) else { return }
         try? FileManager.default.removeItem(at: url)
         photoCache.removeObject(forKey: url.path as NSString)
+        photolessAddresses.remove(normalizedAddress)
         photoVersion &+= 1
     }
 
@@ -314,6 +326,8 @@ final class AddressBookManager: ObservableObject {
 
     enum ImportError: LocalizedError {
         case notAnAddressBook, empty
+        /// Written by a newer version of the app: never merged, and so never written over.
+        case newerVersion
         /// Every address in the file is the other network's.
         case otherNetwork
 
@@ -321,6 +335,7 @@ final class AddressBookManager: ObservableObject {
             switch self {
             case .notAnAddressBook: return AppLocalization.string("That file isn't a contacts export.")
             case .empty: return AppLocalization.string("That contacts export has no contacts.")
+            case .newerVersion: return AppLocalization.string("That contacts file is from a newer version of the app. Update the app to read it.")
             case .otherNetwork: return AppLocalization.string(AppSettings.load().networkType == .testnet
                 ? "Every address in that file is a Mainnet address. KaPay is on Testnet."
                 : "Every address in that file is a Testnet address. KaPay is on Mainnet.")
@@ -355,6 +370,7 @@ final class AddressBookManager: ObservableObject {
         iso.dateDecodingStrategy = .iso8601
         guard let file = (try? iso.decode(ExportFile.self, from: data)) ?? (try? JSONDecoder().decode(ExportFile.self, from: data)),
               file.type == ExportFile.kind else { throw ImportError.notAnAddressBook }
+        guard file.version <= 1 else { throw ImportError.newerVersion }
         // A nameless entry counts like any other (IOS-089): it may carry a note and a photo, and a
         // name cleared elsewhere must clear here too when it is the newer one.
         let addressed = file.entries.filter {
@@ -411,6 +427,14 @@ final class AddressBookManager: ObservableObject {
         }
     }
 
+    /// The book is the one for this account: a slow Nextcloud call can outlive an account switch.
+    func holdsWallet(_ address: String) -> Bool {
+        walletAddress == Self.normalize(address)
+    }
+
+    /// Anything worth putting in the contacts file.
+    var hasBackupData: Bool { !entries.isEmpty || !deleted.isEmpty }
+
     /// Merges the Nextcloud backup into this book, the newest edit or deletion winning per address,
     /// before an upload or when the app opens. Unlike importing a file, a deletion stays deleted.
     /// A file another account uploaded (accounts can share a Nextcloud login) is left out, so one
@@ -423,8 +447,9 @@ final class AddressBookManager: ObservableObject {
         iso.dateDecodingStrategy = .iso8601
         guard let file = (try? iso.decode(ExportFile.self, from: data)) ?? (try? JSONDecoder().decode(ExportFile.self, from: data)),
               file.type == ExportFile.kind else { throw ImportError.notAnAddressBook }
+        guard file.version <= 1 else { throw ImportError.newerVersion }
         if let owner = file.walletAddress, Self.normalize(owner) != wallet {
-            return (false, !entries.isEmpty || !deleted.isEmpty)
+            return (false, hasBackupData)
         }
         let incoming = file.entries.filter { KaspaAddress.isValidOnActiveNetwork(Self.normalize($0.address)) }
         let tombstones = file.deleted ?? []
@@ -529,7 +554,7 @@ final class AddressBookManager: ObservableObject {
 
     /// A user edit: names in notifications and the share sheet follow, and the backup owes an upload.
     private func didChange() {
-        NextcloudService.shared.noteBackupDataChanged()
+        NextcloudService.shared.noteContactActivity()
     }
 
     private func persist() {

@@ -91,7 +91,7 @@ extension WalletService {
     /// Estimates the total fee (base + optional priority tip) for a withdrawal, without
     /// requiring a gRPC connection (uses the same REST-fallback UTXO fetch as other fee
     /// previews, since this only needs read access for the estimate).
-    func estimateWithdrawalFee(toAddress: String, amountSompi: UInt64, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0) async throws -> UInt64 {
+    func estimateWithdrawalFee(toAddress: String, amountSompi: UInt64, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0) async throws -> SendFeeEstimate {
         guard amountSompi > 0 else { throw KasiaError.networkError("Amount is zero") }
         guard let wallet = WalletManager.shared.currentWallet else { throw KasiaError.walletNotFound }
         guard let senderScriptPubKey = KaspaAddress.scriptPublicKey(from: wallet.publicAddress),
@@ -263,18 +263,27 @@ extension WalletService {
             )
 
             AppLog.log("[WalletService] Submitting spending-address withdrawal via RPC manager...")
-            let (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false)
-            AppLog.log("[WalletService] Spending-address withdrawal submitted: \(txId) via \(endpoint)")
-            if WalletManager.isQuantumIndex(index) {
-                // the spend put this address's key on chain for good (self-sends included)
-                WalletManager.shared.markQuantumAddressSpent(fromAddress, owner: owner)
+            func noteSpend() async {
+                if WalletManager.isQuantumIndex(index) {
+                    // the spend put this address's key on chain for good (self-sends included)
+                    await WalletManager.shared.markQuantumAddressSpent(fromAddress, owner: owner)
+                }
+                if let freshChangeIndex {
+                    // The primary follows its change onto the fresh address. Manage Addresses
+                    // listens for this and moves its star at once.
+                    await WalletManager.shared.setActiveSpendingAddress(freshChangeIndex, owner: owner)
+                }
             }
-            if let freshChangeIndex {
-                // The primary follows its change onto the fresh address. Manage Addresses
-                // listens for this and moves its star at once.
-                await WalletManager.shared.setActiveSpendingAddress(freshChangeIndex, owner: owner)
+            do {
+                let (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false)
+                AppLog.log("[WalletService] Spending-address withdrawal submitted: \(txId) via \(endpoint)")
+                await noteSpend()
+                return txId
+            } catch let unknown as SendOutcomeUnknownError {
+                // It may have landed: its change has to stay visible, and a quantum source counts as spent.
+                await noteSpend()
+                throw unknown
             }
-            return txId
         }
     }
 
@@ -351,7 +360,7 @@ extension WalletService {
     /// Estimates the total fee for a spending-address withdrawal. Calls NodePoolService
     /// directly rather than fetchUtxosWithFallback, whose single-address UTXO cache would
     /// return the wrong address's data when estimating for anything but the identity address.
-    func estimateSpendingAddressWithdrawalFee(index: Int, toAddress: String, amountSompi: UInt64, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0, availableUtxos: [UTXO] = [], virtualDaaScore: UInt64? = nil) async throws -> UInt64 {
+    func estimateSpendingAddressWithdrawalFee(index: Int, toAddress: String, amountSompi: UInt64, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0, availableUtxos: [UTXO] = [], virtualDaaScore: UInt64? = nil) async throws -> SendFeeEstimate {
         guard amountSompi > 0 else { throw KasiaError.networkError("Amount is zero") }
         guard let fromAddress = WalletManager.shared.spendingAddress(at: index) else {
             throw KasiaError.keychainError("Could not derive this spending address")

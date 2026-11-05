@@ -1090,12 +1090,12 @@ final class PortfolioViewModel: ObservableObject {
         )
         PortfolioLedgerStore.save(transactions, walletAddress: activeWalletAddress)
         savedTransactions = transactions
-        NextcloudService.shared.noteBackupDataChanged()
+        NextcloudService.shared.notePortfolioChanged()
     }
 
     private func persistFees() {
         PortfolioLedgerStore.saveFees(fees, walletAddress: activeWalletAddress)
-        NextcloudService.shared.noteBackupDataChanged()
+        NextcloudService.shared.notePortfolioChanged()
     }
 
     /// Re-reads this wallet's ledger after a Nextcloud restore wrote a merged one.
@@ -1205,8 +1205,8 @@ final class PortfolioViewModel: ObservableObject {
     /// header) so re-importing never depends on the exporting device's local timezone. Fee /
     /// Fee Currency are written as zero/USD — the ledger doesn't keep fee as a separate line
     /// item; any fee captured at import time is already folded into Total value (USD).
-    /// The export's file name: the name you gave the portfolio in the app ("Long Term 2026-10-08…
-    /// .csv"), so it is recognizable in Files and Nextcloud; "KaPay Portfolio" if it has none.
+    /// The export's file name: the name you gave the portfolio in the app ("Long Term.csv"), so each
+    /// portfolio has its own file, recognizable in Files and Nextcloud; "Portfolio" if it has no name.
     /// Characters a file name can't hold are dropped.
     static func exportBaseName() -> String {
         let manager = PortfolioManager.shared
@@ -1215,7 +1215,7 @@ final class PortfolioViewModel: ObservableObject {
         let cleaned = name.unicodeScalars.filter { !banned.contains($0) }
             .map(String.init).joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? "KaPay Portfolio" : String(cleaned.prefix(60))
+        return cleaned.isEmpty ? "Portfolio" : String(cleaned.prefix(60))
     }
 
     func exportCsvURL() -> URL? {
@@ -1235,9 +1235,7 @@ final class PortfolioViewModel: ObservableObject {
         let exportDir = FileManager.default.temporaryDirectory.appendingPathComponent("portfolio_exports", isDirectory: true)
         try? FileManager.default.createDirectory(at: exportDir, withIntermediateDirectories: true)
 
-        let isoFormatter = ISO8601DateFormatter()
-        let fileTimestamp = isoFormatter.string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let fileURL = exportDir.appendingPathComponent("\(Self.exportBaseName()) \(fileTimestamp).csv")
+        let fileURL = exportDir.appendingPathComponent("\(Self.exportBaseName()).csv")
 
         do {
             try csv.write(to: fileURL, atomically: true, encoding: .utf8)

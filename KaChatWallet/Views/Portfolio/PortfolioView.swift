@@ -17,8 +17,7 @@ struct PortfolioView: View {
             // One continuous page: portfolio picker cards, then the two launcher squares, then the
             // Transactions section - no Data/Transactions tabs. Everything lives in the
             // transactions view's List, so scrolling flows straight from cards into
-            // transactions, the picker cards scroll away (collapse) cleanly, and the large
-            // nav title tracks the scroll natively.
+            // transactions, and the picker cards scroll away (collapse) cleanly.
             PortfolioTransactionsView(viewModel: viewModel) {
                 Section {
                     PortfolioPickerHeader(
@@ -70,8 +69,7 @@ struct PortfolioView: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             }
-            .navigationTitle("Portfolio")
-            .navigationBarTitleDisplayMode(.large)
+            .pinnedTabHeader("Portfolio")
             // Landing here after a while: a fresh price without the whole launch burst.
             .onAppear { viewModel.refreshSpotPriceIfStale() }
             // All three destinations live HERE, on the stack's root, not on the buttons that

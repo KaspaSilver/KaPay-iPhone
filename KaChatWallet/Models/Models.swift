@@ -71,7 +71,7 @@ struct SpendingAddressEntry: Identifiable, Equatable, Codable {
     /// The row's number on its own chain, both named "Address #n" (quantum numbering starts at
     /// 0 again; the shield is what tells the chains apart).
     var displayTitle: String {
-        "Address #\(isQuantum ? index - WalletManager.quantumIndexBase : index)"
+        "Address #\(WalletManager.addressNumber(forIndex: index))"
     }
     /// Whether this address is hidden from the main Manage Addresses list. Enforced
     /// server-side (WalletManager.setSpendingAddressHidden refuses to hide the primary
@@ -817,8 +817,10 @@ struct AppSettings: Codable {
         language: AppLanguage = .system,
         currency: AppCurrency = .usDollar,
         biometricSeedPhraseEnabled: Bool = true,
-        // Asked when signing back in to a saved account: on by default (owner's call, 2026-11-01).
-        biometricAccountLoginEnabled: Bool = true,
+        // Asked when signing back in to a saved account: off by default, so a phone with no passcode
+        // can still get in and see its account (owner's call, 2026-11-05). Users can turn it on. The
+        // words, private keys and sends still need the phone's lock.
+        biometricAccountLoginEnabled: Bool = false,
         biometricSpendingKeyEnabled: Bool = true,
         verboseAPILogging: Bool = false,
         indexerURL: String,
@@ -877,7 +879,7 @@ struct AppSettings: Codable {
         language = try container.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .system
         currency = try container.decodeIfPresent(AppCurrency.self, forKey: .currency) ?? .usDollar
         biometricSeedPhraseEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricSeedPhraseEnabled) ?? true
-        biometricAccountLoginEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricAccountLoginEnabled) ?? true
+        biometricAccountLoginEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricAccountLoginEnabled) ?? false
         biometricSpendingKeyEnabled = try container.decodeIfPresent(Bool.self, forKey: .biometricSpendingKeyEnabled) ?? true
         verboseAPILogging = try container.decodeIfPresent(Bool.self, forKey: .verboseAPILogging) ?? false
 
@@ -999,9 +1001,9 @@ enum KasiaError: LocalizedError {
         case .walletNotFound:
             return "Account not found. Please create or import an account."
         case .invalidSeedPhrase:
-            return "Invalid seed phrase. Please enter 12 or 24 words."
+            return "Invalid words. Please enter 12 or 24 words."
         case .seedPhraseParsingFailed(let wordCount):
-            return "Seed phrase parsing failed. Detected \(wordCount) words (expected 12 or 24)."
+            return "Couldn't read your words. Detected \(wordCount) words (expected 12 or 24)."
         case .mnemonicValidationFailed(let reason):
             return "Mnemonic validation failed: \(reason)"
         case .invalidAddress:
@@ -1029,6 +1031,17 @@ enum KasiaError: LocalizedError {
 /// failed, "Keychain error: -25300". The app's own errors carry sentences already written for
 /// the user, so those pass through with their developer prefixes stripped; system and library
 /// errors are translated; the raw text still goes to the log for diagnostics.
+/// A send a node may have received without ever answering, which the network doesn't have yet. It
+/// may still land, so nothing should offer to send it again. The send screen shows "Not confirmed"
+/// with this message and only Done (`SendProgressScreen`).
+struct SendOutcomeUnknownError: LocalizedError {
+    let txId: String
+    static var message: String {
+        AppLocalization.string("This may have gone through, but the network didn't confirm it. Check your balance before sending again.")
+    }
+    var errorDescription: String? { Self.message }
+}
+
 enum UserFacingError {
     static func message(for error: Error) -> String {
         if error is CancellationError { return "Cancelled." }
