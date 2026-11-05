@@ -101,6 +101,7 @@ struct ProfileView: View {
     // whole scroll recompute on every node-latency update. The connection dot is its own small view
     // with its own observation.
     @EnvironmentObject var settingsViewModel: SettingsViewModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @State private var editedAlias = ""
     /// When `onAppear` last ran its balance / receive-address requests (at most every 30 s).
@@ -899,9 +900,19 @@ struct ProfileView: View {
         }
     }
 
+    /// Square on a phone. As wide as half an iPad, a square would fill most of the screen with
+    /// nothing, so there it keeps the width and a set height.
+    @ViewBuilder
+    private var addressSquareShape: some View {
+        if horizontalSizeClass == .regular {
+            Color.clear.frame(height: 170)
+        } else {
+            Color.clear.aspectRatio(1, contentMode: .fit)
+        }
+    }
+
     private func addressSquare(icon: String, title: LocalizedStringKey) -> some View {
-        Color.clear
-            .aspectRatio(1, contentMode: .fit)
+        addressSquareShape
             .frame(maxWidth: .infinity)
             .overlay {
                 VStack(spacing: 8) {
