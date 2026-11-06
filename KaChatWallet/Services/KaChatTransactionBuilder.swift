@@ -685,7 +685,12 @@ struct KasiaTransactionBuilder {
                                           signatureScriptSize: signatureScriptSize) + 3 + extraFeeSompi
             if total > amount && total - amount >= feeNoChange {
                 let change = total - amount - feeNoChange
-                if change <= maxFoldedChangeSompi {
+                // The recipient's output alone must fit too: a small send carved from a bigger
+                // coin breaks the budget without any change (0.03 KAS from one 0.1 KAS coin), and
+                // the node would refuse it after the Review had shown the folded change as fee.
+                // Another coin lowers that mass, so keep adding before giving up.
+                if change <= maxFoldedChangeSompi,
+                   fitsStorageMass(inputAmounts: selected.map(\.amount), outputAmounts: [amount]) {
                     return PaymentSelection(utxos: selected, change: change, emitChange: false)
                 }
                 blockedByStorageMass = true
@@ -753,7 +758,9 @@ struct KasiaTransactionBuilder {
                                       signatureScriptSize: signatureScriptSize) + 3 + extraFeeSompi
         if total > amount, total - amount >= feeNoChange {
             let leftover = total - amount - feeNoChange
-            guard leftover <= maxFoldedChangeSompi else {
+            // the recipient's output alone must fit the storage-mass budget too (see the greedy selector)
+            guard leftover <= maxFoldedChangeSompi,
+                  fitsStorageMass(inputAmounts: usable.map(\.amount), outputAmounts: [amount]) else {
                 throw KasiaError.networkError(smallSendMassMessage)
             }
             return PaymentSelection(utxos: usable, change: leftover, emitChange: false)

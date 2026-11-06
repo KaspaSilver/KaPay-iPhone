@@ -1343,11 +1343,13 @@ struct SwipeUpToSendScrollView<Content: View>: View {
     @State private var confirmed = false
     /// The send ended without a transaction: the sending screen shows "Failed".
     @State private var failed = false
+    /// Face ID is up for this swipe: nothing else starts until it answers.
+    @State private var authPending = false
 
     private static var barHeight: CGFloat { 64 }
     private static var settle: Animation { .spring(response: 0.45, dampingFraction: 0.86) }
 
-    private var active: Bool { isEnabled && !isBusy }
+    private var active: Bool { isEnabled && !isBusy && !authPending }
 
     var body: some View {
         GeometryReader { geometry in
@@ -1456,7 +1458,8 @@ struct SwipeUpToSendScrollView<Content: View>: View {
                     }
                 }
                 .onEnded { _ in
-                    guard phase == .form else { return }
+                    // a touch while Face ID is up leaves the waiting send as it is
+                    guard phase == .form, !authPending else { return }
                     if armed && active {
                         authenticateThenSend()
                     } else {
@@ -1480,10 +1483,16 @@ struct SwipeUpToSendScrollView<Content: View>: View {
     /// Kaspa never leaves on the swipe alone: Face ID first, on every screen that swipes up.
     /// Declined, the screen settles back with everything still filled in.
     private func authenticateThenSend() {
+        guard !authPending, phase == .form else { return }
+        authPending = true
         DeviceAuth.authenticate(
             reason: authReason ?? AppLocalization.string("Confirm sending Kaspa"),
-            onSuccess: { startSending() },
+            onSuccess: {
+                startSending()
+                authPending = false
+            },
             onFailure: {
+                authPending = false
                 armed = false
                 withAnimation(Self.settle) { lift = 0 }
             }
@@ -1491,6 +1500,7 @@ struct SwipeUpToSendScrollView<Content: View>: View {
     }
 
     private func startSending() {
+        guard phase == .form else { return }
         armed = false
         dagShown = false
         sendStarted = isBusy

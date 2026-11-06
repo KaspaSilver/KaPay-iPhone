@@ -542,14 +542,15 @@ struct AccountBackupView: View {
         case .wordCheck:
             wordPage = pageCount - 1
             go(to: .words)
-        case .passphrase: startWordCheck()
+        // Back to a check already passed keeps its words and answers: going back is for
+        // looking again, not for being tested on new words.
+        case .passphrase: go(to: .wordCheck)
         case .passphraseCheck: go(to: .passphrase)
         case .tips:
             if passphrase != nil {
-                passphraseAnswer = ""
                 go(to: .passphraseCheck)
             } else {
-                startWordCheck()
+                go(to: .wordCheck)
             }
         }
     }

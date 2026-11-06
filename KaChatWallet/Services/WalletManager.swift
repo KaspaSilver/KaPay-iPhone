@@ -233,7 +233,8 @@ final class WalletManager: ObservableObject {
         do {
             LaunchTrace.mark("loadWallet: reading wallet record")
             // Try to load from keychain first
-            if let wallet = try keychainService.loadWallet() {
+            if let storedWallet = try keychainService.loadWallet() {
+                let wallet = withSavedAlias(storedWallet)
                 if UserDefaults.standard.bool(forKey: logoutFlagKey), !force {
                     updateSavedAccounts(from: wallet)
                     currentWallet = nil
@@ -326,10 +327,10 @@ final class WalletManager: ObservableObject {
     @discardableResult
     func commitCreatedWallet(seedPhrase: SeedPhrase, passphrase: String, alias: String) async throws -> Wallet {
         let sp = SeedPhrase(words: seedPhrase.words, passphrase: passphrase.isEmpty ? nil : passphrase)
-        let wallet = try await importWallet(from: sp, alias: alias)
-        // nobody has seen these words yet: the Wallet tab's card stays until they're backed up
-        AccountBackupStatus.shared.markPending(wallet.publicAddress)
-        return wallet
+        // Nobody has seen these words yet: the backup strip stays until they're backed up.
+        // Marked inside the import, before the keys are saved, so an app killed mid-create
+        // can't leave an account that is never owed its backup.
+        return try await importWallet(from: sp, alias: alias, owesBackup: true)
     }
 
     /// The name a new account gets, renameable later: "My Account", then "My Account 2" and on,
@@ -353,7 +354,9 @@ final class WalletManager: ObservableObject {
     ///   (the KasWare-style source-wallet selection in the import flow). `.kaspaStandard` for
     ///   every create and for imports of KaChat/KasWare/Kaspium/Core CLI/OKX/Ledger seeds.
     ///   Persisted per derived address, exactly like the main-address index.
-    func importWallet(from seedPhrase: SeedPhrase, alias: String = "My Account", chattingAddressIndex: Int = 0, family: WalletSourceFamily = .kaspaStandard) async throws -> Wallet {
+    /// - Parameter owesBackup: a brand-new account made here (`commitCreatedWallet`): it is
+    ///   marked as owing its backup before anything is saved.
+    func importWallet(from seedPhrase: SeedPhrase, alias: String = "My Account", chattingAddressIndex: Int = 0, family: WalletSourceFamily = .kaspaStandard, owesBackup: Bool = false) async throws -> Wallet {
         // Validate BIP39 checksum to catch typos in seed phrases
         guard bip39.validateMnemonic(seedPhrase.phrase) else {
             throw KasiaError.invalidSeedPhrase
@@ -391,11 +394,18 @@ final class WalletManager: ObservableObject {
             createdAt: accountAddedDate(for: publicAddress)
         )
 
-        // the account in the active slot must be safely filed before its keys are overwritten
-        try snapshotStoredWallet(beforeReplacingWith: publicAddress)
+        if owesBackup { AccountBackupStatus.shared.markPending(publicAddress) }
+        do {
+            // the account in the active slot must be safely filed before its keys are overwritten
+            try snapshotStoredWallet(beforeReplacingWith: publicAddress)
 
-        // Save wallet
-        try await saveWallet(wallet, seedPhrase: seedPhrase, privateKey: privateKeyData)
+            // Save wallet
+            try await saveWallet(wallet, seedPhrase: seedPhrase, privateKey: privateKeyData)
+        } catch {
+            // nothing was created, so nothing is owed
+            if owesBackup { AccountBackupStatus.shared.markDone(publicAddress) }
+            throw error
+        }
 
         var updated = wallet
         if let cached = loadCachedBalance(for: wallet.publicAddress) {
@@ -502,6 +512,9 @@ final class WalletManager: ObservableObject {
             try keychainService.clearAll()
         }
         currentWallet = nil
+        // the deleted account's key must not outlive it in memory
+        cachedPrivateKey = nil
+        lastBalanceRefresh = nil
         updateSavedAccounts(from: nil)
         isLoggedOut = false
         isBalanceRefreshing = false
@@ -621,6 +634,9 @@ final class WalletManager: ObservableObject {
                     GlobalNotificationCenter.removeAllData(forWalletAddress: address)
                 }
                 AccountBackupStatus.shared.forget(account.publicAddress)
+                if let cached = cachedPrivateKey, Self.isSameAccount(cached.address, account.publicAddress) {
+                    cachedPrivateKey = nil
+                }
                 removeSavedAccountFromStorage(account)
                 return
             }
@@ -662,6 +678,8 @@ final class WalletManager: ObservableObject {
         AccountBackupStatus.shared.forget(account.publicAddress)
         removeSavedAccountFromStorage(account)
         currentWallet = nil
+        cachedPrivateKey = nil
+        lastBalanceRefresh = nil
         isBalanceRefreshing = false
         isLoggedOut = false
         UserDefaults.standard.removeObject(forKey: logoutFlagKey)
@@ -927,7 +945,7 @@ final class WalletManager: ObservableObject {
     /// Renames a saved account entry (Onboarding's saved-accounts list). If this account
     /// happens to be the currently active wallet, keeps its alias in sync too.
     func renameSavedAccount(_ account: SavedAccountSummary, to newAlias: String) {
-        guard let index = savedAccounts.firstIndex(where: { $0.publicAddress == account.publicAddress }) else { return }
+        guard let index = savedAccounts.firstIndex(where: { Self.isSameAccount($0.publicAddress, account.publicAddress) }) else { return }
         let trimmed = newAlias.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         savedAccounts[index].alias = trimmed
@@ -936,6 +954,35 @@ final class WalletManager: ObservableObject {
         if isCurrentAccount(account) {
             currentWallet?.alias = trimmed
         }
+        // The account in the active slot (signed in, or the last one signed out of): its wallet
+        // record is what `loadWallet` reads, so the name goes there too, or the next launch or
+        // sign-in would bring the old one back.
+        if var stored = try? keychainService.loadWallet(),
+           Self.isSameAccount(stored.publicAddress, account.publicAddress), stored.alias != trimmed {
+            stored.alias = trimmed
+            do {
+                try keychainService.saveWallet(stored)
+            } catch {
+                AppLog.log("%@", "[WalletManager] Failed to save renamed wallet record: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// The wallet record with the saved-accounts list's name for it. Every rename writes that
+    /// list first, so its name is never older than the record's; a record left with an older name
+    /// (by a build that renamed only the list) is brought up to date here instead of undoing the
+    /// rename.
+    private func withSavedAlias(_ wallet: Wallet) -> Wallet {
+        guard let saved = savedAccounts.first(where: {
+                  Self.isSameAccount($0.publicAddress, wallet.publicAddress)
+                      || (!wallet.publicKey.isEmpty && $0.publicKey == wallet.publicKey)
+              }) else { return wallet }
+        let name = saved.alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != wallet.alias else { return wallet }
+        var renamed = wallet
+        renamed.alias = name
+        try? keychainService.saveWallet(renamed)
+        return renamed
     }
 
     private func removeSavedAccountFromStorage(_ account: SavedAccountSummary) {
@@ -1442,8 +1489,15 @@ final class WalletManager: ObservableObject {
     }
 
     /// Persisted identity-chain index for a derived chatting address (0 when never customized).
+    /// Read on either network's encoding of the address: the wallet record keeps the one it was
+    /// saved with, and after a mainnet/testnet switch the running address is the other one.
     func chattingAddressIndex(for address: String) -> Int {
-        UserDefaults.standard.object(forKey: chattingIndexKey(for: address)) as? Int ?? 0
+        for variant in Self.accountAddressVariants(address) {
+            if let index = UserDefaults.standard.object(forKey: chattingIndexKey(for: variant)) as? Int {
+                return index
+            }
+        }
+        return 0
     }
 
     /// Identity-chain index of the active wallet's chatting address (0 = the standard identity).
@@ -1452,11 +1506,14 @@ final class WalletManager: ObservableObject {
         return chattingAddressIndex(for: address)
     }
 
+    /// Written under both networks' encodings, so a mainnet/testnet switch reads the same index.
     private func persistChattingAddressIndex(_ index: Int, for address: String) {
-        if index == 0 {
-            UserDefaults.standard.removeObject(forKey: chattingIndexKey(for: address))
-        } else {
-            UserDefaults.standard.set(index, forKey: chattingIndexKey(for: address))
+        for variant in Self.accountAddressVariants(address) {
+            if index == 0 {
+                UserDefaults.standard.removeObject(forKey: chattingIndexKey(for: variant))
+            } else {
+                UserDefaults.standard.set(index, forKey: chattingIndexKey(for: variant))
+            }
         }
     }
 
@@ -1468,12 +1525,15 @@ final class WalletManager: ObservableObject {
 
     /// Persisted identity path family for a derived address (`.kaspaStandard` when never
     /// customized - every pre-existing wallet).
+    /// Read on either network's encoding of the address, like the chatting index.
     func walletSourceFamily(for address: String) -> WalletSourceFamily {
-        guard let raw = UserDefaults.standard.string(forKey: walletSourceFamilyKey(for: address)),
-              let family = WalletSourceFamily(rawValue: raw) else {
-            return .kaspaStandard
+        for variant in Self.accountAddressVariants(address) {
+            if let raw = UserDefaults.standard.string(forKey: walletSourceFamilyKey(for: variant)),
+               let family = WalletSourceFamily(rawValue: raw) {
+                return family
+            }
         }
-        return family
+        return .kaspaStandard
     }
 
     /// Identity path family of the active wallet.
@@ -1483,10 +1543,12 @@ final class WalletManager: ObservableObject {
     }
 
     private func persistWalletSourceFamily(_ family: WalletSourceFamily, for address: String) {
-        if family == .kaspaStandard {
-            UserDefaults.standard.removeObject(forKey: walletSourceFamilyKey(for: address))
-        } else {
-            UserDefaults.standard.set(family.rawValue, forKey: walletSourceFamilyKey(for: address))
+        for variant in Self.accountAddressVariants(address) {
+            if family == .kaspaStandard {
+                UserDefaults.standard.removeObject(forKey: walletSourceFamilyKey(for: variant))
+            } else {
+                UserDefaults.standard.set(family.rawValue, forKey: walletSourceFamilyKey(for: variant))
+            }
         }
     }
 

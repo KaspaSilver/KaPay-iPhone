@@ -110,6 +110,11 @@ final class WalletService: ObservableObject {
     var cachedUtxos: [UTXO] = []
     var cachedUtxosTimestamp: Date?
     let utxoCacheInterval: TimeInterval = 20
+    /// Coins a send from this app has just spent, by outpoint, and until when they stay out: the
+    /// node goes on listing them until that spend is in a block, so the next send, Max or fee
+    /// would otherwise pick them again and be refused.
+    var reservedOutpoints: [String: Date] = [:]
+    let spentOutpointHold: TimeInterval = 120
 
     private var pingLatencyCancellable: AnyCancellable?
     private var nodePoolSubscriptionStateCancellable: AnyCancellable?
@@ -206,6 +211,7 @@ final class WalletService: ObservableObject {
         hasCompletedInitialSync = false
         cachedUtxos = []
         cachedUtxosTimestamp = nil
+        reservedOutpoints = [:]
         queuedUtxoNotifications = []
     }
 

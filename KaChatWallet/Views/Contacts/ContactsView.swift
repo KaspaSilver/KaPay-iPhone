@@ -4034,6 +4034,8 @@ struct WithdrawKaspaView: View {
     /// The fee a send with a higher fee will really pay, once estimated.
     @State private var tippedFeeSompi: UInt64?
     @State private var isEstimatingFee = false
+    /// `tippedFeeSompi` is on its way: the Review's total isn't final yet.
+    @State private var isEstimatingTippedFee = false
     @State private var isEstimatingMax = false
     @State private var customExtraFeeSompi: UInt64?
     @State private var isEditingFee = false
@@ -4074,8 +4076,12 @@ struct WithdrawKaspaView: View {
         return isValidAddress && !isResolvingKNS
     }
 
+    /// The swipe waits for a settled amount and fee: a Max or fee still being worked out, or a
+    /// fee that couldn't be, would send something other than what the Review shows.
     private var canSend: Bool {
         hasValidRecipient && amountSompi != nil && !isSending
+            && !isEstimatingMax && !isEstimatingFee && !isEstimatingTippedFee
+            && normalFeeSompi != nil && feeError == nil
     }
 
     /// Extra priority tip on top of the base (Normal-tier) fee, for network congestion.
@@ -4226,7 +4232,9 @@ struct WithdrawKaspaView: View {
             // total comes from an estimate made with that fee, what the send itself will do.
             .task(id: "\(feeEstimationKey)|\(extraFeeSompi)") {
                 tippedFeeSompi = nil
+                isEstimatingTippedFee = false
                 guard extraFeeSompi > 0, !isCompoundMode, hasValidRecipient, let amountSompi else { return }
+                isEstimatingTippedFee = true
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard !Task.isCancelled else { return }
                 let tip = extraFeeSompi
@@ -4236,14 +4244,17 @@ struct WithdrawKaspaView: View {
                 } else {
                     fee = try? await walletService.estimateWithdrawalFee(toAddress: effectiveAddress, amountSompi: amountSompi, manualUtxos: manualUtxos, extraFeeSompi: tip)
                 }
-                guard !Task.isCancelled, let fee else { return }
-                tippedFeeSompi = fee.networkFee + fee.foldedChange
+                guard !Task.isCancelled else { return }
+                // a failed look-up leaves the base fee plus the extra, the closest there is
+                if let fee { tippedFeeSompi = fee.networkFee + fee.foldedChange }
+                isEstimatingTippedFee = false
             }
             // The confirmation is the swipe-up's own full screen (SwipeUpToSendScrollView).
             .task(id: feeEstimationKey) {
                 guard hasValidRecipient, let amountSompi else {
                     normalFeeSompi = nil
                     feeError = nil
+                    isEstimatingFee = false
                     return
                 }
                 isEstimatingFee = true

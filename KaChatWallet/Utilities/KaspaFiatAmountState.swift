@@ -14,6 +14,10 @@ import SwiftUI
 final class KaspaFiatAmountState: ObservableObject {
     @Published private(set) var isFiatMode = false
     @Published private(set) var displayText = ""
+    /// The canonical KAS string last handed to the caller. A unit switch only changes what's
+    /// shown, never the amount: converting back from the 2-decimal currency figure used to put a
+    /// different KAS number on screen than the one the caller still held and would send.
+    private var kasText = ""
 
     private func kasFromDisplay(priceInCurrency: Double?) -> Double? {
         guard let entered = Double(displayText) else { return nil }
@@ -26,8 +30,12 @@ final class KaspaFiatAmountState: ObservableObject {
     @discardableResult
     func onDisplayTextChange(_ text: String, priceInCurrency: Double?) -> String {
         displayText = text
-        guard isFiatMode else { return text }
-        return kasFromDisplay(priceInCurrency: priceInCurrency).map { formatKasAmountPlain($0) } ?? ""
+        guard isFiatMode else {
+            kasText = text
+            return text
+        }
+        kasText = kasFromDisplay(priceInCurrency: priceInCurrency).map { formatKasAmountPlain($0) } ?? ""
+        return kasText
     }
 
     /// Caller's own Max button already knows the current max sendable KAS (fee-aware, etc.) -
@@ -40,20 +48,27 @@ final class KaspaFiatAmountState: ObservableObject {
         } else {
             displayText = formatKasAmountPlain(maxKas)
         }
-        return formatKasAmountPlain(maxKas)
+        kasText = formatKasAmountPlain(maxKas)
+        return kasText
     }
 
     /// Flips units, carrying today's typed number over converted into the other one rather than
-    /// clearing the field. No-ops if there's no live price yet to convert with.
+    /// clearing the field. No-ops if there's no live price yet to convert with. Back in KAS it
+    /// shows the exact amount the caller holds (`kasText`), not one worked back from the rounded
+    /// currency figure.
     func toggleMode(priceInCurrency: Double?) {
         guard let priceInCurrency, priceInCurrency > 0 else { return }
-        let kas = kasFromDisplay(priceInCurrency: priceInCurrency)
+        let kas = Double(kasText) ?? kasFromDisplay(priceInCurrency: priceInCurrency)
         isFiatMode.toggle()
         guard let kas else {
             displayText = ""
             return
         }
-        displayText = isFiatMode ? String(format: "%.2f", kas * priceInCurrency) : formatKasAmountPlain(kas)
+        if isFiatMode {
+            displayText = String(format: "%.2f", kas * priceInCurrency)
+        } else {
+            displayText = kasText.isEmpty ? formatKasAmountPlain(kas) : kasText
+        }
     }
 
     /// Live value of whichever unit ISN'T currently being typed, for the small label shown next
@@ -62,7 +77,8 @@ final class KaspaFiatAmountState: ObservableObject {
     func conversionLabelText(priceInCurrency: Double?, currency: AppCurrency) -> String? {
         guard let kas = kasFromDisplay(priceInCurrency: priceInCurrency) else { return nil }
         if isFiatMode {
-            return "\(formatKasAmountPlain(kas)) \(KaspaUnit.symbol)"
+            // the KAS that will be sent, exactly
+            return "\(kasText.isEmpty ? formatKasAmountPlain(kas) : kasText) \(KaspaUnit.symbol)"
         }
         guard let priceInCurrency, priceInCurrency > 0 else { return nil }
         return formatFiatAmount(kas * priceInCurrency, currency: currency)
@@ -76,5 +92,6 @@ final class KaspaFiatAmountState: ObservableObject {
     func reset() {
         isFiatMode = false
         displayText = ""
+        kasText = ""
     }
 }

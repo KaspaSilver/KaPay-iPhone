@@ -15,7 +15,8 @@ import SwiftUI
 ///      updating underneath as you type. That live address is the point: it is the only direct
 ///      evidence that a passphrase opens a DIFFERENT account rather than protecting the same one,
 ///      and a balance is how someone importing can tell they typed the right one.
-///   3. `explainer` - plain-language, back only, so reading about it always returns to the choice.
+///   3. `explainer` - plain-language, back only, so reading about it always returns to the screen
+///      it was opened from (the question, or the entry screen, which links it too).
 ///
 /// The caller (`CreateWalletView` / `ImportWalletView`) performs the actual wallet commit via
 /// `onProceed`, which receives the chosen passphrase ("" when there is none).
@@ -52,6 +53,11 @@ struct PassphraseOptionView: View {
     @State private var reveal = false
     @State private var isBusy = false
     @State private var error: String?
+    /// The import's search for the address holding funds is running: Import waits for it, or it
+    /// would import onto #0 while the funds sit on another address.
+    @State private var isSearchingAddresses = false
+    /// Where the explainer's Back returns: the question (import) or the entry screen.
+    @State private var explainerReturnStep: Step = .question
 
     init(
         mode: Mode,
@@ -154,6 +160,7 @@ struct PassphraseOptionView: View {
                 .disabled(isBusy)
 
                 Button {
+                    explainerReturnStep = .question
                     step = .explainer
                 } label: {
                     Text("What is a passphrase?")
@@ -187,14 +194,18 @@ struct PassphraseOptionView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 passphraseFields
+                    // Nothing changes the account once it is being made.
+                    .disabled(isBusy)
 
                 PassphraseAddressPreview(
                     words: seedWords,
                     passphrase: passphrase,
                     family: family,
                     showsFundsHint: mode == .importExisting,
-                    selectedIndex: chattingAddressIndex
+                    selectedIndex: chattingAddressIndex,
+                    isSearching: chattingAddressIndex == nil ? nil : $isSearchingAddresses
                 )
+                .disabled(isBusy)
 
                 Button {
                     submitFromEntry()
@@ -202,6 +213,12 @@ struct PassphraseOptionView: View {
                     Group {
                         if isBusy {
                             ProgressView().tint(.white)
+                        } else if isSearchingAddresses && !passphrase.isEmpty {
+                            HStack(spacing: 8) {
+                                ProgressView().tint(.white)
+                                Text("Finding your address...")
+                                    .font(.headline)
+                            }
                         } else {
                             Text(mode == .create ? "Continue" : "Import")
                                 .font(.headline)
@@ -215,6 +232,19 @@ struct PassphraseOptionView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!canSubmitPassphrase || isBusy)
+
+                Button {
+                    explainerReturnStep = .entry
+                    step = .explainer
+                } label: {
+                    Text("What is a passphrase?")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.accentColor)
+                .disabled(isBusy)
             }
             .padding(24)
         }
@@ -307,7 +337,7 @@ struct PassphraseOptionView: View {
                 explainerSection(
                     "So do you need one?",
                     mode == .create
-                        ? "If you are not sure, choose No. Your account is still protected by your 12 or 24 words, and you can always create another account with a passphrase later."
+                        ? "If you are not sure, you do not need one: go back to the start and tap Create New Account, which makes an account without a passphrase. It is still protected by your 12 or 24 words, and you can always create another account with a passphrase later."
                         : "If you never set one up, choose No. A passphrase is something you would have typed in on purpose, so if this is the first you are hearing of it, you do not have one."
                 )
             }
@@ -318,7 +348,7 @@ struct PassphraseOptionView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Button("Back") { step = .question }
+                Button("Back") { step = explainerReturnStep }
             }
         }
     }
@@ -338,10 +368,11 @@ struct PassphraseOptionView: View {
     // MARK: - Actions
 
     private var canSubmitPassphrase: Bool {
-        !passphrase.isEmpty
+        !passphrase.isEmpty && !isSearchingAddresses
     }
 
     private func submitFromEntry() {
+        guard !isSearchingAddresses else { return }
         guard !passphrase.isEmpty else {
             error = "Enter a passphrase, or go back and choose No."
             return
@@ -390,6 +421,8 @@ struct PassphraseAddressPreview: View {
     /// Set when the chatting address isn't known yet: the preview checks the first addresses on
     /// the identity chain, picks the first with funds, and lets the user pick another.
     var selectedIndex: Binding<Int>?
+    /// True while that search runs, so the caller can hold its Import until the pick is made.
+    var isSearching: Binding<Bool>?
 
     /// The same depth as one page of the chatting address picker.
     private static let searchDepth = 0..<50
@@ -436,7 +469,10 @@ struct PassphraseAddressPreview: View {
         // sees the copy from before the change.
         .onChange(of: passphrase) { schedulePreview(for: $0) }
         .onAppear { schedulePreview(for: passphrase) }
-        .onDisappear { previewTask?.cancel() }
+        .onDisappear {
+            previewTask?.cancel()
+            isSearching?.wrappedValue = false
+        }
     }
 
     /// The balance is only the chatting address's: funds can also sit on the account's other
@@ -513,11 +549,17 @@ struct PassphraseAddressPreview: View {
 
     private func schedulePreview(for typed: String) {
         previewTask?.cancel()
-        guard !words.isEmpty else { return }
+        guard !words.isEmpty else {
+            isSearching?.wrappedValue = false
+            return
+        }
         previewBalanceSompi = nil
         previewBalanceFailed = false
         foundAddresses = []
         selectedIndex?.wrappedValue = 0
+        // Held from the first keystroke, not only once the lookup starts: an Import tapped in
+        // the pause would otherwise go to #0.
+        isSearching?.wrappedValue = selectedIndex != nil
         previewTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
@@ -530,6 +572,7 @@ struct PassphraseAddressPreview: View {
             previewAddress = address
             guard let address else {
                 previewBalanceFailed = true
+                isSearching?.wrappedValue = false
                 return
             }
             // a further pause, so only the passphrase someone stopped typing is looked up
@@ -543,6 +586,7 @@ struct PassphraseAddressPreview: View {
                     indices: Self.searchDepth
                 )
                 guard !Task.isCancelled else { return }
+                isSearching?.wrappedValue = false
                 guard let found, let first = found.first(where: { $0.balanceSompi > 0 }) ?? found.first else {
                     previewBalanceFailed = true
                     return

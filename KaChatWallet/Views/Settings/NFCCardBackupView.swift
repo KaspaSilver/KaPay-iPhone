@@ -4,7 +4,7 @@ import SwiftUI
 /// Settings > Back Up to NFC Card, behind the seed phrase's biometric gate and only offered for an
 /// account with a passphrase. Two taps: the first reads the card to learn whether it needs a new PIN
 /// or already holds a backup, the second saves. The passphrase is never written to the card.
-/// It never clears the "not backed up" card on the Wallet tab: the written seed phrase stays the main
+/// It never clears the "not backed up" strip at the top of each tab: the written seed phrase stays the main
 /// copy.
 struct NFCCardBackupView: View {
     private enum Step {

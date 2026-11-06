@@ -91,13 +91,15 @@ struct ImportWalletView: View {
     private var canImport: Bool { allWordsValid && !alias.isEmpty }
 
     /// Fills the slots from a phrase on the clipboard: 12 or 24 words, any spacing or line
-    /// breaks, numbering like "1." tolerated. Anything else is refused with a message, and the
-    /// clipboard is cleared once the words are in - a seed does not belong there.
+    /// breaks, numbering like "1." tolerated. Anything else is refused with a message that never
+    /// repeats what was pasted, and the clipboard is cleared as soon as it is read, whether or not
+    /// the words were accepted - secret words do not belong there either way.
     private func pasteSeedPhrase() {
         guard let raw = UIPasteboard.general.string else {
             error = "Nothing to paste."
             return
         }
+        UIPasteboard.general.string = ""
         let pasted = raw
             .lowercased()
             .split(whereSeparator: { $0.isWhitespace || $0 == "," })
@@ -109,7 +111,9 @@ struct ImportWalletView: View {
         }
         let unknown = pasted.filter { !BIP39.shared.isValidWord($0) }
         guard unknown.isEmpty else {
-            error = "Not a valid word: \(unknown.prefix(3).joined(separator: ", "))."
+            error = unknown.count == 1
+                ? "One of the pasted words isn't a valid word. Check your copy and try again."
+                : "\(unknown.count) of the pasted words aren't valid words. Check your copy and try again."
             return
         }
         seedWordCount = pasted.count
@@ -117,7 +121,6 @@ struct ImportWalletView: View {
         for (index, word) in pasted.enumerated() { filled[index] = word }
         words = filled
         error = nil
-        UIPasteboard.general.string = ""
         Haptics.success()
     }
 

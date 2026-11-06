@@ -256,6 +256,9 @@ struct OwnAddressHistorySheet: View {
         case spending(SpendingAddressEntry)
         case cold(ColdStorageAddressEntry)
         case unknown
+        /// Its balance couldn't be read: a screen showing 0 would say it's empty, and its Send
+        /// would be off.
+        case unreadable
     }
 
     @State private var resolved: Resolved?
@@ -272,6 +275,19 @@ struct OwnAddressHistorySheet: View {
                     SpendingAddressTransactionHistoryView(entry: entry)
                 case .cold(let entry)?:
                     ColdStorageAddressTransactionHistoryView(entry: entry)
+                case .unreadable?:
+                    VStack(spacing: 14) {
+                        Text("Couldn't load the coins at this address")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Try Again") {
+                            resolved = nil
+                            Task { resolved = await resolve() }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                    .padding()
                 case .unknown?:
                     Text("This address isn't in this wallet any more.")
                         .font(.subheadline)
@@ -293,7 +309,12 @@ struct OwnAddressHistorySheet: View {
     private func resolve() async -> Resolved {
         let target = address.lowercased()
         if walletManager.currentWallet?.publicAddress.lowercased() == target { return .chatting }
-        let utxos = (try? await NodePoolService.shared.getUtxosByAddresses([address])) ?? []
+        let utxos: [UTXO]
+        do {
+            utxos = try await NodePoolService.shared.getUtxosByAddresses([address])
+        } catch {
+            return .unreadable
+        }
         let balance = utxos.reduce(UInt64(0)) { $0 + $1.amount }
         var spending = walletManager.spendingAddresses(inRange: 0..<(max(0, walletManager.maxSpendingAddressIndex) + 1))
         if walletManager.maxQuantumAddressIndex >= 0 {

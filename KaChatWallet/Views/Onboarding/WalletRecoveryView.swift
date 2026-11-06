@@ -82,7 +82,12 @@ struct WalletRecoveryView: View {
                 ImportSourceWalletView()
             }
             .alert("Remove this account?", isPresented: $showRemoveConfirmation) {
-                Button("Remove", role: .destructive) { remove() }
+                // Face ID first, as on both Delete Account sheets.
+                Button("Remove", role: .destructive) {
+                    DeviceAuth.authenticate(reason: AppLocalization.string("Confirm deleting this account")) {
+                        remove()
+                    }
+                }
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("The account and its data are deleted from this phone. Nothing on the blockchain changes, and you can add the account again later with its 12 or 24 words.")
@@ -102,6 +107,7 @@ struct WalletRecoveryView: View {
     }
 
     private func remove() {
+        guard !isRemoving else { return }
         isRemoving = true
         Task {
             do {

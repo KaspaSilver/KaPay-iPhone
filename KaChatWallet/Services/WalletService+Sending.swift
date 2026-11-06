@@ -51,7 +51,7 @@ extension WalletService {
 
             let utxos = try await rpcManager.getUtxosByAddresses([wallet.publicAddress])
             self.updateWalletBalanceIfNeeded(address: wallet.publicAddress, utxos: utxos)
-            let spendable = utxos.filter { $0.blockDaaScore > 0 && !$0.isCoinbase }
+            let spendable = self.unreservedUtxos(utxos.filter { $0.blockDaaScore > 0 && !$0.isCoinbase })
             guard !spendable.isEmpty else {
                 throw KasiaError.networkError("No spendable UTXOs available")
             }
@@ -82,8 +82,17 @@ extension WalletService {
             )
 
             AppLog.log("[WalletService] Submitting withdrawal via RPC manager...")
-            let (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false)
+            let txId: String
+            let endpoint: String
+            do {
+                (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false)
+            } catch let unknown as SendOutcomeUnknownError {
+                // it may have landed: its coins stay out of the next send
+                self.recordSpend(tx)
+                throw unknown
+            }
             AppLog.log("[WalletService] Withdrawal submitted: \(txId) via \(endpoint)")
+            self.recordSpend(tx)
             return txId
         }
     }
@@ -99,8 +108,7 @@ extension WalletService {
             throw KasiaError.invalidAddress
         }
 
-        let utxos = try await fetchUtxosWithFallback(for: wallet.publicAddress)
-        let spendable = utxos.filter { !$0.isCoinbase }
+        let spendable = try await withdrawalSpendableUtxos(for: wallet.publicAddress)
         guard !spendable.isEmpty else {
             throw KasiaError.networkError("No spendable UTXOs")
         }
@@ -119,7 +127,10 @@ extension WalletService {
     /// Maximum sendable amount for a withdrawal (balance minus the send-all fee, no change
     /// output). With
     /// [manualUtxos] set (coin control active), "max" means max spendable from just that
-    /// selected subset - same semantics as estimateMaxSpendingAddressAmount.
+    /// selected subset - same semantics as estimateMaxSpendingAddressAmount. An address with more
+    /// coins than one transaction can spend gets the most its largest `maxInputsPerTransaction`
+    /// coins can send (what the send itself picks, largest first): no single transaction could
+    /// carry the whole balance. Compound uses this too, one chunk at a time.
     func estimateMaxWithdrawalAmount(toAddress: String, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0) async throws -> UInt64 {
         guard let wallet = WalletManager.shared.currentWallet else { throw KasiaError.walletNotFound }
         guard let recipientScriptPubKey = KaspaAddress.scriptPublicKey(from: toAddress),
@@ -127,21 +138,20 @@ extension WalletService {
             throw KasiaError.invalidAddress
         }
 
-        let utxos = try await fetchUtxosWithFallback(for: wallet.publicAddress)
-        let spendable = utxos.filter { !$0.isCoinbase }
+        let spendable = try await withdrawalSpendableUtxos(for: wallet.publicAddress)
         guard !spendable.isEmpty else {
             throw KasiaError.networkError("No spendable UTXOs")
         }
         let resolvedManualUtxos = resolveManualUtxos(manualUtxos, against: spendable)
+        let maxSet = resolvedManualUtxos ?? Self.oneTransactionChunk(spendable) ?? spendable
 
-        let totalBalance = try (resolvedManualUtxos ?? spendable).totalAmount()
+        let totalBalance = try maxSet.totalAmount()
 
         let fee = KasiaTransactionBuilder.estimateSendAllFee(
-            utxos: spendable,
+            utxos: maxSet,
             payload: Data(),
             recipientScriptPubKey: recipientScriptPubKey,
             senderScriptPubKey: senderScriptPubKey,
-            manualUtxos: resolvedManualUtxos,
             extraFeeSompi: extraFeeSompi
         )
 
@@ -216,12 +226,12 @@ extension WalletService {
             // gate dropped every coinbase UTXO, which is why compounding/withdrawing a mining
             // address failed with a bare "No spendable UTXOs".
             let vds = await self.resolveVirtualDaaScore(nil, utxos: utxos)
-            var spendable = WalletService.spendableUtxos(utxos, virtualDaaScore: vds)
+            var spendable = self.unreservedUtxos(WalletService.spendableUtxos(utxos, virtualDaaScore: vds))
             if spendable.isEmpty, let manualUtxos, !manualUtxos.isEmpty {
                 // The fresh fetch came back empty (transient pool/node condition) but the caller
                 // pinned an explicit set (e.g. a compound chunk) - fall back to it; the node will
                 // reject any of those inputs that were actually already spent.
-                spendable = WalletService.spendableUtxos(manualUtxos, virtualDaaScore: vds)
+                spendable = self.unreservedUtxos(WalletService.spendableUtxos(manualUtxos, virtualDaaScore: vds))
             }
             guard !spendable.isEmpty else {
                 throw KasiaError.networkError("No spendable UTXOs available")
@@ -263,7 +273,9 @@ extension WalletService {
             )
 
             AppLog.log("[WalletService] Submitting spending-address withdrawal via RPC manager...")
-            func noteSpend() async {
+            @MainActor func noteSpend() async {
+                // its coins stay out of the next send from this address until the spend is in a block
+                self.recordSpend(tx)
                 if WalletManager.isQuantumIndex(index) {
                     // the spend put this address's key on chain for good (self-sends included)
                     await WalletManager.shared.markQuantumAddressSpent(fromAddress, owner: owner)
@@ -344,7 +356,7 @@ extension WalletService {
         // broke compounding on mining-reward addresses: it dropped every one of their coinbase
         // UTXOs. Fetch the virtual DAA score only when coinbase is actually present.
         let virtualDaaScore = await resolveVirtualDaaScore(nil, utxos: utxos)
-        let spendable = WalletService.spendableUtxos(utxos, virtualDaaScore: virtualDaaScore)
+        let spendable = unreservedUtxos(WalletService.spendableUtxos(utxos, virtualDaaScore: virtualDaaScore))
         guard !spendable.isEmpty else {
             if utxos.contains(where: { $0.isCoinbase }) {
                 throw KasiaError.networkError("These are mining (coinbase) rewards that haven't matured yet. Each becomes spendable a short time (about 1–2 minutes) after it's mined - try again shortly.")
@@ -372,7 +384,8 @@ extension WalletService {
 
         let utxos = availableUtxos.isEmpty ? try await NodePoolService.shared.getUtxosByAddresses([fromAddress]) : availableUtxos
         let vds = await resolveVirtualDaaScore(virtualDaaScore, utxos: utxos)
-        let spendable = WalletService.spendableUtxos(utxos, virtualDaaScore: vds)
+        // the send leaves out coins just spent, so the estimate does too
+        let spendable = unreservedUtxos(WalletService.spendableUtxos(utxos, virtualDaaScore: vds))
         guard !spendable.isEmpty else {
             throw KasiaError.networkError("No spendable UTXOs")
         }
@@ -395,6 +408,8 @@ extension WalletService {
     /// fee, no change output). With coin control active (`manualUtxos` non-empty and still
     /// resolvable), "max" means max spendable from just the selected UTXOs, not the whole
     /// address - same semantics `KasiaTransactionBuilder.estimateSendAllFee` already applies.
+    /// More coins than one transaction can spend: the most its largest coins can send, as in
+    /// `estimateMaxWithdrawalAmount`.
     func estimateMaxSpendingAddressAmount(index: Int, toAddress: String, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0, availableUtxos: [UTXO] = [], virtualDaaScore: UInt64? = nil) async throws -> UInt64 {
         guard let fromAddress = WalletManager.shared.spendingAddress(at: index) else {
             throw KasiaError.keychainError("Could not derive this spending address")
@@ -406,20 +421,21 @@ extension WalletService {
 
         let utxos = availableUtxos.isEmpty ? try await NodePoolService.shared.getUtxosByAddresses([fromAddress]) : availableUtxos
         let vds = await resolveVirtualDaaScore(virtualDaaScore, utxos: utxos)
-        let spendable = WalletService.spendableUtxos(utxos, virtualDaaScore: vds)
+        // the send leaves out coins just spent, so the estimate does too
+        let spendable = unreservedUtxos(WalletService.spendableUtxos(utxos, virtualDaaScore: vds))
         guard !spendable.isEmpty else {
             throw KasiaError.networkError("No spendable UTXOs")
         }
         let resolvedManualUtxos = resolveManualUtxos(manualUtxos, against: spendable)
+        let maxSet = resolvedManualUtxos ?? Self.oneTransactionChunk(spendable) ?? spendable
 
-        let totalBalance = try (resolvedManualUtxos ?? spendable).totalAmount()
+        let totalBalance = try maxSet.totalAmount()
 
         let fee = KasiaTransactionBuilder.estimateSendAllFee(
-            utxos: spendable,
+            utxos: maxSet,
             payload: Data(),
             recipientScriptPubKey: recipientScriptPubKey,
             senderScriptPubKey: senderScriptPubKey,
-            manualUtxos: resolvedManualUtxos,
             extraFeeSompi: extraFeeSompi,
             virtualDaaScore: vds,
             signatureScriptSize: WalletManager.isQuantumIndex(index)
@@ -446,6 +462,46 @@ extension WalletService {
         let spendableByOutpoint = Dictionary(uniqueKeysWithValues: spendable.map { (outpointKey($0), $0) })
         let resolved = manualUtxos.compactMap { spendableByOutpoint[outpointKey($0)] }
         return resolved.isEmpty ? nil : resolved
+    }
+
+    /// The largest `maxInputsPerTransaction` coins, when there are more than one transaction can
+    /// spend; nil when every coin fits. Largest first, the order `selectUtxosForPayment` adds them
+    /// in, so a Max (or Compound) worked out from this chunk is exactly what the send then builds.
+    static func oneTransactionChunk(_ spendable: [UTXO]) -> [UTXO]? {
+        guard spendable.count > KasiaTransactionBuilder.maxInputsPerTransaction else { return nil }
+        return Array(spendable.sorted { $0.amount > $1.amount }.prefix(KasiaTransactionBuilder.maxInputsPerTransaction))
+    }
+
+    /// What a send from the chatting address may spend, fetched fresh rather than from the
+    /// 20-second `fetchUtxosWithFallback` cache, and with the send's own filter, so the estimate
+    /// and the send agree.
+    private func withdrawalSpendableUtxos(for address: String) async throws -> [UTXO] {
+        let utxos = try await NodePoolService.shared.getUtxosByAddresses([address])
+        updateWalletBalanceIfNeeded(address: address, utxos: utxos)
+        return unreservedUtxos(utxos.filter { $0.blockDaaScore > 0 && !$0.isCoinbase })
+    }
+
+    private static func outpointKey(_ outpoint: UTXO.Outpoint) -> String {
+        "\(outpoint.transactionId):\(outpoint.index)"
+    }
+
+    /// Leaves out coins a send from this app has just spent (`reservedOutpoints`).
+    func unreservedUtxos(_ utxos: [UTXO]) -> [UTXO] {
+        let now = Date()
+        reservedOutpoints = reservedOutpoints.filter { $0.value > now }
+        guard !reservedOutpoints.isEmpty else { return utxos }
+        return utxos.filter { reservedOutpoints[Self.outpointKey($0.outpoint)] == nil }
+    }
+
+    /// After a send, or one whose outcome is unknown: its inputs stay out of the next send, Max
+    /// and fee for `spentOutpointHold`, and the UTXO cache, which still lists them, is dropped.
+    func recordSpend(_ tx: KaspaRpcTransaction) {
+        let until = Date().addingTimeInterval(spentOutpointHold)
+        for input in tx.inputs {
+            reservedOutpoints[Self.outpointKey(input.previousOutpoint)] = until
+        }
+        cachedUtxos = []
+        cachedUtxosTimestamp = nil
     }
 
     /// Whether an address has ever appeared in a transaction, independent of its current

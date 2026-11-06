@@ -145,6 +145,14 @@ back with everything filled in. Both Delete Account sheets ask too. A device wit
 do either (`DeviceAuth` refuses and says why).
 
 **Fees**: change too small to keep goes to the fee, and the review counts it (`SendFeeEstimate`).
+The swipe waits until Max, the fee and a higher tier's own estimate are in, and stays off after a
+fee error.
+
+**Coins**: a send's inputs stay out of the next send, Max and fee for two minutes
+(`WalletService.recordSpend`, `unreservedUtxos`), and the UTXO cache is dropped; the chatting
+address's Max and fee read fresh coins. An address with more than `maxInputsPerTransaction` coins
+gets a Max (and a Compound) of its largest coins, one transaction's worth
+(`WalletService.oneTransactionChunk`).
 
 ## Services
 

@@ -1291,6 +1291,8 @@ struct SpendingAddressWithdrawView: View {
     /// The fee a send with a higher fee will really pay, once estimated.
     @State private var tippedFeeSompi: UInt64?
     @State private var isEstimatingFee = false
+    /// `tippedFeeSompi` is on its way: the Review's total isn't final yet.
+    @State private var isEstimatingTippedFee = false
     @State private var customExtraFeeSompi: UInt64?
     @State private var isEditingFee = false
     @State private var customFeeText = ""
@@ -1306,8 +1308,11 @@ struct SpendingAddressWithdrawView: View {
         return sompi
     }
 
+    /// The swipe waits for a settled amount and fee, as in `WithdrawKaspaView`.
     private var canSend: Bool {
         hasValidRecipient && amountSompi != nil && !isSending
+            && !isEstimatingMax && !isEstimatingFee && !isEstimatingTippedFee
+            && normalFeeSompi != nil
     }
 
     /// Extra priority tip on top of the base (Normal-tier) fee, for network congestion. A
@@ -1490,16 +1495,21 @@ struct SpendingAddressWithdrawView: View {
             // total comes from an estimate made with that fee, what the send itself will do.
             .task(id: "\(feeEstimationKey)|\(extraFeeSompi)") {
                 tippedFeeSompi = nil
+                isEstimatingTippedFee = false
                 guard extraFeeSompi > 0, !isCompoundMode, hasValidRecipient, let amountSompi else { return }
+                isEstimatingTippedFee = true
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard !Task.isCancelled else { return }
                 let fee = try? await walletService.estimateSpendingAddressWithdrawalFee(index: source.index, toAddress: effectiveAddress, amountSompi: amountSompi, manualUtxos: manualUtxos, extraFeeSompi: extraFeeSompi)
-                guard !Task.isCancelled, let fee else { return }
-                tippedFeeSompi = fee.networkFee + fee.foldedChange
+                guard !Task.isCancelled else { return }
+                // a failed look-up leaves the base fee plus the extra, the closest there is
+                if let fee { tippedFeeSompi = fee.networkFee + fee.foldedChange }
+                isEstimatingTippedFee = false
             }
             .task(id: feeEstimationKey) {
                 guard hasValidRecipient, let amountSompi else {
                     normalFeeSompi = nil
+                    isEstimatingFee = false
                     return
                 }
                 isEstimatingFee = true
