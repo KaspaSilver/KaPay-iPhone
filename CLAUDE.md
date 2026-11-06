@@ -181,15 +181,19 @@ gets a Max (and a Compound) of its largest coins, one transaction's worth
     KaChat's NEXTCLOUD_SYNC.md, "Contacts only", is the contract.
   - The earlier plain files (`KaPay Contacts.json` and the older names, all of them) are merged in once per account
     and never written again. Never KaChat's `kachat-backup.json`.
-  - Portfolio: plain JSON, one file per portfolio in the backup folder, named what the portfolio is
+  - Portfolio: one file per portfolio in the backup folder, encrypted in the same v1 envelope and
+    key as the contacts, named what the portfolio is
     named ("Long Term.json"; "Long Term 2.json" only if another file has that name). Never one
     `KaPay Portfolio.json`: that earlier file is merged in once per account and never written again.
     Each file (`PortfolioBackupFile`, `type` "kapay-portfolio") holds that portfolio's transactions
-    and fees, every deletion the account knows of, and the owning `walletAddress`. Another account's
-    file, or any other file, is left alone. A renamed or deleted portfolio's old file is removed;
+    and fees, every deletion the account knows of, and the owning `walletAddress`. A file this account
+    can't decrypt is another account's (or not a portfolio) and is left alone; this account's own
+    damaged one may be written over. An earlier plain file of this account's is read, then written
+    encrypted with the next backup. Without the key nothing is read or written. A renamed or deleted portfolio's old file is removed;
     the other files carry the deletion. With Automatic Sync on they upload a few seconds after a change
     and on background, and merge in what's on the server when the app opens, at most once a minute.
-    A CSV export is named the same way ("Long Term.csv").
+    A CSV export is named the same way ("Long Term.csv"), and Export CSV and Export to Nextcloud
+    stay plain CSV, so a spreadsheet can open them.
   - A manual backup merges the server's copy in first, and a fresh connection merges both in once,
     which is why there's no Restore button. Contacts and Portfolio import/export use the `KaChat`
     folder and stay plain. A 401 stops automatic sync (`needsReconnect`) and Settings says so.

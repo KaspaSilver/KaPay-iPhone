@@ -115,8 +115,11 @@ enum NextcloudError: LocalizedError {
 ///   Automatic Sync on it uploads after a contact changes and a foreground ETag poll brings in other
 ///   devices' changes. KaChat's NEXTCLOUD_SYNC.md, "Contacts only", is the contract.
 /// - One file per portfolio in the backup folder, named what the portfolio is named ("Long Term.json"):
-///   its transactions and fees plus what was deleted (`PortfolioBackupFile`), as plain JSON. The file
-///   says which account it belongs to, and another account's is left alone. With Automatic Sync on they
+///   its transactions and fees plus what was deleted (`PortfolioBackupFile`), encrypted with the
+///   contacts' key (`BackupEnvelope`). A file this account can't decrypt is another account's, or
+///   not a portfolio, and is left alone; an earlier plain one of this account's is read, then
+///   written encrypted with the next backup. Exports (Export CSV, Export to Nextcloud) stay plain
+///   CSV, for a spreadsheet. With Automatic Sync on they
 ///   upload a few seconds after a change and merge in what's on the server when the app opens.
 /// A backup merges what is on the server in first, so it never overwrites another device's changes,
 /// and a fresh connection merges both in once. The contacts' earlier plain files are merged in once
@@ -197,7 +200,7 @@ final class NextcloudService: ObservableObject {
     private var portfolioChain: Task<Void, Error>?
     /// The Portfolio files last read, so an unchanged file isn't downloaded again. A nil backup is a
     /// file that isn't a portfolio.
-    private var portfolioFileCache: [String: (modified: Date?, size: Int64?, backup: PortfolioBackupFile?)] = [:]
+    private var portfolioFileCache: [String: (modified: Date?, size: Int64?, read: PortfolioFileRead)] = [:]
 
     private nonisolated static let autoBackupKey = "kachat_nextcloud_auto_backup"
     private nonisolated static let lastBackupKey = "kachat_nextcloud_last_address_book_backup"
@@ -993,6 +996,33 @@ final class NextcloudService: ObservableObject {
     private struct ServerPortfolioFile {
         let file: NextcloudFile
         let backup: PortfolioBackupFile
+        /// Written before the files were encrypted: the next backup rewrites it.
+        let isPlain: Bool
+    }
+
+    /// What one file in the backup folder turned out to be.
+    private enum PortfolioFileRead {
+        case portfolio(PortfolioBackupFile, isPlain: Bool)
+        /// This account's own encrypted file, damaged: its name may be written over.
+        case ownUnreadable
+        case other
+    }
+
+    /// Decrypts (or, for an earlier plain file, just decodes) one downloaded file.
+    private static func readPortfolioFile(_ data: Data, key: SymmetricKey, walletAddress: String) async -> PortfolioFileRead {
+        let isPlain = BackupEnvelope.parse(data) == nil
+        let plaintext: Data
+        if isPlain {
+            plaintext = data
+        } else {
+            do {
+                plaintext = try await BackupEnvelope.decryptIfEnvelopedDetached(data, key: key, walletAddress: walletAddress)
+            } catch {
+                return BackupEnvelope.isOwnUnreadableEnvelope(data, walletAddress: walletAddress) ? .ownUnreadable : .other
+            }
+        }
+        guard let backup = try? PortfolioBackupFile.decode(plaintext) else { return .other }
+        return .portfolio(backup, isPlain: isPlain)
     }
 
     /// What the backup folder holds, as far as the Portfolio is concerned.
@@ -1012,8 +1042,10 @@ final class NextcloudService: ObservableObject {
     }
 
     /// Reads the backup folder. Any file that can't be downloaded throws, so nothing is written or
-    /// deleted on a partial view of what's there.
+    /// deleted on a partial view of what's there, and so does a missing key: without it this
+    /// account's files can't be told from anyone else's.
     private func readServerPortfolios(walletAtStart: String) async throws -> ServerPortfolios {
+        guard let key = backupEncryptionKey() else { throw BackupEnvelope.EnvelopeError.keyUnavailable }
         let listing: [NextcloudFile]
         do {
             listing = try await listFolder(backupFolderPath)
@@ -1022,21 +1054,28 @@ final class NextcloudService: ObservableObject {
         }
         var result = ServerPortfolios()
         for file in listing where !file.isDirectory {
-            var backup: PortfolioBackupFile?
+            var read = PortfolioFileRead.other
             if Self.isPortfolioFileCandidate(file) {
                 if file.modified != nil, let cached = portfolioFileCache[file.path],
                    cached.modified == file.modified, cached.size == file.size {
-                    backup = cached.backup
+                    read = cached.read
                 } else {
                     let data = try await downloadFile(file.path, maxBytes: 50_000_000)
-                    backup = try? PortfolioBackupFile.decode(data)
-                    portfolioFileCache[file.path] = (file.modified, file.size, backup)
+                    read = await Self.readPortfolioFile(data, key: key, walletAddress: walletAtStart)
+                    // an account switch meanwhile cleared the cache: what this account read isn't the next one's
+                    guard currentWalletAddress == walletAtStart else { throw CancellationError() }
+                    portfolioFileCache[file.path] = (file.modified, file.size, read)
                 }
             }
-            if let backup, backup.type == PortfolioBackupFile.kind, backup.version <= PortfolioBackupFile.currentVersion,
-               backup.walletAddress?.lowercased() == walletAtStart.lowercased() {
-                result.own.append(ServerPortfolioFile(file: file, backup: backup))
-            } else {
+            switch read {
+            case .portfolio(let backup, let isPlain)
+                where backup.type == PortfolioBackupFile.kind && backup.version <= PortfolioBackupFile.currentVersion
+                    && backup.walletAddress?.lowercased() == walletAtStart.lowercased():
+                result.own.append(ServerPortfolioFile(file: file, backup: backup, isPlain: isPlain))
+            case .ownUnreadable:
+                // ours, so its name stays free for this account's portfolio of that name
+                AppLog.log("%@", "[Nextcloud] A Portfolio file of this account can't be decrypted: \(file.name)")
+            default:
                 result.taken.insert(file.name.lowercased())
             }
         }
@@ -1120,6 +1159,8 @@ final class NextcloudService: ObservableObject {
     /// file for a portfolio that was deleted or renamed goes: the other files carry the deletion.
     private func performPortfolioBackup() async throws {
         guard let walletAtStart = currentWalletAddress else { throw NextcloudError.noActiveWallet }
+        // Writers always encrypt: without the key nothing is uploaded readable.
+        guard let key = backupEncryptionKey() else { throw BackupEnvelope.EnvelopeError.keyUnavailable }
         let server = try await mergePortfoliosFromServer(walletAtStart: walletAtStart).server
 
         let state = PortfolioSync.merge([PortfolioViewModel.shared.syncState.forArchive()])
@@ -1132,8 +1173,12 @@ final class NextcloudService: ObservableObject {
                 fees: state.fees.filter { $0.portfolioId == portfolio.id },
                 tombstones: state.tombstones
             )
-            if server.own.contains(where: { $0.file.name.lowercased() == name.lowercased() && $0.backup.sync == one }) { continue }
-            let data = try PortfolioBackupFile(one, walletAddress: walletAtStart).encoded()
+            if server.own.contains(where: {
+                $0.file.name.lowercased() == name.lowercased() && $0.backup.sync == one && !$0.isPlain
+            }) { continue }
+            let data = try await BackupEnvelope.encryptDetached(
+                try PortfolioBackupFile(one, walletAddress: walletAtStart).encoded(), key: key, walletAddress: walletAtStart
+            )
             _ = try await uploadToKaChatFolder(
                 data: data, filename: name, contentType: "application/json", keepSpaces: true, folder: backupFolderPath
             )
