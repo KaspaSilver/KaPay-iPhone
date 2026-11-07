@@ -133,9 +133,13 @@ struct NFCCardRestoreView: View {
 
     @MainActor
     private func commitImport(_ payload: NFCCardBackupPayload, passphrase: String, family: WalletSourceFamily) async throws {
+        // An account already saved here keeps the name it has, not the one on the card.
+        let savedName = walletManager.savedAccounts
+            .first { WalletManager.isSameAccount($0.publicAddress, payload.chattingAddress) }?
+            .alias.trimmingCharacters(in: .whitespacesAndNewlines)
         let wallet = try await walletManager.importWallet(
             from: SeedPhrase(words: payload.words, passphrase: passphrase),
-            alias: payload.alias,
+            alias: savedName.flatMap { $0.isEmpty ? nil : $0 } ?? payload.alias,
             chattingAddressIndex: payload.chattingAddressIndex,
             family: family
         )

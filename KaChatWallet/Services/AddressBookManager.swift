@@ -396,6 +396,13 @@ final class AddressBookManager: ObservableObject {
                 updated += 1
             } else {
                 if entries.contains(where: { $0.id == incoming.id }) { incoming.id = UUID() }
+                // Bringing back a deleted contact is a new edit: with the file's older date, the
+                // deletion (here and on the server) would win again at the next merge. The files
+                // keep whole seconds, so it goes past the deletion's second.
+                if let deletedAt = deleted[address] {
+                    let afterDeletion = Date(timeIntervalSince1970: deletedAt.timeIntervalSince1970.rounded(.down) + 1)
+                    incoming.updatedAt = max(Date(), afterDeletion)
+                }
                 entries.append(incoming)
                 if let photo { writePhoto(photo, for: address) }
                 added += 1
@@ -451,8 +458,20 @@ final class AddressBookManager: ObservableObject {
         if let owner = file.walletAddress, Self.normalize(owner) != wallet {
             return (false, hasBackupData)
         }
+        // Newest wins, so a date past now would win over every later edit here for good: no file
+        // gets to date a change after the moment it's read.
+        let now = Date()
         let incoming = file.entries.filter { KaspaAddress.isValidOnActiveNetwork(Self.normalize($0.address)) }
-        let tombstones = file.deleted ?? []
+            .map { entry in
+                var e = entry
+                e.updatedAt = min(e.updatedAt, now)
+                return e
+            }
+        let tombstones = (file.deleted ?? []).map { tombstone in
+            var t = tombstone
+            t.deletedAt = min(t.deletedAt, now)
+            return t
+        }
         let before = BookSummary(entries: entries, deleted: Array(deleted.keys))
         importFromArchive(entries: incoming, tombstones: tombstones)
         let after = BookSummary(entries: entries, deleted: Array(deleted.keys))

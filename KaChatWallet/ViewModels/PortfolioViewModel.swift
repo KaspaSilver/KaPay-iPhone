@@ -1122,6 +1122,12 @@ final class PortfolioViewModel: ObservableObject {
     @discardableResult
     func importFromArchive(_ incoming: PortfolioSync) -> Bool {
         guard let wallet = activeWalletAddress, !incoming.isEmpty else { return false }
+        // Another device's untouched "Portfolio 1" (in a file only to carry a deletion) is never
+        // taken: this device has its own, and would show two.
+        var incoming = incoming
+        incoming.portfolios.removeAll {
+            PortfolioSync.isPristineSeed($0, transactions: incoming.transactions, fees: incoming.fees)
+        }
         let merged = PortfolioSync.merge([syncState, incoming])
         // compared in the merge's own order, so a backup that adds nothing writes nothing
         guard merged != PortfolioSync.merge([syncState]), !merged.portfolios.isEmpty else { return false }
@@ -1295,9 +1301,13 @@ final class PortfolioViewModel: ObservableObject {
             return id
         }
 
-        var indexByTimestamp: [UUID: [Date: Int]] = [:]
+        // A row in the file replaces a row this portfolio already had at that time - on the
+        // second, since the export writes whole seconds and rows from an address import or Add to
+        // Portfolio carry milliseconds. Only rows from before this import, each at most once: two
+        // rows of the same second in the file are two transactions.
+        var indexesBySecond: [UUID: [Int64: [Int]]] = [:]
         for (index, tx) in transactions.enumerated() {
-            indexByTimestamp[tx.portfolioId, default: [:]][tx.timestamp] = index
+            indexesBySecond[tx.portfolioId, default: [:]][Self.wholeSecond(tx.timestamp), default: []].append(index)
         }
 
         var imported = 0
@@ -1334,15 +1344,19 @@ final class PortfolioViewModel: ObservableObject {
             let portfolioId = target(for: fields)
             if !targets.contains(portfolioId) { targets.append(portfolioId) }
 
-            if let existingIndex = indexByTimestamp[portfolioId]?[timestamp] {
+            let second = Self.wholeSecond(timestamp)
+            if let existingIndex = indexesBySecond[portfolioId]?[second]?.first {
+                indexesBySecond[portfolioId]?[second]?.removeFirst()
                 transactions[existingIndex] = PortfolioTransaction(
                     id: transactions[existingIndex].id,
                     type: type,
                     amountSompi: amountSompi,
                     fiatValue: fiatValue,
-                    timestamp: timestamp,
+                    timestamp: transactions[existingIndex].timestamp,
                     notes: notes,
-                    portfolioId: portfolioId
+                    portfolioId: portfolioId,
+                    sourceAddress: transactions[existingIndex].sourceAddress,
+                    sourceTxId: transactions[existingIndex].sourceTxId
                 )
             } else {
                 transactions.append(
@@ -1356,7 +1370,6 @@ final class PortfolioViewModel: ObservableObject {
                         portfolioId: portfolioId
                     )
                 )
-                indexByTimestamp[portfolioId, default: [:]][timestamp] = transactions.count - 1
             }
             imported += 1
         }
@@ -1371,6 +1384,10 @@ final class PortfolioViewModel: ObservableObject {
         }
         let names = targets.compactMap { id in PortfolioManager.shared.portfolios.first { $0.id == id }?.name }
         return CsvImportResult(count: imported, portfolioNames: names)
+    }
+
+    private static func wholeSecond(_ date: Date) -> Int64 {
+        Int64(date.timeIntervalSince1970.rounded(.down))
     }
 
     struct CsvImportResult {

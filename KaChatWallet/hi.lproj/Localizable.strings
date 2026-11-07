@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "इस पते में पब्लिक की नहीं है।";
 "This address holds funds, so this looks like the right account." = "इस पते में फंड हैं, इसलिए यह सही खाता लगता है।";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "इस कार्ड पर पहले से बैकअप है। नए की पुष्टि होने पर सहेजने से वह बदल जाएगा।";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "इस iPhone पर आपका खाता है, लेकिन उसकी चाबियाँ नहीं। फ़ोन को बैकअप से रिस्टोर करने पर ऐसा होता है, क्योंकि KaPay की चाबियाँ उसी डिवाइस से जुड़ी होती हैं जिस पर वे बनी थीं। यहाँ अनलॉक करने के लिए अपने 12 या 24 शब्द दर्ज करें। इस डिवाइस पर आपके संदेश बने रहेंगे।";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "इस iPhone पर आपका खाता है, लेकिन उसकी चाबियाँ नहीं। फ़ोन को बैकअप से रिस्टोर करने पर ऐसा होता है, क्योंकि KaPay की चाबियाँ उसी डिवाइस से जुड़ी होती हैं जिस पर वे बनी थीं। यहाँ अनलॉक करने के लिए अपने 12 या 24 शब्द दर्ज करें। KaPay ने इस फ़ोन पर इसके लिए जो सहेजा है, वह रखा जाता है।";
 "This is more than the address you're sending from holds." = "यह भेजने वाले पते में मौजूद राशि से ज़्यादा है।";
 "This is much more than the network needs." = "यह नेटवर्क की ज़रूरत से बहुत ज़्यादा है।";
 "This is the account your 12 or 24 words open on their own." = "यह वह खाता है जो आपके 12 या 24 शब्द अपने आप खोलते हैं।";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "पुष्टि नहीं हुई";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "हो सकता है यह भेजा जा चुका हो, लेकिन नेटवर्क ने इसकी पुष्टि नहीं की। दोबारा भेजने से पहले अपना बैलेंस जाँच लें।";
 "Confirm sending this domain" = "इस डोमेन को भेजने की पुष्टि करें";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "मैक्स वह है जो एक लेनदेन ले जा सकता है: उसके सबसे बड़े %d सिक्के। \"UTXO समेकित करें\" बाकी को जोड़ता है।";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "एक लेनदेन %d सिक्के समेकित कर सकता है, इसलिए सबसे बड़े %d समेकित किए जाते हैं। बाकी के लिए फिर से समेकित करें।";
+"This account's keys are on this phone again, so nothing was removed." = "इस खाते की चाबियाँ फिर से इस फ़ोन पर हैं, इसलिए कुछ भी नहीं हटाया गया।";
+"Unable to sign in to this account." = "इस खाते में साइन इन नहीं हो सका।";
+"Skip the Search: Import on Address #0" = "खोज छोड़ें: पता #0 पर इम्पोर्ट करें";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "इस खाते के दूसरे पतों पर फ़ंड की खोज पूरी नहीं हुई, इसलिए इम्पोर्ट पता #0 का उपयोग करता है।";
+"Search Again" = "फिर से खोजें";
+"Re-enter PIN" = "PIN फिर से डालें";
+"The PINs don't match." = "PIN मेल नहीं खाते।";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "नेटवर्क शुल्क अब %@ KAS है, जो समीक्षा में दिखाए गए से ज़्यादा है। कुछ नहीं भेजा गया: नया शुल्क देखें और फिर से स्वाइप करें।";
+"Mining reward, not spendable here" = "माइनिंग इनाम, यहाँ खर्च नहीं हो सकता";
+"Not confirmed yet" = "अभी पुष्टि नहीं हुई";
+"Just spent by a send" = "अभी एक भेजने में खर्च हुआ";
+"Not spendable yet" = "अभी खर्च नहीं हो सकता";

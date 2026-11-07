@@ -17,6 +17,8 @@ struct NFCCardBackupView: View {
     @State private var step: Step = .intro
     @State private var card: NFCCardStatus?
     @State private var pin = ""
+    /// A new PIN, typed again: a typo here would lock the backup behind a PIN nobody knows.
+    @State private var confirmPIN = ""
     @State private var pinCleared = false
     @State private var busy = false
     @State private var errorMessage: String?
@@ -25,6 +27,12 @@ struct NFCCardBackupView: View {
 
     private var pinValid: Bool {
         NFCCard.isValidPIN(pin)
+    }
+
+    /// The PIN can go to the card: a valid one, typed twice when it's a new one.
+    private var canSave: Bool {
+        guard let card, pinValid else { return false }
+        return card.pinSet || pin == confirmPIN
     }
 
     var body: some View {
@@ -121,11 +129,17 @@ struct NFCCardBackupView: View {
                     }
                 } else {
                     NFCCardSecretField(title: "New 6-digit PIN", text: $pin, isNumeric: true)
+                    NFCCardSecretField(title: "Re-enter PIN", text: $confirmPIN, isNumeric: true)
+                    if NFCCard.isValidPIN(confirmPIN), pin != confirmPIN {
+                        Text("The PINs don't match.")
+                            .font(.footnote)
+                            .foregroundColor(.red)
+                    }
                     Text("Pick one you'll remember. After 5 wrong tries the PIN is blocked, and the only fix is reloading the card in Kaspa Quick Start, which erases it.")
                         .font(.footnote)
                         .foregroundColor(.secondary)
                 }
-                CreateWalletNextButton(title: card.hasBackup ? "Replace Backup" : "Save to Card", enabled: pinValid && !busy, busy: busy) {
+                CreateWalletNextButton(title: card.hasBackup ? "Replace Backup" : "Save to Card", enabled: canSave && !busy, busy: busy) {
                     if card.hasBackup {
                         showReplaceConfirmation = true
                     } else {
@@ -172,6 +186,7 @@ struct NFCCardBackupView: View {
 
     private func clearSecrets() {
         pin = ""
+        confirmPIN = ""
     }
 
     private func show(_ error: Error) {
@@ -197,7 +212,7 @@ struct NFCCardBackupView: View {
 
     @MainActor
     private func save() async {
-        guard let card, pinValid, !busy else { return }
+        guard let card, canSave, !busy else { return }
         busy = true
         defer { busy = false }
         let enteredPIN = pin
@@ -238,11 +253,25 @@ struct NFCCardBackupView: View {
                 if current.pinBlocked { throw NFCCardError.pinBlocked }
                 // The confirmations were for the card scanned first. An interrupted save can
                 // legitimately leave that card with its new PIN and no backup yet.
-                if (current.hasBackup && !card.hasBackup) || (card.pinSet && !current.pinSet) {
+                // A PIN where the scanned card had none is another card too (this save sets the
+                // PIN it then finds, and records that below): stopped before verifyPIN, which
+                // would cost that card a try with a PIN that was never its own.
+                if (current.hasBackup && !card.hasBackup) || (card.pinSet && !current.pinSet)
+                    || (!card.pinSet && current.pinSet) {
                     throw NFCCardError.cardChanged
                 }
                 if !current.pinSet {
                     try await connection.setPIN(enteredPIN)
+                    // The card has this PIN now, whatever happens next: a retry after an
+                    // interrupted save finds it set and asks for it as the card's PIN.
+                    self.card = NFCCardStatus(
+                        pinSet: true,
+                        hasBackup: card.hasBackup,
+                        pinBlocked: false,
+                        triesRemaining: current.triesRemaining,
+                        maxBackup: card.maxBackup
+                    )
+                    confirmPIN = ""
                 }
                 try await connection.verifyPIN(enteredPIN)
                 try await connection.writeBackup(backup)
@@ -259,8 +288,9 @@ struct NFCCardBackupView: View {
             step = .saved
         } catch NFCCardError.wrongPIN(let triesRemaining) {
             pin = ""
+            confirmPIN = ""
             self.card = NFCCardStatus(
-                pinSet: card.pinSet,
+                pinSet: self.card?.pinSet ?? card.pinSet,
                 hasBackup: card.hasBackup,
                 pinBlocked: false,
                 triesRemaining: triesRemaining,

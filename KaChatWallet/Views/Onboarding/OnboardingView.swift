@@ -138,16 +138,23 @@ struct OnboardingView: View {
                     }
                 }
             }
+            // The manager's message too: a sign-in that reached `loadWallet` replaced this screen
+            // with the loading screen, so its own state didn't survive to say why it failed.
             .alert(
                 "Sign In Failed",
                 isPresented: Binding(
-                    get: { signInErrorMessage != nil },
-                    set: { if !$0 { signInErrorMessage = nil } }
+                    get: { signInErrorMessage != nil || walletManager.signInFailureMessage != nil },
+                    set: {
+                        if !$0 {
+                            signInErrorMessage = nil
+                            walletManager.clearSignInFailure()
+                        }
+                    }
                 )
             ) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(signInErrorMessage ?? "Unable to sign in to this account.")
+                Text(signInErrorMessage ?? walletManager.signInFailureMessage ?? "Unable to sign in to this account.")
             }
             .alert(
                 "Couldn't Create Account",
@@ -408,9 +415,9 @@ struct OnboardingView: View {
                         // no keys for it on this phone: say so and offer the phrase, not an error
                         accountNeedingKeys = needing
                         walletManager.clearSavedAccountNeedingKeys()
-                    } else {
-                        signInErrorMessage = walletManager.error?.localizedDescription ?? "Unable to sign in to this account."
                     }
+                    // otherwise the reason is in `walletManager.signInFailureMessage`, which the
+                    // alert reads (this screen may already be a new one by now)
                 }
                 signingInAccountId = nil
             }

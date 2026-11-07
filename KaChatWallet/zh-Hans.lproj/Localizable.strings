@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "此地址不带公钥。";
 "This address holds funds, so this looks like the right account." = "此地址上有资金，所以看起来这就是正确的账户。";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "这张卡上已有备份。保存时，会在新备份确认后将其替换。";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "这台 iPhone 上有你的账户，但没有其密钥。从备份恢复手机后会出现这种情况，因为 KaPay 的密钥绑定在创建它们的设备上。请输入你的 12 或 24 个单词以在此解锁。此设备上的消息会保留。";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "这台 iPhone 上有你的账户，但没有其密钥。从备份恢复手机后会出现这种情况，因为 KaPay 的密钥绑定在创建它们的设备上。请输入你的 12 或 24 个单词以在此解锁。KaPay 在此手机上为它保存的内容会保留。";
 "This is more than the address you're sending from holds." = "超出了发送地址的余额。";
 "This is much more than the network needs." = "这远高于网络所需。";
 "This is the account your 12 or 24 words open on their own." = "这是仅凭你的 12 或 24 个单词就能打开的账户。";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "未确认";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "这笔交易可能已发送，但网络未确认。再次发送前请先查看余额。";
 "Confirm sending this domain" = "确认发送此域名";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "最大值是一笔交易能承载的金额：最大的 %d 个币。“合并 UTXO”可合并其余的币。";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "一笔交易最多可合并 %d 个币，因此会合并最大的 %d 个。请再次合并剩下的部分。";
+"This account's keys are on this phone again, so nothing was removed." = "此账户的密钥已回到这部手机上，因此没有删除任何内容。";
+"Unable to sign in to this account." = "无法登录此账户。";
+"Skip the Search: Import on Address #0" = "跳过搜索：导入到地址 #0";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "对此账户其他地址上资金的搜索未完成，因此导入使用地址 #0。";
+"Search Again" = "重新搜索";
+"Re-enter PIN" = "再次输入 PIN";
+"The PINs don't match." = "两次输入的 PIN 不一致。";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "网络费用现在为 %@ KAS，高于确认页显示的金额。未发送任何内容：请查看新费用后再次上滑。";
+"Mining reward, not spendable here" = "挖矿奖励，此处不可花费";
+"Not confirmed yet" = "尚未确认";
+"Just spent by a send" = "刚被一笔发送花掉";
+"Not spendable yet" = "暂不可花费";

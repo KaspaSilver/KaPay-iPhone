@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "এই ঠিকানায় কোনো পাবলিক কী নেই।";
 "This address holds funds, so this looks like the right account." = "এই ঠিকানায় ফান্ড আছে, তাই এটিই সঠিক অ্যাকাউন্ট মনে হচ্ছে।";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "এই কার্ডে আগে থেকেই একটি ব্যাকআপ আছে। নতুনটি নিশ্চিত হলে সংরক্ষণ করলে সেটি বদলে যাবে।";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "এই iPhone-এ আপনার অ্যাকাউন্ট আছে, কিন্তু এর কী নেই। ব্যাকআপ থেকে ফোন রিস্টোর করার পর এমন হয়, কারণ KaPay-এর কী যে ডিভাইসে তৈরি হয়েছে সেখানেই আবদ্ধ থাকে। এখানে আনলক করতে আপনার ১২ বা ২৪টি শব্দ লিখুন। এই ডিভাইসে আপনার মেসেজ থাকবে।";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "এই iPhone-এ আপনার অ্যাকাউন্ট আছে, কিন্তু এর কী নেই। ব্যাকআপ থেকে ফোন রিস্টোর করার পর এমন হয়, কারণ KaPay-এর কী যে ডিভাইসে তৈরি হয়েছে সেখানেই আবদ্ধ থাকে। এখানে আনলক করতে আপনার ১২ বা ২৪টি শব্দ লিখুন। এই ফোনে KaPay এর জন্য যা সংরক্ষণ করেছে তা থাকবে।";
 "This is more than the address you're sending from holds." = "যে ঠিকানা থেকে পাঠাচ্ছেন তাতে এর চেয়ে কম আছে।";
 "This is much more than the network needs." = "এটা নেটওয়ার্কের প্রয়োজনের চেয়ে অনেক বেশি।";
 "This is the account your 12 or 24 words open on their own." = "আপনার ১২ বা ২৪টি শব্দ নিজে থেকে যে অ্যাকাউন্টটি খোলে, এটি সেটিই।";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "নিশ্চিত হয়নি";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "এটি হয়তো পাঠানো হয়েছে, কিন্তু নেটওয়ার্ক তা নিশ্চিত করেনি। আবার পাঠানোর আগে আপনার ব্যালেন্স দেখে নিন।";
 "Confirm sending this domain" = "এই ডোমেইন পাঠানো নিশ্চিত করুন";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "সর্বোচ্চ হলো একটি লেনদেন যতটা বহন করতে পারে: এর সবচেয়ে বড় %dটি কয়েন। \"UTXO একত্র করুন\" বাকিগুলো একত্র করে।";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "একটি লেনদেন %dটি কয়েন একত্র করতে পারে, তাই সবচেয়ে বড় %dটি একত্র করা হয়। বাকিগুলোর জন্য আবার একত্র করুন।";
+"This account's keys are on this phone again, so nothing was removed." = "এই অ্যাকাউন্টের কী আবার এই ফোনে আছে, তাই কিছুই সরানো হয়নি।";
+"Unable to sign in to this account." = "এই অ্যাকাউন্টে সাইন ইন করা যাচ্ছে না।";
+"Skip the Search: Import on Address #0" = "খোঁজা বাদ দিন: ঠিকানা #0-তে ইমপোর্ট করুন";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "এই অ্যাকাউন্টের অন্য ঠিকানাগুলোতে তহবিল খোঁজা শেষ হয়নি, তাই ইমপোর্ট ঠিকানা #0 ব্যবহার করে।";
+"Search Again" = "আবার খুঁজুন";
+"Re-enter PIN" = "PIN আবার লিখুন";
+"The PINs don't match." = "PIN মিলছে না।";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "নেটওয়ার্ক ফি এখন %@ KAS, পর্যালোচনায় দেখানোর চেয়ে বেশি। কিছুই পাঠানো হয়নি: নতুন ফি দেখে আবার সোয়াইপ করুন।";
+"Mining reward, not spendable here" = "মাইনিং পুরস্কার, এখানে খরচ করা যায় না";
+"Not confirmed yet" = "এখনও নিশ্চিত হয়নি";
+"Just spent by a send" = "এইমাত্র একটি পাঠানোয় খরচ হয়েছে";
+"Not spendable yet" = "এখনও খরচ করা যায় না";

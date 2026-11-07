@@ -549,7 +549,8 @@ final class KachatNamesActions: ObservableObject {
         if let rate { chosen = rate } else { chosen = await feerate() }
         let env = try await service.environment(privateKey: s.privateKey, feerate: chosen)
         virtualDaa = env.blockDaa
-        let utxos = try await NodePoolService.shared.getUtxosByAddresses([s.address])
+        // not coins a send still in flight spent
+        let utxos = WalletService.shared.unreservedUtxos(try await NodePoolService.shared.getUtxosByAddresses([s.address]))
         let funding = KachatNamesService.fundingUtxos(utxos, me: s.me, virtualDaaScore: env.blockDaa)
         return (builder, env, funding)
     }
@@ -562,7 +563,7 @@ final class KachatNamesActions: ObservableObject {
     /// What the wallet can spend on names right now (sompi).
     func spendable() async throws -> UInt64 {
         let s = try buyerSigner()
-        let utxos = try await NodePoolService.shared.getUtxosByAddresses([s.address])
+        let utxos = WalletService.shared.unreservedUtxos(try await NodePoolService.shared.getUtxosByAddresses([s.address]))
         let daa = await NodePoolService.shared.currentVirtualDaaScore() ?? 0
         return KachatNamesService.fundingUtxos(utxos, me: s.me, virtualDaaScore: daa).reduce(0) { $0 + $1.entry.amount }
     }
@@ -667,19 +668,27 @@ final class KachatNamesActions: ObservableObject {
     @discardableResult
     func combineCoins(_ s: Signer) async throws -> String {
         let utxos = try await NodePoolService.shared.getUtxosByAddresses([s.address])
-        let plain = utxos
-            .filter { $0.covenantId == nil }
+        // Not a coin a send still in flight spent, nor a mining reward that may not be mature.
+        let plain = Array(WalletService.shared.unreservedUtxos(utxos)
+            .filter { $0.covenantId == nil && $0.blockDaaScore > 0 && !$0.isCoinbase }
             .sorted { $0.amount > $1.amount }
-            .prefix(KasiaTransactionBuilder.maxInputsPerTransaction)
+            .prefix(KasiaTransactionBuilder.maxInputsPerTransaction))
         let total = plain.reduce(UInt64(0)) { $0 + $1.amount }
-        let feeRoom: UInt64 = 5_000_000 // 0.05 KAS: the fee, with what's left coming back as change
-        guard plain.count > 1, total > feeRoom * 2 else {
+        guard plain.count > 1, let script = KaspaAddress.scriptPublicKey(from: s.address) else {
             throw KachatNames.Failure(AppLocalization.string("Not enough KAS on your chatting address for this."))
         }
+        // All of it, less the fee: a fixed fee allowance left change too small to keep, which
+        // the builder gave to the network. (As KaPost.)
         let daa = await NodePoolService.shared.currentVirtualDaaScore()
+        let fee = KasiaTransactionBuilder.estimateSendAllFee(
+            utxos: plain, payload: Data(), recipientScriptPubKey: script, senderScriptPubKey: script, virtualDaaScore: daa
+        )
+        guard total > fee * 2 else {
+            throw KachatNames.Failure(AppLocalization.string("Not enough KAS on your chatting address for this."))
+        }
         let tx = try KasiaTransactionBuilder.buildPlainTransferTx(
-            from: s.address, to: s.address, amount: total - feeRoom,
-            senderPrivateKey: s.privateKey, utxos: Array(plain), virtualDaaScore: daa
+            from: s.address, to: s.address, amount: total - fee,
+            senderPrivateKey: s.privateKey, utxos: plain, virtualDaaScore: daa
         )
         let (txId, _) = try await NodePoolService.shared.submitTransaction(tx)
         // a move between your own coins, not a payment
@@ -1014,7 +1023,7 @@ final class KachatNamesActions: ObservableObject {
     func profileFee(_ profile: KachatNames.Profile) async throws -> UInt64 {
         let s = try profileSigner()
         let json = try profile.sanitized().recordJSON()
-        let utxos = try await NodePoolService.shared.getUtxosByAddresses([s.address])
+        let utxos = WalletService.shared.unreservedUtxos(try await NodePoolService.shared.getUtxosByAddresses([s.address]))
         let tx = try service.buildProfileRecord(address: s.address, privateKey: s.privateKey, utxos: utxos, json: json)
         let spent = tx.inputs.reduce(UInt64(0)) { total, input in
             total + (utxos.first {
@@ -1029,7 +1038,7 @@ final class KachatNamesActions: ObservableObject {
         let s = try profileSigner()
         let clean = profile.sanitized()
         let json = try clean.recordJSON()
-        let utxos = try await NodePoolService.shared.getUtxosByAddresses([s.address])
+        let utxos = WalletService.shared.unreservedUtxos(try await NodePoolService.shared.getUtxosByAddresses([s.address]))
         let txId = try await service.submitProfileRecord(address: s.address, privateKey: s.privateKey, utxos: utxos, json: json)
         registry.noteOwnProfile(clean, address: s.address, txId: txId)
         registry.refreshAfter(txId: txId)

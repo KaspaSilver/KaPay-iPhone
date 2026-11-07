@@ -220,7 +220,29 @@ extension WalletManager {
     }
 
     private func spendingUtxoLabelsKey(for address: String) -> String {
+        Self.spendingUtxoLabelsKey(for: address)
+    }
+
+    private static func spendingUtxoLabelsKey(for address: String) -> String {
         "kachat_spending_utxo_labels_" + address
+    }
+
+    /// Everything this file keeps for one account, for its removal: each derived address's coin
+    /// labels, the derived-address files of both networks, and the account's own spending keys.
+    static func removeSpendingData(forAccount address: String) {
+        let defaults = UserDefaults.standard
+        for network in NetworkType.allCases {
+            let cacheKey = "kachat_spending_derived_addresses_\(address)_\(network.rawValue)"
+            for derived in DerivedAddressStore.addresses(cacheKey).values {
+                defaults.removeObject(forKey: spendingUtxoLabelsKey(for: derived))
+            }
+            DerivedAddressStore.remove(cacheKey)
+        }
+        let suffixes = ["_\(address)", "_\(address.replacingOccurrences(of: ":", with: "_"))"]
+        for key in defaults.dictionaryRepresentation().keys
+        where key.hasPrefix("kachat_spending_") && suffixes.contains(where: key.hasSuffix) {
+            defaults.removeObject(forKey: key)
+        }
     }
 
     // MARK: - Derivation
@@ -1226,6 +1248,14 @@ enum DerivedAddressStore {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             flush()
         }
+    }
+
+    /// Drops a set and its file (its account was removed).
+    static func remove(_ key: String) {
+        sets[key] = nil
+        dirty.remove(key)
+        guard let url = fileURL(key) else { return }
+        ioQueue.async { try? FileManager.default.removeItem(at: url) }
     }
 
     private static func flush() {

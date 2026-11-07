@@ -255,9 +255,11 @@ struct KasiaTransactionBuilder {
         if selection.keepsChange(withRecipientAmount: amount) {
             outputs.append(KaspaRpcTransactionOutput(value: selection.change, scriptPublicKey: KaspaScriptPublicKey(version: 0, script: senderScriptPubKey)))
         }
+        // The selector spends a 3-sompi buffer on top of the minimum fee (`selectUtxosForPayment`);
+        // it is part of what the send pays, so it is part of the fee shown.
         return SendFeeEstimate(
             networkFee: estimateFee(payload: Data(), inputCount: selection.utxos.count, outputs: outputs,
-                                    signatureScriptSize: signatureScriptSize) + extraFeeSompi,
+                                    signatureScriptSize: signatureScriptSize) + 3 + extraFeeSompi,
             foldedChange: selection.keepsChange(withRecipientAmount: amount) ? 0 : selection.change
         )
     }

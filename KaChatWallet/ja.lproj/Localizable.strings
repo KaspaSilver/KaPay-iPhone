@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "このアドレスには公開鍵がありません。";
 "This address holds funds, so this looks like the right account." = "このアドレスには資金があるため、正しいアカウントのようです。";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "このカードにはすでにバックアップがあります。保存すると、新しいバックアップが確認された後で置き換えられます。";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "このiPhoneにはアカウントがありますが、鍵がありません。電話をバックアップから復元すると起こります。KaPayの鍵は作成されたデバイスに紐づいているためです。ここでロックを解除するには12語または24語を入力してください。このデバイスのメッセージは保持されます。";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "このiPhoneにはアカウントがありますが、鍵がありません。電話をバックアップから復元すると起こります。KaPayの鍵は作成されたデバイスに紐づいているためです。ここでロックを解除するには12語または24語を入力してください。KaPayがこの電話に保存したデータは保持されます。";
 "This is more than the address you're sending from holds." = "送金元アドレスの残高を超えています。";
 "This is much more than the network needs." = "ネットワークに必要な額よりかなり多くなっています。";
 "This is the account your 12 or 24 words open on their own." = "12語または24語だけで開けるアカウントです。";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "未確認";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "送信された可能性がありますが、ネットワークで確認できませんでした。再度送信する前に残高を確認してください。";
 "Confirm sending this domain" = "このドメインの送信を確認";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "最大は1回の取引で送れる額です（大きい順に %d 枚のコイン）。残りは「UTXO を統合」でまとめられます。";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "1回の取引で統合できるのは %d 枚のコインなので、大きい順に %d 枚を統合します。残りはもう一度統合してください。";
+"This account's keys are on this phone again, so nothing was removed." = "このアカウントの鍵がこの電話に戻ったため、何も削除されませんでした。";
+"Unable to sign in to this account." = "このアカウントにサインインできません。";
+"Skip the Search: Import on Address #0" = "検索をスキップ：アドレス#0にインポート";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "このアカウントの他のアドレスにある資金の検索が完了しなかったため、インポートはアドレス#0を使用します。";
+"Search Again" = "もう一度検索";
+"Re-enter PIN" = "PINを再入力";
+"The PINs don't match." = "PINが一致しません。";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "ネットワーク手数料が%@ KASになり、確認画面の表示より高くなりました。何も送信されていません。新しい手数料を確認して、もう一度スワイプしてください。";
+"Mining reward, not spendable here" = "マイニング報酬（ここでは使えません）";
+"Not confirmed yet" = "未承認";
+"Just spent by a send" = "送金で使用済み";
+"Not spendable yet" = "まだ使用できません";

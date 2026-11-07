@@ -375,6 +375,9 @@ struct ColdStorageDetailView: View {
     @State private var isDiscovering = false
     /// The address-actions half sheet.
     @State private var showAddressActions = false
+    /// Address Visibility was picked there: opened once that sheet has finished closing, since
+    /// a sheet opened while another is still going away is dropped.
+    @State private var openVisibilityAfterActions = false
     /// Address whose own actions half sheet is open.
     @State private var addressActionsTarget: ColdStorageAddressEntry?
     /// Live scan position while discovering, so the sheet can show progress rather than a spinner.
@@ -505,7 +508,12 @@ struct ColdStorageDetailView: View {
                 .presentationDetents([.height(entry.balanceSompi == 0 ? 380 : 300)])
                 .presentationDragIndicator(.visible)
         }
-        .sheet(isPresented: $showAddressActions) {
+        .sheet(isPresented: $showAddressActions, onDismiss: {
+            if openVisibilityAfterActions {
+                openVisibilityAfterActions = false
+                showVisibilityManager = true
+            }
+        }) {
             addressActionsSheet
                 // Three rows now that Address Visibility lives here.
                 .presentationDetents([.height(400)])
@@ -782,10 +790,8 @@ struct ColdStorageDetailView: View {
                         systemImage: "checklist",
                         isDisabled: isDiscovering
                     ) {
+                        openVisibilityAfterActions = true
                         showAddressActions = false
-                        // One runloop turn: presenting a sheet from inside one that is still
-                        // dismissing drops it.
-                        DispatchQueue.main.async { showVisibilityManager = true }
                     }
                     if let discoverySummary {
                         Text(discoverySummary)
@@ -1974,7 +1980,28 @@ private struct ColdSendFlowView: View {
 struct CoinControlView: View {
     let fromAddress: String
     let initialSelection: [UTXO]?
+    /// Why a send can't spend a coin, nil when it can: the same coins the send leaves out, listed
+    /// greyed out and never picked, so a selection can't be made of coins the send would refuse.
+    /// Nil for Cold Storage, whose coins the app doesn't hold back.
+    /// The second value is the network's virtual DAA score, when known, for mining-reward maturity.
+    var unavailableReason: ((UTXO, UInt64?) -> LocalizedStringKey?)? = nil
     let onDone: ([UTXO]?) -> Void
+
+    /// A hot-wallet send's rule (`WalletService.withdrawalSpendable` for the chatting address;
+    /// `spendableUtxos` and `unreservedUtxos` for a spending address, which can spend a mining
+    /// reward once it's mature).
+    static func hotWalletReason(chatting: Bool) -> (UTXO, UInt64?) -> LocalizedStringKey? {
+        { utxo, virtualDaaScore in
+            if chatting, utxo.isCoinbase { return "Mining reward, not spendable here" }
+            if chatting, utxo.blockDaaScore == 0 { return "Not confirmed yet" }
+            if !chatting, WalletService.spendableUtxos([utxo], virtualDaaScore: virtualDaaScore).isEmpty {
+                return "Not spendable yet"
+            }
+            if WalletService.shared.unreservedUtxos([utxo]).isEmpty { return "Just spent by a send" }
+            return nil
+        }
+    }
+    @State private var virtualDaaScore: UInt64?
 
     @Environment(\.dismiss) private var dismiss
     @State private var utxos: [UTXO] = []
@@ -1988,7 +2015,12 @@ struct CoinControlView: View {
     private func loadUtxos() async {
         isLoading = true
         do {
-            utxos = try await NodePoolService.shared.getUtxosByAddresses([fromAddress])
+            let fetched = try await NodePoolService.shared.getUtxosByAddresses([fromAddress])
+            // only needed to tell a mature mining reward from one that isn't yet
+            if fetched.contains(where: \.isCoinbase) {
+                virtualDaaScore = await NodePoolService.shared.currentVirtualDaaScore()
+            }
+            utxos = fetched
             loadError = nil
         } catch {
             loadError = UserFacingError.message(for: error)
@@ -2000,8 +2032,13 @@ struct CoinControlView: View {
         "\(utxo.outpoint.transactionId):\(utxo.outpoint.index)"
     }
 
+    private var availableUtxos: [UTXO] {
+        guard let unavailableReason else { return utxos }
+        return utxos.filter { unavailableReason($0, virtualDaaScore) == nil }
+    }
+
     private var selectedTotalSompi: UInt64 {
-        utxos.filter { selectedKeys.contains(key($0)) }.reduce(0) { $0 + $1.amount }
+        availableUtxos.filter { selectedKeys.contains(key($0)) }.reduce(0) { $0 + $1.amount }
     }
 
     var body: some View {
@@ -2027,6 +2064,7 @@ struct CoinControlView: View {
                         ForEach(Array(utxos.enumerated()), id: \.offset) { _, utxo in
                             let k = key(utxo)
                             let isSelected = selectedKeys.contains(k)
+                            let unavailable = unavailableReason?(utxo, virtualDaaScore)
                             Button {
                                 if isSelected {
                                     selectedKeys.remove(k)
@@ -2051,12 +2089,19 @@ struct CoinControlView: View {
                                         Text("\(utxo.outpoint.transactionId.prefix(10))...:\(utxo.outpoint.index)")
                                             .font(.system(.caption2, design: .monospaced))
                                             .foregroundColor(.secondary)
+                                        if let unavailable {
+                                            Text(unavailable)
+                                                .font(.caption2)
+                                                .foregroundColor(.orange)
+                                        }
                                     }
                                     Spacer()
                                 }
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .disabled(unavailable != nil)
+                            .opacity(unavailable == nil ? 1 : 0.5)
                         }
                     } footer: {
                         if !selectedKeys.isEmpty {
@@ -2073,7 +2118,7 @@ struct CoinControlView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
-                        Button("Select All") { selectedKeys = Set(utxos.map(key)) }
+                        Button("Select All") { selectedKeys = Set(availableUtxos.map(key)) }
                         Button("Automatic (Clear Selection)") { selectedKeys.removeAll() }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -2082,7 +2127,7 @@ struct CoinControlView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 Button {
-                    let selected = utxos.filter { selectedKeys.contains(key($0)) }
+                    let selected = availableUtxos.filter { selectedKeys.contains(key($0)) }
                     onDone(selected.isEmpty ? nil : selected)
                     dismiss()
                 } label: {
@@ -2100,7 +2145,8 @@ struct CoinControlView: View {
                 utxoLabels = ColdStorageManager.shared.loadUtxoLabels(address: fromAddress)
                 await loadUtxos()
                 if let initialSelection {
-                    selectedKeys = Set(initialSelection.map(key))
+                    // coins spent since they were picked drop out of the selection
+                    selectedKeys = Set(initialSelection.map(key)).intersection(Set(availableUtxos.map(key)))
                 }
             }
         }

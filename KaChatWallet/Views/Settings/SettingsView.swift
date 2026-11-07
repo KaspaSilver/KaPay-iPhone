@@ -112,8 +112,10 @@ struct SettingsView: View {
                 AccountBackupView()
             }
             .task(id: walletManager.currentWallet?.publicAddress) {
-                let passphrase = (try? walletManager.getSeedPhrase())?.passphrase ?? ""
-                accountHasPassphrase = !passphrase.isEmpty
+                // A failed read (the words are readable only while unlocked) says nothing: it isn't
+                // taken as "no passphrase", and the next visit asks again.
+                guard let seed = try? walletManager.getSeedPhrase() else { return }
+                accountHasPassphrase = !(seed.passphrase ?? "").isEmpty
             }
             .sheet(isPresented: $showNFCCardBackup) {
                 #if canImport(CoreNFC) && !targetEnvironment(macCatalyst)
@@ -1264,6 +1266,7 @@ struct SeedPhraseView: View {
     @State private var toastMessage: String?
     @State private var toastToken = UUID()
     @State private var toastStyle: ToastStyle = .success
+    @State private var showScreenshotWarning = false
 
     var body: some View {
         NavigationStack {
@@ -1297,7 +1300,8 @@ struct SeedPhraseView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if isRevealed {
-                        // Seed phrase grid (protected from screenshots)
+                        // Seed phrase grid. SecureView only blurs it while the screen is recorded or
+                        // mirrored; iOS can't stop a screenshot, so one gets the warning below.
                         SecureView {
                             LazyVGrid(columns: [
                                 GridItem(.flexible()),
@@ -1410,6 +1414,15 @@ struct SeedPhraseView: View {
             }
             .onAppear {
                 loadSeedPhrase()
+            }
+            // iOS can't stop a screenshot, only say so afterwards, as the backup steps do.
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.userDidTakeScreenshotNotification)) { _ in
+                if isRevealed { showScreenshotWarning = true }
+            }
+            .alert("Delete That Screenshot", isPresented: $showScreenshotWarning) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("A screenshot of your 12 or 24 words can end up online. Delete it from your photos and write the words on paper instead.")
             }
         }
     }
@@ -3092,7 +3105,7 @@ struct NextcloudSettingsView: View {
                 } header: {
                     Text("Portfolio Backup")
                 } footer: {
-                    Text("Each portfolio has its own file, named after it. These files aren't encrypted.")
+                    Text("Each portfolio has its own file, named after it, encrypted with this account's key.")
                 }
 
                 if backupStatusMessage != nil || backupErrorMessage != nil {

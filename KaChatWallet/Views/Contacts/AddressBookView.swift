@@ -13,6 +13,10 @@ struct AddressBookView: View {
     @State private var search = ""
     @State private var showAdd = false
     @State private var showImportExport = false
+    /// The row picked in that sheet: opened once it has finished closing (`presentActionChoice`).
+    /// A sheet opened while another is still going away is dropped.
+    @State private var actionChoice: ActionChoice?
+    private enum ActionChoice { case add, importFile, exportFile, importNextcloud }
     @State private var showFileImporter = false
     @State private var showNextcloudImporter = false
     @State private var exportFile: ExportedFile?
@@ -65,7 +69,7 @@ struct AddressBookView: View {
         .sheet(isPresented: $showAdd) {
             AddressBookEntryEditor(address: nil) { _ in }
         }
-        .sheet(isPresented: $showImportExport) { actionsSheet }
+        .sheet(isPresented: $showImportExport, onDismiss: presentActionChoice) { actionsSheet }
         .sheet(item: $exportFile) { file in
             AddressBookShareSheet(fileURL: file.url)
         }
@@ -124,24 +128,24 @@ struct AddressBookView: View {
                 subtitle: "Save a Kaspa address with a name you'll recognize.",
                 systemImage: "plus"
             ) {
+                actionChoice = .add
                 showImportExport = false
-                DispatchQueue.main.async { showAdd = true }
             }
             ActionSheetRow(
                 title: "Import File",
                 subtitle: "Add contacts from a contacts export.",
                 systemImage: "square.and.arrow.down"
             ) {
+                actionChoice = .importFile
                 showImportExport = false
-                DispatchQueue.main.async { showFileImporter = true }
             }
             ActionSheetRow(
                 title: "Export File",
                 subtitle: "Save your contacts, with their photos, to a file.",
                 systemImage: "square.and.arrow.up"
             ) {
+                actionChoice = .exportFile
                 showImportExport = false
-                exportToFile()
             }
             if nextcloud.isConnected {
                 ActionSheetRow(
@@ -149,8 +153,8 @@ struct AddressBookView: View {
                     subtitle: "Pick a contacts export from your Nextcloud.",
                     systemImage: "icloud.and.arrow.down"
                 ) {
+                    actionChoice = .importNextcloud
                     showImportExport = false
-                    DispatchQueue.main.async { showNextcloudImporter = true }
                 }
                 ActionSheetRow(
                     title: "Export to Nextcloud",
@@ -196,10 +200,22 @@ struct AddressBookView: View {
         }
     }
 
+    /// Opens what was picked in the import/export sheet, now that it has closed.
+    private func presentActionChoice() {
+        let choice = actionChoice
+        actionChoice = nil
+        switch choice {
+        case .add: showAdd = true
+        case .importFile: showFileImporter = true
+        case .exportFile: exportToFile()
+        case .importNextcloud: showNextcloudImporter = true
+        case nil: break
+        }
+    }
+
     private func exportToFile() {
         guard let url = writeExport() else { return }
-        // One turn later: the share sheet can't present while the import/export sheet leaves.
-        DispatchQueue.main.async { exportFile = ExportedFile(url: url) }
+        exportFile = ExportedFile(url: url)
     }
 
     private func exportToNextcloud() {

@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "Địa chỉ này không có khóa công khai.";
 "This address holds funds, so this looks like the right account." = "Địa chỉ này có tiền, nên đây có vẻ là đúng tài khoản.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "Thẻ này đã có một bản sao lưu. Lưu sẽ thay thế nó sau khi bản mới được xác nhận.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "iPhone này có tài khoản của bạn nhưng không có khóa. Điều này xảy ra sau khi khôi phục điện thoại từ bản sao lưu, vì khóa của KaPay gắn với thiết bị đã tạo ra chúng. Nhập 12 hoặc 24 từ của bạn để mở khóa tại đây. Tin nhắn của bạn trên thiết bị này được giữ lại.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "iPhone này có tài khoản của bạn nhưng không có khóa. Điều này xảy ra sau khi khôi phục điện thoại từ bản sao lưu, vì khóa của KaPay gắn với thiết bị đã tạo ra chúng. Nhập 12 hoặc 24 từ của bạn để mở khóa tại đây. Những gì KaPay đã lưu cho tài khoản trên điện thoại này được giữ lại.";
 "This is more than the address you're sending from holds." = "Số này nhiều hơn số dư của địa chỉ bạn gửi từ đó.";
 "This is much more than the network needs." = "Mức này cao hơn nhiều so với mạng cần.";
 "This is the account your 12 or 24 words open on their own." = "Đây là tài khoản mà 12 hoặc 24 từ của bạn tự mở ra.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "Chưa xác nhận";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "Giao dịch có thể đã được gửi, nhưng mạng chưa xác nhận. Hãy kiểm tra số dư trước khi gửi lại.";
 "Confirm sending this domain" = "Xác nhận gửi tên miền này";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "Tối đa là lượng một giao dịch có thể chứa: %d đồng lớn nhất. \"Hợp nhất UTXO\" gộp phần còn lại.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "Một giao dịch có thể hợp nhất %d đồng, nên %d đồng lớn nhất được hợp nhất. Hợp nhất lại cho phần còn lại.";
+"This account's keys are on this phone again, so nothing was removed." = "Khóa của tài khoản này đã có lại trên điện thoại này, nên không có gì bị xóa.";
+"Unable to sign in to this account." = "Không thể đăng nhập vào tài khoản này.";
+"Skip the Search: Import on Address #0" = "Bỏ qua tìm kiếm: Nhập vào địa chỉ #0";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "Việc tìm số dư trên các địa chỉ khác của tài khoản này chưa xong, nên Nhập dùng địa chỉ #0.";
+"Search Again" = "Tìm lại";
+"Re-enter PIN" = "Nhập lại mã PIN";
+"The PINs don't match." = "Mã PIN không khớp.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "Phí mạng hiện là %@ KAS, cao hơn mức hiển thị ở phần Xem lại. Chưa có gì được gửi: hãy kiểm tra phí mới và vuốt lại.";
+"Mining reward, not spendable here" = "Phần thưởng đào, không thể chi tiêu ở đây";
+"Not confirmed yet" = "Chưa được xác nhận";
+"Just spent by a send" = "Vừa được chi bởi một lần gửi";
+"Not spendable yet" = "Chưa thể chi tiêu";

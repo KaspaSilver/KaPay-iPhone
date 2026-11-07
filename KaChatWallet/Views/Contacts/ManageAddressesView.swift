@@ -46,6 +46,9 @@ struct ManageAddressesView: View {
     @State private var showVisibilityManager = false
     /// The "Address Actions" half sheet, and the per-row one behind each ellipsis.
     @State private var showAddressActions = false
+    /// Address Visibility was picked there: opened once that sheet has finished closing, since
+    /// a sheet opened while another is still going away is dropped.
+    @State private var openVisibilityAfterActions = false
     @State private var addressActionsTarget: SpendingAddressEntry?
     /// Live scan position while discovering, so the actions sheet can count up rather than sit
     /// on a spinner for the half-minute a gap-limit walk takes.
@@ -102,7 +105,12 @@ struct ManageAddressesView: View {
         }
         .navigationTitle("Manage Addresses")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showAddressActions) {
+        .sheet(isPresented: $showAddressActions, onDismiss: {
+            if openVisibilityAfterActions {
+                openVisibilityAfterActions = false
+                showVisibilityManager = true
+            }
+        }) {
             addressActionsSheet
                 .presentationDetents([.height(440)])
                 .presentationDragIndicator(.visible)
@@ -533,10 +541,8 @@ struct ManageAddressesView: View {
                         systemImage: "checklist",
                         isDisabled: isDiscovering
                     ) {
+                        openVisibilityAfterActions = true
                         showAddressActions = false
-                        // One runloop turn: presenting a sheet from inside one that is still
-                        // dismissing drops it.
-                        DispatchQueue.main.async { showVisibilityManager = true }
                     }
                     if let discoverySummary {
                         Text(discoverySummary)
@@ -753,7 +759,7 @@ struct ManageAddressesView: View {
                         entries[position].everUsed = used
                     }
                     unknownUsedAddresses.remove(address)
-                    AppLog.log("[ManageAddresses] everUsed check address=%@ used=%@", address, used ? "true" : "false")
+                    AppLog.log("[ManageAddresses] everUsed check address=…%@ used=%@", String(address.suffix(8)), used ? "true" : "false")
                 }
                 // A failed probe stays in unknownUsedAddresses: the badge keeps showing
                 // "Checking" (never a possibly-wrong "Unused") and pull to refresh retries.
@@ -936,7 +942,7 @@ struct ManageAddressesView: View {
             var lastError: Error?
             for entry in entries where entry.index != activeIndex && entry.balanceSompi > 0 {
                 do {
-                    let maxSendable = try await walletService.estimateMaxSpendingAddressAmount(index: entry.index, toAddress: primaryAddress, extraFeeSompi: extraFeeSompi)
+                    let maxSendable = try await walletService.estimateMaxSpendingAddressAmount(index: entry.index, toAddress: primaryAddress, extraFeeSompi: extraFeeSompi).amountSompi
                     guard maxSendable > 0 else { continue }
                     let txId = try await walletService.sendFromSpendingAddress(index: entry.index, toAddress: primaryAddress, amountSompi: maxSendable, extraFeeSompi: extraFeeSompi)
                     sentTxIds.append(txId)
@@ -1258,6 +1264,18 @@ struct SpendingAddressWithdrawView: View {
     @State private var showQRScanner = false
     @State private var isSending = false
     @State private var isEstimatingMax = false
+    /// The amount Max set when it could use only the largest coins one transaction spends: the
+    /// note shows while the amount is still that one.
+    @State private var cappedMaxAmount: String?
+    /// The amount Max set: while it's still the amount, a fee change works Max out again.
+    @State private var maxAmountText: String?
+    /// The base fee, or the fee at the chosen speed, couldn't be worked out: no swipe.
+    @State private var feeError: String?
+    @State private var tippedFeeError: String?
+    /// Bumped when a send stopped because its fee had changed: the Review works the fee out again.
+    @State private var feeRefresh = 0
+    /// The latest Max request: a slower answer to an earlier one (another fee) is dropped.
+    @State private var maxRequest = UUID()
     @State private var errorMessage: String?
     /// The completed send, driving the sent-confirmation half sheet.
     @State private var sentTransaction: SentTransaction?
@@ -1312,7 +1330,12 @@ struct SpendingAddressWithdrawView: View {
     private var canSend: Bool {
         hasValidRecipient && amountSompi != nil && !isSending
             && !isEstimatingMax && !isEstimatingFee && !isEstimatingTippedFee
-            && normalFeeSompi != nil
+            && normalFeeSompi != nil && feeError == nil && tippedFeeError == nil
+    }
+
+    /// The amount is still the one Max set.
+    private var amountIsMax: Bool {
+        maxAmountText != nil && maxAmountText == amountInput
     }
 
     /// Extra priority tip on top of the base (Normal-tier) fee, for network congestion. A
@@ -1320,8 +1343,8 @@ struct SpendingAddressWithdrawView: View {
     /// multiplier until a tier is tapped again - same behavior as the main-address
     /// withdraw flow (ContactsView.WithdrawKaspaView).
     private var extraFeeSompi: UInt64 {
-        guard let normalFeeSompi else { return 0 }
         if let customExtraFeeSompi { return customExtraFeeSompi }
+        guard let normalFeeSompi else { return 0 }
         return normalFeeSompi * (feeTier.multiplier - 1)
     }
 
@@ -1333,7 +1356,7 @@ struct SpendingAddressWithdrawView: View {
 
     private var feeEstimationKey: String {
         let manualKey = manualUtxos?.map { "\($0.outpoint.transactionId):\($0.outpoint.index)" }.sorted().joined(separator: ",") ?? ""
-        return "\(source.index)|\(hasValidRecipient ? effectiveAddress : "")|\(amountSompi ?? 0)|\(manualKey)"
+        return "\(source.index)|\(hasValidRecipient ? effectiveAddress : "")|\(amountSompi ?? 0)|\(manualKey)|\(feeRefresh)"
     }
 
     /// The spending address this send comes from: `entry` (the primary, from Profile or the
@@ -1469,10 +1492,21 @@ struct SpendingAddressWithdrawView: View {
                         onEditFee: { showFeeEditor(true) }
                     )
 
-                    if let errorMessage {
-                        Text(errorMessage)
+                    if let message = errorMessage ?? feeError ?? tippedFeeError {
+                        Text(message)
                             .font(.footnote)
                             .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                        // a fee that couldn't be worked out would otherwise keep the swipe off for good
+                        if errorMessage == nil {
+                            Button("Try Again") { feeRefresh += 1 }
+                                .font(.footnote.weight(.semibold))
+                        }
+                    } else if !isCompoundMode, let cappedMaxAmount, cappedMaxAmount == amountInput {
+                        Text(String(format: AppLocalization.string("Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest."),
+                                    locale: AppLocalization.locale, KasiaTransactionBuilder.maxInputsPerTransaction))
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                     }
                 }
@@ -1485,30 +1519,37 @@ struct SpendingAddressWithdrawView: View {
             .onChange(of: feeTier) { _ in
                 customExtraFeeSompi = nil
                 isEditingFee = false
-                if isCompoundMode { setMaxAmount() }
+                if isCompoundMode || amountIsMax { setMaxAmount() }
             }
             .onChange(of: customExtraFeeSompi) { _ in
-                // Compound sends everything: the amount is what's left after the fee
-                if isCompoundMode { setMaxAmount() }
+                // Compound and Max send everything: the amount is what's left after the fee
+                if isCompoundMode || amountIsMax { setMaxAmount() }
             }
             // A higher fee can leave too little change to keep, and then all of it goes to the fee: the
             // total comes from an estimate made with that fee, what the send itself will do.
             .task(id: "\(feeEstimationKey)|\(extraFeeSompi)") {
                 tippedFeeSompi = nil
+                tippedFeeError = nil
                 isEstimatingTippedFee = false
                 guard extraFeeSompi > 0, !isCompoundMode, hasValidRecipient, let amountSompi else { return }
                 isEstimatingTippedFee = true
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard !Task.isCancelled else { return }
-                let fee = try? await walletService.estimateSpendingAddressWithdrawalFee(index: source.index, toAddress: effectiveAddress, amountSompi: amountSompi, manualUtxos: manualUtxos, extraFeeSompi: extraFeeSompi)
-                guard !Task.isCancelled else { return }
-                // a failed look-up leaves the base fee plus the extra, the closest there is
-                if let fee { tippedFeeSompi = fee.networkFee + fee.foldedChange }
+                do {
+                    let fee = try await walletService.estimateSpendingAddressWithdrawalFee(index: source.index, toAddress: effectiveAddress, amountSompi: amountSompi, manualUtxos: manualUtxos, extraFeeSompi: extraFeeSompi)
+                    guard !Task.isCancelled else { return }
+                    tippedFeeSompi = fee.networkFee + fee.foldedChange
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    // not the base fee plus the extra: the send itself would fail the same way
+                    tippedFeeError = UserFacingError.message(for: error)
+                }
                 isEstimatingTippedFee = false
             }
             .task(id: feeEstimationKey) {
+                // the last base fee is kept for the next Max and the speed extras
                 guard hasValidRecipient, let amountSompi else {
-                    normalFeeSompi = nil
+                    feeError = nil
                     isEstimatingFee = false
                     return
                 }
@@ -1520,9 +1561,11 @@ struct SpendingAddressWithdrawView: View {
                     guard !Task.isCancelled else { return }
                     normalFeeSompi = fee.networkFee
                     foldedChangeSompi = fee.foldedChange
+                    feeError = nil
                 } catch {
                     guard !Task.isCancelled else { return }
-                    normalFeeSompi = nil
+                    // said, not just a swipe that never turns on
+                    feeError = UserFacingError.message(for: error)
                 }
                 isEstimatingFee = false
             }
@@ -1550,7 +1593,8 @@ struct SpendingAddressWithdrawView: View {
                 }
             }
             .sheet(isPresented: $showCoinControl) {
-                CoinControlView(fromAddress: source.address, initialSelection: manualUtxos) { selection in
+                CoinControlView(fromAddress: source.address, initialSelection: manualUtxos,
+                                unavailableReason: CoinControlView.hotWalletReason(chatting: false)) { selection in
                     manualUtxos = selection
                     if isCompoundMode { setMaxAmount() }
                 }
@@ -1646,7 +1690,11 @@ struct SpendingAddressWithdrawView: View {
         isEstimatingMax = true
         errorMessage = nil
         let recipient = effectiveAddress
-        let tipSompi = extraFeeSompi
+        // priced against the Max send's own coins, as the Review prices it (`WalletService.maxSendAmount`)
+        let fixedExtra = customExtraFeeSompi ?? 0
+        let multiplier: UInt64 = customExtraFeeSompi == nil ? feeTier.multiplier : 1
+        let request = UUID()
+        maxRequest = request
         Task {
             do {
                 if isCompoundMode {
@@ -1655,21 +1703,26 @@ struct SpendingAddressWithdrawView: View {
                     // send to exactly those inputs. This is why "Max" works even when the address has
                     // more UTXOs than a single tx can hold - it consolidates one batch; repeat to
                     // reduce further.
-                    let (maxSompi, utxos) = try await walletService.maxConsolidatableChunk(index: source.index, extraFeeSompi: tipSompi, availableUtxos: preloadedUtxos)
+                    let (maxSompi, utxos) = try await walletService.maxConsolidatableChunk(index: source.index, extraFeeSompi: fixedExtra, feeMultiplier: multiplier, availableUtxos: preloadedUtxos)
                     await MainActor.run {
+                        guard maxRequest == request else { return }
                         manualUtxos = utxos
                         amountInput = fiatAmountState.setMaxKas(Double(maxSompi) / 100_000_000.0, priceInCurrency: portfolioViewModel.currentPriceUsd)
                         isEstimatingMax = false
                     }
                 } else {
-                    let maxSompi = try await walletService.estimateMaxSpendingAddressAmount(index: source.index, toAddress: recipient, manualUtxos: manualUtxos, extraFeeSompi: tipSompi)
+                    let result = try await walletService.estimateMaxSpendingAddressAmount(index: source.index, toAddress: recipient, manualUtxos: manualUtxos, extraFeeSompi: fixedExtra, feeMultiplier: multiplier)
                     await MainActor.run {
-                        amountInput = fiatAmountState.setMaxKas(Double(maxSompi) / 100_000_000.0, priceInCurrency: portfolioViewModel.currentPriceUsd)
+                        guard maxRequest == request else { return }
+                        amountInput = fiatAmountState.setMaxKas(Double(result.amountSompi) / 100_000_000.0, priceInCurrency: portfolioViewModel.currentPriceUsd)
+                        maxAmountText = amountInput
+                        cappedMaxAmount = result.cappedAtInputLimit ? amountInput : nil
                         isEstimatingMax = false
                     }
                 }
             } catch {
                 await MainActor.run {
+                    guard maxRequest == request else { return }
                     errorMessage = UserFacingError.message(for: error)
                     isEstimatingMax = false
                 }
@@ -1693,7 +1746,7 @@ struct SpendingAddressWithdrawView: View {
     }
 
     private func send() {
-        guard let amountSompi else { return }
+        guard let amountSompi, !isSending else { return }
         isSending = true
         errorMessage = nil
         // In compound mode, `manualUtxos` is the one-transaction chunk pinned by setMaxAmount() and
@@ -1701,10 +1754,12 @@ struct SpendingAddressWithdrawView: View {
         // consolidation transaction. In normal mode it's a regular send.
         let recipient = effectiveAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         let tipSompi = extraFeeSompi
+        // what the Review shows: a send rebuilt from other coins that would pay more stops
+        let expectedFee = totalFeeSompi
         Task {
             do {
                 try await SendFailureSimulation.failIfEnabled()
-                let txId = try await walletService.sendFromSpendingAddress(index: source.index, toAddress: recipient, amountSompi: amountSompi, manualUtxos: manualUtxos, extraFeeSompi: tipSompi)
+                let txId = try await walletService.sendFromSpendingAddress(index: source.index, toAddress: recipient, amountSompi: amountSompi, manualUtxos: manualUtxos, extraFeeSompi: tipSompi, expectedFeeSompi: expectedFee)
                 await MainActor.run {
                     isSending = false
                     sentTransaction = SentTransaction(
@@ -1719,6 +1774,8 @@ struct SpendingAddressWithdrawView: View {
                 await MainActor.run {
                     isSending = false
                     errorMessage = UserFacingError.message(for: error)
+                    // nothing went out; Try Again goes back to a Review with the fee of today's coins
+                    if error is SendFeeChangedError { feeRefresh += 1 }
                 }
             }
         }

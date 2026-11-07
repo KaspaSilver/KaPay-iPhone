@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "Alamat ini tidak memiliki kunci publik.";
 "This address holds funds, so this looks like the right account." = "Alamat ini menyimpan dana, jadi ini tampaknya akun yang tepat.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "Kartu ini sudah berisi cadangan. Menyimpan akan menggantinya setelah yang baru dikonfirmasi.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "iPhone ini memiliki akun Anda tetapi tidak kuncinya. Ini terjadi setelah memulihkan ponsel dari cadangan, karena kunci KaPay terikat pada perangkat tempat kunci dibuat. Masukkan 12 atau 24 kata Anda untuk membukanya di sini. Pesan Anda di perangkat ini tetap disimpan.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "iPhone ini memiliki akun Anda tetapi tidak kuncinya. Ini terjadi setelah memulihkan ponsel dari cadangan, karena kunci KaPay terikat pada perangkat tempat kunci dibuat. Masukkan 12 atau 24 kata Anda untuk membukanya di sini. Apa yang disimpan KaPay untuknya di ponsel ini tetap ada.";
 "This is more than the address you're sending from holds." = "Ini lebih dari isi alamat pengirim.";
 "This is much more than the network needs." = "Ini jauh lebih banyak dari yang dibutuhkan jaringan.";
 "This is the account your 12 or 24 words open on their own." = "Ini adalah akun yang dibuka oleh 12 atau 24 kata Anda saja.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "Belum dikonfirmasi";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "Ini mungkin sudah terkirim, tetapi jaringan belum mengonfirmasinya. Periksa saldo Anda sebelum mengirim lagi.";
 "Confirm sending this domain" = "Konfirmasi pengiriman domain ini";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "Maks adalah yang bisa dimuat satu transaksi: %d koin terbesarnya. \"Gabungkan UTXO\" menggabungkan sisanya.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "Satu transaksi dapat menggabungkan %d koin, jadi %d koin terbesar digabungkan. Gabungkan lagi untuk sisanya.";
+"This account's keys are on this phone again, so nothing was removed." = "Kunci akun ini sudah ada lagi di ponsel ini, jadi tidak ada yang dihapus.";
+"Unable to sign in to this account." = "Tidak dapat masuk ke akun ini.";
+"Skip the Search: Import on Address #0" = "Lewati Pencarian: Impor ke Alamat #0";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "Pencarian dana di alamat lain akun ini tidak selesai, jadi Impor menggunakan alamat #0.";
+"Search Again" = "Cari Lagi";
+"Re-enter PIN" = "Masukkan ulang PIN";
+"The PINs don't match." = "PIN tidak cocok.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "Biaya jaringan sekarang %@ KAS, lebih besar dari yang ditampilkan di Tinjauan. Tidak ada yang dikirim: periksa biaya baru lalu geser lagi.";
+"Mining reward, not spendable here" = "Hadiah penambangan, tidak bisa dibelanjakan di sini";
+"Not confirmed yet" = "Belum dikonfirmasi";
+"Just spent by a send" = "Baru saja dibelanjakan oleh pengiriman";
+"Not spendable yet" = "Belum bisa dibelanjakan";

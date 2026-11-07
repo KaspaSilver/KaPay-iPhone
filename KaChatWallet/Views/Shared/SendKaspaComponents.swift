@@ -837,7 +837,11 @@ struct SendFromCompactRow: View {
             // A failed read says nothing about the balance: left unknown, not shown as 0.
             let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
             guard !Task.isCancelled, let utxos else { return }
-            availableSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
+            // what a send can spend: not coins just spent or not yet usable
+            let spendable = source == .chatting
+                ? WalletService.shared.withdrawalSpendable(utxos)
+                : WalletService.shared.unreservedUtxos(utxos)
+            availableSompi = spendable.reduce(UInt64(0)) { $0 + $1.amount }
         }
     }
 
@@ -1946,7 +1950,11 @@ struct SendFromSection: View {
             // A failed read says nothing about the balance: left unknown, not shown as 0.
             let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
             guard !Task.isCancelled, let utxos else { return }
-            availableSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
+            // what a send can spend: not coins just spent or not yet usable
+            let spendable = source == .chatting
+                ? WalletService.shared.withdrawalSpendable(utxos)
+                : WalletService.shared.unreservedUtxos(utxos)
+            availableSompi = spendable.reduce(UInt64(0)) { $0 + $1.amount }
         }
     }
 

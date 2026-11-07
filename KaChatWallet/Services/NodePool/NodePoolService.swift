@@ -625,7 +625,28 @@ final class NodePoolService: ObservableObject {
     /// looked up: found in a mempool or accepted, the send succeeded. If a node may have received it
     /// and never answered, the look-up goes on for longer, and a transaction still not found ends in
     /// `SendOutcomeUnknownError` rather than a failure: it may yet land.
+    ///
+    /// Whatever it spends is held back from the next send (`WalletService.reserveOutpoints`), here
+    /// rather than at each caller, so no send path (.kas and .kachat names, combines, Cold Storage)
+    /// can skip it: on success, and on an unknown outcome, which may yet land.
     func submitTransaction(_ transaction: KaspaRpcTransaction, allowOrphan: Bool = false) async throws -> (txId: String, endpoint: String) {
+        do {
+            let sent = try await submitTransactionUnrecorded(transaction, allowOrphan: allowOrphan)
+            reserveInputs(of: transaction.toProtobuf())
+            return sent
+        } catch let unknown as SendOutcomeUnknownError {
+            reserveInputs(of: transaction.toProtobuf())
+            throw unknown
+        }
+    }
+
+    private func reserveInputs(of rpcTransaction: Protowire_RpcTransaction) {
+        WalletService.shared.reserveOutpoints(rpcTransaction.inputs.map {
+            "\($0.previousOutpoint.transactionID):\($0.previousOutpoint.index)"
+        })
+    }
+
+    private func submitTransactionUnrecorded(_ transaction: KaspaRpcTransaction, allowOrphan: Bool) async throws -> (txId: String, endpoint: String) {
         do {
             let sent = try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: allowOrphan)
             return try await checkedSubmit(sent, rpcTransaction: transaction.toProtobuf(), expectedTxId: KasiaTransactionBuilder.computeTransactionId(transaction))
@@ -660,7 +681,7 @@ final class NodePoolService: ObservableObject {
                 }
             }
             let txId = KasiaTransactionBuilder.computeTransactionId(transaction)
-            if await isTransactionKnown(txId: txId) {
+            if await isTransactionKnown(txId: txId, afterRejection: !answerLost) {
                 AppLog.log("[NodePool] submit of %@ reported \"%@\" but the network has it: treated as sent",
                            String(txId.prefix(12)), error.localizedDescription)
                 return (txId: txId, endpoint: "already-known")
@@ -673,14 +694,26 @@ final class NodePoolService: ObservableObject {
     /// `submitRpcTransaction` with the same lookup as `submitTransaction`: a failed submit of a
     /// transaction the network already has (by its locally computed `expectedTxId`) is a send.
     /// For the version-1 builders (`.kachat`), whose transactions aren't `KaspaRpcTransaction`s.
+    /// Its inputs are held back as in `submitTransaction`.
     func submitRpcTransaction(_ rpcTransaction: Protowire_RpcTransaction, expectedTxId: String) async throws -> (txId: String, endpoint: String) {
+        do {
+            let sent = try await submitRpcTransactionUnrecorded(rpcTransaction, expectedTxId: expectedTxId)
+            reserveInputs(of: rpcTransaction)
+            return sent
+        } catch let unknown as SendOutcomeUnknownError {
+            reserveInputs(of: rpcTransaction)
+            throw unknown
+        }
+    }
+
+    private func submitRpcTransactionUnrecorded(_ rpcTransaction: Protowire_RpcTransaction, expectedTxId: String) async throws -> (txId: String, endpoint: String) {
         do {
             let sent = try await submitRpcTransaction(rpcTransaction)
             return try await checkedSubmit(sent, rpcTransaction: rpcTransaction, expectedTxId: expectedTxId)
         } catch let unknown as SendOutcomeUnknownError {
             throw unknown
         } catch {
-            if await isTransactionKnown(txId: expectedTxId) {
+            if await isTransactionKnown(txId: expectedTxId, afterRejection: !(error is SubmitAnswerLostError)) {
                 AppLog.log("[NodePool] submit of %@ reported \"%@\" but the network has it: treated as sent",
                            String(expectedTxId.prefix(12)), error.localizedDescription)
                 return (txId: expectedTxId, endpoint: "already-known")
@@ -731,19 +764,42 @@ final class NodePoolService: ObservableObject {
         error.localizedDescription.lowercased().contains("orphan")
     }
 
+    /// The request never reached a node: nothing was sent, so no answer was lost (as KaChat).
+    private static func isNotSentError(_ error: Error) -> Bool {
+        guard case .networkError(let message)? = error as? KasiaError else { return false }
+        return message.hasPrefix("Not connected to ") || message.hasPrefix("Circuit breaker open")
+    }
+
+    /// A rejection that decides the transaction itself (bad signature, low fee, too much mass) -
+    /// not one a node also gives when another node (the one whose answer was lost) already took
+    /// and relayed this very transaction: in a mempool, accepted, its inputs spent by it, or its
+    /// parents not yet seen. Those mean it may well land. Same list as KaPlay and KaPost.
+    private static func isVerdict(_ message: String) -> Bool {
+        let m = message.lowercased()
+        return !["already", "orphan", "double spend", "spent", "missing outpoint", "mempool", "memory pool"]
+            .contains { m.contains($0) }
+    }
+
     /// Whether the network already has `txId`: in a mempool, or accepted (REST API). Checked
     /// twice, a moment apart, since a just-accepted transaction may not have propagated yet.
-    private func isTransactionKnown(txId: String) async -> Bool {
+    /// `afterRejection`: a node turned the transaction down, so a REST server typed into Settings
+    /// isn't enough to call it sent - only a mempool, or the built-in REST server.
+    private func isTransactionKnown(txId: String, afterRejection: Bool = false) async -> Bool {
         for attempt in 0..<2 {
             if attempt > 0 { try? await Task.sleep(nanoseconds: 1_500_000_000) }
             if await getMempoolEntry(txId: txId, attempt: attempt) != nil { return true }
-            if await Self.isAcceptedViaREST(txId: txId) { return true }
+            if await Self.isAcceptedViaREST(txId: txId, builtInServerOnly: afterRejection) { return true }
         }
         return false
     }
 
-    private static func isAcceptedViaREST(txId: String) async -> Bool {
-        let base = AppSettings.load().kaspaRestAPIURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func isAcceptedViaREST(txId: String, builtInServerOnly: Bool = false) async -> Bool {
+        let settings = AppSettings.load()
+        let base = settings.kaspaRestAPIURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if builtInServerOnly {
+            let trimmed = { (url: String) in url.hasSuffix("/") ? String(url.dropLast()) : url }
+            guard trimmed(base).lowercased() == trimmed(AppSettings.defaultKaspaRestURL(for: settings.networkType)).lowercased() else { return false }
+        }
         guard let url = URL(string: "\(base.hasSuffix("/") ? String(base.dropLast()) : base)/transactions/\(txId)?inputs=false&outputs=false&resolve_previous_outpoints=no") else { return false }
         var request = URLRequest(url: url)
         request.timeoutInterval = 8
@@ -762,6 +818,8 @@ final class NodePoolService: ObservableObject {
         } catch {
             // A node that rejected the transaction has given a verdict on it: the race isn't lost,
             // even if another node timed out, and saying "may have gone through" would be wrong.
+            // Only a verdict counts (`isVerdict`): an orphan or already-known answer says nothing
+            // about the node that took it and timed out.
             if answerLost.isSet && !answerLost.wasRejected { throw SubmitAnswerLostError(underlying: error) }
             throw error
         }
@@ -781,7 +839,8 @@ final class NodePoolService: ObservableObject {
             do {
                 response = try await conn.sendRequest(msg, type: .submitTransaction, timeout: 15.0)
             } catch {
-                answerLost.set()
+                // a request that never left (no connection, breaker open) can't have been received
+                if !Self.isNotSentError(error) { answerLost.set() }
                 throw error
             }
 
@@ -790,7 +849,7 @@ final class NodePoolService: ObservableObject {
             }
 
             if txResponse.hasError && !txResponse.error.message.isEmpty {
-                answerLost.markRejected()
+                if Self.isVerdict(txResponse.error.message) { answerLost.markRejected() }
                 throw NodeRejectedTransactionError(message: txResponse.error.message)
             }
 
@@ -841,9 +900,11 @@ final class NodePoolService: ObservableObject {
             let bLatency = b.health.latencyMs.value ?? b.health.globalLatencyMs.value ?? Double.infinity
             return aLatency < bLatency
         }
+        // the primary too: after a submit it's the node most likely to hold the transaction
         let primaryKey = primaryEndpoint?.key
         let filteredRecords = sortedRecords.filter { $0.endpoint.key != primaryKey }
-        var endpoints = filteredRecords.prefix(3).map { $0.endpoint }
+        var endpoints = sortedRecords.filter { $0.endpoint.key == primaryKey }.map { $0.endpoint }
+            + filteredRecords.prefix(3).map { $0.endpoint }
         if endpoints.isEmpty {
             endpoints = sortedRecords.prefix(3).map { $0.endpoint }
         }

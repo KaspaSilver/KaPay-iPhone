@@ -27,7 +27,7 @@ struct WalletRecoveryView: View {
                     Text("12 or 24 Words Needed")
                         .font(.title2.weight(.bold))
                         .multilineTextAlignment(.center)
-                    Text("This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept.")
+                    Text("This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -84,8 +84,12 @@ struct WalletRecoveryView: View {
             .alert("Remove this account?", isPresented: $showRemoveConfirmation) {
                 // Face ID first, as on both Delete Account sheets.
                 Button("Remove", role: .destructive) {
-                    DeviceAuth.authenticate(reason: AppLocalization.string("Confirm deleting this account")) {
-                        remove()
+                    // Once the alert has gone: Face ID asked while it is still closing can be
+                    // dismissed with it.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        DeviceAuth.authenticate(reason: AppLocalization.string("Confirm deleting this account")) {
+                            remove()
+                        }
                     }
                 }
                 Button("Cancel", role: .cancel) {}

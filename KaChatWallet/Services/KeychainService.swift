@@ -453,6 +453,26 @@ final class KeychainService {
         }
     }
 
+    /// Every saved account's words item onto the unlocked-only rule, at launch: one is otherwise
+    /// moved only when it's read, and an account nobody opens kept the older, looser rule.
+    func tightenAllSeedItems() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return }
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String,
+                  account.hasPrefix(KeychainKey.seedPhrase.rawValue) else { continue }
+            tightenSeedItem(keyName: account)
+        }
+    }
+
     /// Loads sensitive data from device-specific storage, unwrapping if needed
     private func loadSensitiveData(baseKey: KeychainKey) throws -> Data? {
         let deviceId = try deviceIdentifier()

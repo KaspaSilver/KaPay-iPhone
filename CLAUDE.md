@@ -127,7 +127,10 @@ Where each screen uses them:
 **A send with no answer**: a node that took a transaction and never answered gets a longer look-up,
 then `SendOutcomeUnknownError`: the screen says "Not confirmed" and offers only Done, since Try Again
 could pay twice. A node's answer only counts if its id is the one computed here, and a transaction the
-network can't see 5 s later is sent again (same transaction, so it can't pay twice).
+network can't see 5 s later is sent again (same transaction, so it can't pay twice). Only a verdict
+rejection (`isVerdict`: not orphan, not "already") cancels another node's lost answer, and the mempool
+look-up asks the primary too. After a rejection, a REST `is_accepted` counts only from the built-in
+REST server, never one typed into Settings.
 
 **Security**: the words and passphrase are `WhenUnlocked` in the Keychain; other keys stay
 `AfterFirstUnlock`, since push sign-in uses the private key while the phone is locked. So anything that
@@ -138,6 +141,10 @@ and are never erased automatically. Biometrics for Account Login is off by defau
 on existing installs, so a phone with no passcode can still see its account; the words, private keys and
 sends still need the phone's lock. A `.kachat` name resolves only if the chain holds its record
 (`confirmOnChain`), and Accept Offer checks the on-chain amount against what was shown.
+Every way of removing an account (Delete Account, the sign-in list's Delete, the recovery screen's
+Remove) goes through `WalletManager.removeLocalData`: Cold Storage, Portfolio, contacts, bell history,
+.kachat reminders, spending-address files and keys, and the Nextcloud login, whose app password is
+revoked first. The Secure Enclave key goes only when no saved account and no Keychain snapshot remain.
 
 **Face ID**: `SwipeUpToSendScrollView` asks `DeviceAuth` before every swipe, whether Send Kaspa,
 Cold Storage's broadcast or a .kachat transaction (its `authReason`). Declined, the screen settles
@@ -146,13 +153,32 @@ do either (`DeviceAuth` refuses and says why).
 
 **Fees**: change too small to keep goes to the fee, and the review counts it (`SendFeeEstimate`).
 The swipe waits until Max, the fee and a higher tier's own estimate are in, and stays off after a
-fee error.
+fee error (either estimate; Try Again works it out again). The shown fee includes the selector's
+3-sompi buffer. Max at a speed tier prices the tier's extra from its own send's base fee
+(`WalletService.maxSendAmount`), and a Max amount is worked out again when the speed changes. At the
+swipe the send is rebuilt from that moment's coins; if it would pay more than the Review showed
+(`checkFeeAgainstReview`, 1,000 sompi margin) nothing is sent (`SendFeeChangedError`) and the
+Review re-estimates.
 
-**Coins**: a send's inputs stay out of the next send, Max and fee for two minutes
-(`WalletService.recordSpend`, `unreservedUtxos`), and the UTXO cache is dropped; the chatting
-address's Max and fee read fresh coins. An address with more than `maxInputsPerTransaction` coins
-gets a Max (and a Compound) of its largest coins, one transaction's worth
-(`WalletService.oneTransactionChunk`).
+**Coins**: whatever `NodePoolService.submitTransaction` or `submitRpcTransaction(_:expectedTxId:)`
+sends (every send, .kas and .kachat names, combines, Cold Storage) stays out of the next send, Max
+and fee for two minutes (`WalletService.reserveOutpoints`, `unreservedUtxos`), on success and on an
+unknown outcome, and the UTXO cache is dropped; name sends pick only unreserved coins. Available,
+Compound and Coin Control count the coins a send can spend (`withdrawalSpendable` for the chatting
+address); Coin Control greys out the rest, and a selection whose coins are all gone is an error, not
+automatic. An address with more than `maxInputsPerTransaction` coins gets a Max (and a Compound) of
+its largest coins, one transaction's worth (`WalletService.oneTransactionChunk`), and says so.
+
+**Accounts**: a readable snapshot puts missing keys back before the recovery screen shows; Remove
+there works only while that account is still in the slot with no keys, and import or Log Out clears
+a recovery left from before. A keychain write that fails part-way puts the slot's previous account
+back. The same words on the other network are the same account (`isSameAccount`). A sign-in error
+waits in `signInFailureMessage` for the rebuilt accounts screen. The passphrase search gives up after
+12 s ("Skip the Search", Search Again). Every account's words item is tightened at launch. A new NFC
+PIN is typed twice, and a swapped card stops before a PIN try. The Passcode Required alert has its
+own window. A sheet picked from another sheet opens from that sheet's `onDismiss`. The privacy cover
+has one window per scene (iPad windows). A submit that never left ("Not connected to", "Circuit
+breaker open") isn't a lost answer. `AppLog.log` cuts every address in a line to "…" and its last 8 characters (as KaChat).
 
 ## Services
 
@@ -189,11 +215,18 @@ gets a Max (and a Compound) of its largest coins, one transaction's worth
     and fees, every deletion the account knows of, and the owning `walletAddress`. A file this account
     can't decrypt is another account's (or not a portfolio) and is left alone; this account's own
     damaged one may be written over. An earlier plain file of this account's is read, then written
-    encrypted with the next backup. Without the key nothing is read or written. A renamed or deleted portfolio's old file is removed;
-    the other files carry the deletion. With Automatic Sync on they upload a few seconds after a change
+    encrypted with the next backup; after a full backup plain files aren't read again
+    (`plainPortfoliosRetiredKey`), since anyone can write one. The old single file without an owner
+    goes to the first account on this device to connect with that login. Contacts merged from any
+    file can't be dated later than the moment they're read. Without the key nothing is read or written. A renamed or deleted portfolio's old file is removed;
+    the other files carry the deletion. With only the untouched "Portfolio 1" left, its file is
+    uploaded to carry it (another device's such seed is never taken in), and with nothing uploaded
+    no deleted portfolio's file is removed. An edit during an upload keeps the backup owed. With Automatic Sync on they upload a few seconds after a change
     and on background, and merge in what's on the server when the app opens, at most once a minute.
     A CSV export is named the same way ("Long Term.csv"), and Export CSV and Export to Nextcloud
-    stay plain CSV, so a spreadsheet can open them.
+    stay plain CSV, so a spreadsheet can open them. A CSV import replaces a row the portfolio
+    already had in the same second (the export writes whole seconds), each at most once; rows of
+    the file itself never replace each other. Importing a deleted contact dates it after the deletion.
   - A manual backup merges the server's copy in first, and a fresh connection merges both in once,
     which is why there's no Restore button. Contacts and Portfolio import/export use the `KaChat`
     folder and stay plain. A 401 stops automatic sync (`needsReconnect`) and Settings says so.

@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "Bu adreste genel anahtar yok.";
 "This address holds funds, so this looks like the right account." = "Bu adreste bakiye var, yani doğru hesap gibi görünüyor.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "Bu kartta zaten bir yedek var. Kaydetmek, yeni yedek doğrulandığında onu değiştirir.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "Bu iPhone'da hesabın var ama anahtarları yok. Bu, telefonu yedekten geri yüklemeden sonra olur çünkü KaPay anahtarları oluşturuldukları cihaza bağlıdır. Burada kilidini açmak için 12 veya 24 kelimeni gir. Bu cihazdaki mesajların korunur.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "Bu iPhone'da hesabın var ama anahtarları yok. Bu, telefonu yedekten geri yüklemeden sonra olur çünkü KaPay anahtarları oluşturuldukları cihaza bağlıdır. Burada kilidini açmak için 12 veya 24 kelimeni gir. KaPay'in bu telefonda onun için kaydettikleri korunur.";
 "This is more than the address you're sending from holds." = "Bu, gönderdiğin adresteki tutardan fazla.";
 "This is much more than the network needs." = "Bu, ağın ihtiyacından çok daha fazla.";
 "This is the account your 12 or 24 words open on their own." = "12 veya 24 kelimenin kendi başına açtığı hesap budur.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "Onaylanmadı";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "Bu işlem gerçekleşmiş olabilir ancak ağ onaylamadı. Yeniden göndermeden önce bakiyenizi kontrol edin.";
 "Confirm sending this domain" = "Bu alan adının gönderilmesini onayla";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "Maks., bir işlemin taşıyabileceği miktardır: en büyük %d coin. \"UTXO'ları Birleştir\" kalanları birleştirir.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "Bir işlem %d coin birleştirebilir, bu yüzden en büyük %d tanesi birleştirilir. Kalanlar için yeniden birleştir.";
+"This account's keys are on this phone again, so nothing was removed." = "Bu hesabın anahtarları yeniden bu telefonda, bu yüzden hiçbir şey kaldırılmadı.";
+"Unable to sign in to this account." = "Bu hesaba giriş yapılamıyor.";
+"Skip the Search: Import on Address #0" = "Aramayı Atla: Adres #0'a İçe Aktar";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "Bu hesabın diğer adreslerinde bakiye araması tamamlanmadı, bu yüzden İçe Aktar adres #0'ı kullanıyor.";
+"Search Again" = "Yeniden Ara";
+"Re-enter PIN" = "PIN'i yeniden gir";
+"The PINs don't match." = "PIN'ler eşleşmiyor.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "Ağ ücreti artık %@ KAS, İnceleme'de gösterilenden fazla. Hiçbir şey gönderilmedi: yeni ücreti kontrol edip yeniden kaydır.";
+"Mining reward, not spendable here" = "Madencilik ödülü, burada harcanamaz";
+"Not confirmed yet" = "Henüz onaylanmadı";
+"Just spent by a send" = "Az önce bir gönderimde harcandı";
+"Not spendable yet" = "Henüz harcanamaz";

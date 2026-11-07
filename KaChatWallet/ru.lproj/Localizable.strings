@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "У этого адреса нет открытого ключа.";
 "This address holds funds, so this looks like the right account." = "На этом адресе есть средства, так что это, похоже, нужный аккаунт.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "На этой карте уже есть копия. Сохранение заменит её после подтверждения новой.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "На этом iPhone есть ваш аккаунт, но нет его ключей. Так бывает после восстановления телефона из резервной копии, потому что ключи KaPay привязаны к устройству, на котором созданы. Введите свои 12 или 24 слова, чтобы разблокировать его здесь. Сообщения на этом устройстве сохранятся.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "На этом iPhone есть ваш аккаунт, но нет его ключей. Так бывает после восстановления телефона из резервной копии, потому что ключи KaPay привязаны к устройству, на котором созданы. Введите свои 12 или 24 слова, чтобы разблокировать его здесь. То, что KaPay сохранил для него на этом телефоне, остаётся.";
 "This is more than the address you're sending from holds." = "Это больше, чем есть на адресе отправителя.";
 "This is much more than the network needs." = "Это намного больше, чем нужно сети.";
 "This is the account your 12 or 24 words open on their own." = "Это аккаунт, который открывают ваши 12 или 24 слова сами по себе.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "Не подтверждено";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "Возможно, отправка прошла, но сеть её не подтвердила. Проверьте баланс, прежде чем отправлять снова.";
 "Confirm sending this domain" = "Подтвердите отправку этого домена";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "Максимум — это то, что вмещает одна транзакция: её %d самых крупных монет. «Объединить UTXO» объединяет остальные.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "Одна транзакция может объединить %d монет, поэтому объединяются %d самых крупных. Объедините снова, чтобы обработать остальные.";
+"This account's keys are on this phone again, so nothing was removed." = "Ключи этого аккаунта снова на этом телефоне, поэтому ничего не удалено.";
+"Unable to sign in to this account." = "Не удалось войти в этот аккаунт.";
+"Skip the Search: Import on Address #0" = "Пропустить поиск: импортировать на адрес №0";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "Поиск средств на других адресах этого аккаунта не завершился, поэтому «Импорт» использует адрес №0.";
+"Search Again" = "Искать снова";
+"Re-enter PIN" = "Введите PIN ещё раз";
+"The PINs don't match." = "PIN-коды не совпадают.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "Комиссия сети теперь %@ KAS — больше, чем было в обзоре. Ничего не отправлено: проверьте новую комиссию и проведите снова.";
+"Mining reward, not spendable here" = "Награда за майнинг, здесь не тратится";
+"Not confirmed yet" = "Ещё не подтверждено";
+"Just spent by a send" = "Только что потрачено отправкой";
+"Not spendable yet" = "Пока нельзя потратить";

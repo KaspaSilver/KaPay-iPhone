@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "Questo indirizzo non contiene una chiave pubblica.";
 "This address holds funds, so this looks like the right account." = "Questo indirizzo ha dei fondi, quindi sembra l'account giusto.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "Questa carta contiene già un backup. Il salvataggio lo sostituisce quando il nuovo è confermato.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "Questo iPhone ha il tuo account, ma non le sue chiavi. Succede dopo il ripristino di un telefono da backup, perché le chiavi di KaPay sono legate al dispositivo su cui sono state create. Inserisci le tue 12 o 24 parole per sbloccarlo qui. I tuoi messaggi su questo dispositivo vengono conservati.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "Questo iPhone ha il tuo account, ma non le sue chiavi. Succede dopo il ripristino di un telefono da backup, perché le chiavi di KaPay sono legate al dispositivo su cui sono state create. Inserisci le tue 12 o 24 parole per sbloccarlo qui. Ciò che KaPay ha salvato per esso su questo telefono viene conservato.";
 "This is more than the address you're sending from holds." = "È più di quanto contiene l'indirizzo da cui invii.";
 "This is much more than the network needs." = "È molto più di quanto serve alla rete.";
 "This is the account your 12 or 24 words open on their own." = "Questo è l'account che le tue 12 o 24 parole aprono da sole.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "Non confermato";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "L'invio potrebbe essere andato a buon fine, ma la rete non l'ha confermato. Controlla il saldo prima di inviare di nuovo.";
 "Confirm sending this domain" = "Conferma l'invio di questo dominio";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "Max è quanto può contenere una transazione: le sue %d monete più grandi. «Consolida UTXO» unisce il resto.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "Una transazione può consolidare %d monete, quindi vengono consolidate le %d più grandi. Consolida di nuovo per il resto.";
+"This account's keys are on this phone again, so nothing was removed." = "Le chiavi di questo account sono di nuovo su questo telefono, quindi non è stato rimosso nulla.";
+"Unable to sign in to this account." = "Impossibile accedere a questo account.";
+"Skip the Search: Import on Address #0" = "Salta la ricerca: importa sull'indirizzo n. 0";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "La ricerca di fondi sugli altri indirizzi di questo account non è terminata, quindi Importa usa l'indirizzo n. 0.";
+"Search Again" = "Cerca di nuovo";
+"Re-enter PIN" = "Reinserisci il PIN";
+"The PINs don't match." = "I PIN non corrispondono.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "La commissione di rete ora è di %@ KAS, più di quanto mostrato nel riepilogo. Non è stato inviato nulla: controlla la nuova commissione e scorri di nuovo.";
+"Mining reward, not spendable here" = "Ricompensa di mining, non spendibile qui";
+"Not confirmed yet" = "Non ancora confermato";
+"Just spent by a send" = "Appena speso da un invio";
+"Not spendable yet" = "Non ancora spendibile";

@@ -1610,7 +1610,7 @@ final class KNSProfileWriteService: ObservableObject {
             log("PAYLOAD field=\(key.rawValue) jsonBytes=\(payloadJSON.count)")
 
             let fetchedUtxos = try await nodePool.getUtxosByAddresses([fundingAddress])
-            let utxos = fetchedUtxos.filter { !$0.isCoinbase && $0.blockDaaScore > 0 }
+            let utxos = WalletService.shared.unreservedUtxos(fetchedUtxos.filter { !$0.isCoinbase && $0.blockDaaScore > 0 })
             let totalSompi = utxos.reduce(UInt64(0)) { $0 + $1.amount }
             log("UTXO field=\(key.rawValue) total=\(fetchedUtxos.count) spendable=\(utxos.count) sumSompi=\(totalSompi)")
             guard !utxos.isEmpty else {
@@ -1754,7 +1754,7 @@ final class KNSDomainInscribeService: ObservableObject {
         let payloadJSON = try JSONEncoder().encode(payload)
 
         let fetchedUtxos = try await nodePool.getUtxosByAddresses([fundingAddress])
-        let utxos = fetchedUtxos.filter { !$0.isCoinbase && $0.blockDaaScore > 0 }
+        let utxos = WalletService.shared.unreservedUtxos(fetchedUtxos.filter { !$0.isCoinbase && $0.blockDaaScore > 0 })
         guard !utxos.isEmpty else {
             throw KasiaError.networkError("No spendable UTXOs available in your chatting address for KNS inscription")
         }
@@ -2064,7 +2064,7 @@ final class KNSDomainTransferService: ObservableObject {
         log("PAYLOAD domain=\(domain) jsonBytes=\(payloadJSON.count)")
 
         let fetchedUtxos = try await nodePool.getUtxosByAddresses([fundingAddress])
-        let utxos = fetchedUtxos.filter { !$0.isCoinbase && $0.blockDaaScore > 0 }
+        let utxos = WalletService.shared.unreservedUtxos(fetchedUtxos.filter { !$0.isCoinbase && $0.blockDaaScore > 0 })
         guard !utxos.isEmpty else {
             throw KasiaError.networkError(
                 fromSpendingAddressIndex == nil

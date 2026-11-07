@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "לכתובת הזו אין מפתח ציבורי.";
 "This address holds funds, so this looks like the right account." = "בכתובת הזו יש כספים, ולכן נראה שזה החשבון הנכון.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "בכרטיס הזה כבר יש גיבוי. השמירה מחליפה אותו אחרי שהחדש מאושר.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "ב-iPhone הזה יש את החשבון שלכם אבל לא את המפתחות שלו. זה קורה אחרי שחזור טלפון מגיבוי, כי המפתחות של KaPay קשורים למכשיר שבו נוצרו. הזינו את 12 או 24 המילים שלכם כדי לפתוח אותו כאן. ההודעות שלכם במכשיר הזה נשמרות.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "ב-iPhone הזה יש את החשבון שלכם אבל לא את המפתחות שלו. זה קורה אחרי שחזור טלפון מגיבוי, כי המפתחות של KaPay קשורים למכשיר שבו נוצרו. הזינו את 12 או 24 המילים שלכם כדי לפתוח אותו כאן. מה ש-KaPay שמר עבורו בטלפון הזה נשמר.";
 "This is more than the address you're sending from holds." = "זה יותר ממה שיש בכתובת שממנה אתה שולח.";
 "This is much more than the network needs." = "זה הרבה יותר ממה שהרשת צריכה.";
 "This is the account your 12 or 24 words open on their own." = "זה החשבון ש-12 או 24 המילים שלכם פותחות בפני עצמן.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "לא אושר";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "ייתכן שזה עבר, אבל הרשת לא אישרה זאת. כדאי לבדוק את היתרה לפני שליחה נוספת.";
 "Confirm sending this domain" = "אישור שליחת הדומיין הזה";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "מקסימום הוא מה שעסקה אחת יכולה לשאת: %d המטבעות הגדולים שלה. \"איחוד UTXO\" מאחד את השאר.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "עסקה אחת יכולה לאחד %d מטבעות, לכן מאוחדים %d הגדולים ביותר. אחד שוב לשאר.";
+"This account's keys are on this phone again, so nothing was removed." = "המפתחות של החשבון הזה שוב נמצאים בטלפון הזה, ולכן שום דבר לא הוסר.";
+"Unable to sign in to this account." = "לא ניתן להתחבר לחשבון הזה.";
+"Skip the Search: Import on Address #0" = "דילוג על החיפוש: ייבוא לכתובת מס׳ 0";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "החיפוש אחר כספים בכתובות האחרות של החשבון הזה לא הסתיים, ולכן הייבוא משתמש בכתובת מס׳ 0.";
+"Search Again" = "חיפוש מחדש";
+"Re-enter PIN" = "הזינו שוב את קוד ה-PIN";
+"The PINs don't match." = "קודי ה-PIN אינם תואמים.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "עמלת הרשת היא כעת %@ KAS, יותר ממה שהוצג בסקירה. שום דבר לא נשלח: בדקו את העמלה החדשה והחליקו שוב.";
+"Mining reward, not spendable here" = "תגמול כרייה, לא ניתן להוציא כאן";
+"Not confirmed yet" = "עדיין לא אושר";
+"Just spent by a send" = "הוצא זה עתה בשליחה";
+"Not spendable yet" = "עדיין לא ניתן להוציא";

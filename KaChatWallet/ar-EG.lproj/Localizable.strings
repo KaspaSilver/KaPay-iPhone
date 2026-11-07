@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "العنوان ده مفيهوش مفتاح عام.";
 "This address holds funds, so this looks like the right account." = "العنوان ده فيه فلوس، فباين إنه الحساب الصح.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "الكارت ده فيه نسخة احتياطية بالفعل. الحفظ هيستبدلها أول ما الجديدة تتأكد.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "يحتوي هذا الـ iPhone على حسابك لكن ليس على مفاتيحه. يحدث هذا بعد استعادة الهاتف من نسخة احتياطية لأن مفاتيح KaPay مرتبطة بالجهاز الذي أُنشئت عليه. أدخل كلماتك الـ 12 أو 24 لفتحه هنا. يتم الاحتفاظ برسائلك على هذا الجهاز.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "يحتوي هذا الـ iPhone على حسابك لكن ليس على مفاتيحه. يحدث هذا بعد استعادة الهاتف من نسخة احتياطية لأن مفاتيح KaPay مرتبطة بالجهاز الذي أُنشئت عليه. أدخل كلماتك الـ 12 أو 24 لفتحه هنا. اللي KaPay حفظه له على التليفون ده بيفضل موجود.";
 "This is more than the address you're sending from holds." = "هذا أكثر مما يحمله العنوان الذي ترسل منه.";
 "This is much more than the network needs." = "هذا أكثر بكثير مما تحتاجه الشبكة.";
 "This is the account your 12 or 24 words open on their own." = "ده الحساب اللي كلماتك الـ 12 أو 24 بتفتحه لوحدها.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "ما اتأكدش";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "ممكن تكون العملية تمت، بس الشبكة ما أكدتهاش. راجع رصيدك قبل ما تبعت تاني.";
 "Confirm sending this domain" = "أكد إرسال الدومين ده";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "الحد الأقصى هو اللي تقدر معاملة واحدة تشيله: أكبر %d عملة. «دمج UTXOs» بيجمع الباقي.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "المعاملة الواحدة تقدر تدمج %d عملة، فهيتدمج أكبر %d. ادمج تاني للباقي.";
+"This account's keys are on this phone again, so nothing was removed." = "مفاتيح الحساب ده رجعت على التليفون ده تاني، علشان كده ماتشالش أي حاجة.";
+"Unable to sign in to this account." = "مش قادر تسجّل الدخول للحساب ده.";
+"Skip the Search: Import on Address #0" = "تخطّى البحث: استورد على العنوان رقم 0";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "البحث عن فلوس في العناوين التانية للحساب ده ماخلصش، علشان كده الاستيراد هيستخدم العنوان رقم 0.";
+"Search Again" = "دوّر تاني";
+"Re-enter PIN" = "دخّل رمز PIN تاني";
+"The PINs don't match." = "رمزين الـ PIN مش زي بعض.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "رسوم الشبكة دلوقتي %@ KAS، أكتر من اللي ظهر في المراجعة. ماتبعتش أي حاجة: راجع الرسوم الجديدة واسحب تاني.";
+"Mining reward, not spendable here" = "مكافأة تعدين، ماينفعش تتصرف هنا";
+"Not confirmed yet" = "لسه ماتأكدش";
+"Just spent by a send" = "اتصرف حالاً في عملية إرسال";
+"Not spendable yet" = "لسه ماينفعش يتصرف";

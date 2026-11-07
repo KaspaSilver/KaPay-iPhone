@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "이 주소에는 공개 키가 없습니다.";
 "This address holds funds, so this looks like the right account." = "이 주소에 자금이 있으므로 맞는 계정으로 보입니다.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "이 카드에는 이미 백업이 있습니다. 저장하면 새 백업이 확인된 후에 교체됩니다.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "이 iPhone에 계정은 있지만 키는 없습니다. 휴대폰을 백업에서 복원하면 이런 일이 생깁니다. KaPay의 키는 생성된 기기에 묶여 있기 때문입니다. 여기서 잠금 해제하려면 12개 또는 24개 단어를 입력하세요. 이 기기의 메시지는 유지됩니다.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "이 iPhone에 계정은 있지만 키는 없습니다. 휴대폰을 백업에서 복원하면 이런 일이 생깁니다. KaPay의 키는 생성된 기기에 묶여 있기 때문입니다. 여기서 잠금 해제하려면 12개 또는 24개 단어를 입력하세요. KaPay가 이 휴대폰에 저장한 데이터는 유지됩니다.";
 "This is more than the address you're sending from holds." = "보내는 주소의 잔액보다 많습니다.";
 "This is much more than the network needs." = "네트워크에 필요한 금액보다 훨씬 많습니다.";
 "This is the account your 12 or 24 words open on their own." = "12개 또는 24개 단어만으로 열리는 계정입니다.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "확인되지 않음";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "전송되었을 수 있지만 네트워크에서 확인되지 않았습니다. 다시 보내기 전에 잔액을 확인하세요.";
 "Confirm sending this domain" = "이 도메인 보내기 확인";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "최대는 한 번의 거래에 담을 수 있는 금액입니다(가장 큰 코인 %d개). 나머지는 \"UTXO 통합\"으로 합칠 수 있습니다.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "한 번의 거래로 %d개의 코인을 통합할 수 있어 가장 큰 %d개를 통합합니다. 나머지는 다시 통합하세요.";
+"This account's keys are on this phone again, so nothing was removed." = "이 계정의 키가 다시 이 휴대폰에 있으므로 아무것도 삭제되지 않았습니다.";
+"Unable to sign in to this account." = "이 계정에 로그인할 수 없습니다.";
+"Skip the Search: Import on Address #0" = "검색 건너뛰기: 주소 #0으로 가져오기";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "이 계정의 다른 주소에 있는 자금 검색이 끝나지 않아, 가져오기는 주소 #0을 사용합니다.";
+"Search Again" = "다시 검색";
+"Re-enter PIN" = "PIN 다시 입력";
+"The PINs don't match." = "PIN이 일치하지 않습니다.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "네트워크 수수료가 이제 %@ KAS로, 검토 화면에 표시된 것보다 많습니다. 아무것도 전송되지 않았습니다. 새 수수료를 확인하고 다시 밀어 올리세요.";
+"Mining reward, not spendable here" = "채굴 보상, 여기서 사용할 수 없음";
+"Not confirmed yet" = "아직 확인되지 않음";
+"Just spent by a send" = "방금 전송에 사용됨";
+"Not spendable yet" = "아직 사용할 수 없음";

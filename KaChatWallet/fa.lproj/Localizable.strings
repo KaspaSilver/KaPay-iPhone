@@ -1874,7 +1874,7 @@
 "This address does not carry a public key." = "این آدرس کلید عمومی ندارد.";
 "This address holds funds, so this looks like the right account." = "این آدرس موجودی دارد، پس به نظر حساب درست همین است.";
 "This card already holds a backup. Saving replaces it once the new one is confirmed." = "این کارت از قبل یک نسخه پشتیبان دارد. ذخیره، پس از تأیید نسخه جدید آن را جایگزین می‌کند.";
-"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. Your messages on this device are kept." = "این iPhone حساب شما را دارد اما کلیدهایش را نه. این اتفاق پس از بازیابی تلفن از نسخه پشتیبان می‌افتد، چون کلیدهای KaPay به دستگاهی که روی آن ساخته شده‌اند وابسته‌اند. برای باز کردن قفل در اینجا، ۱۲ یا ۲۴ کلمه خود را وارد کنید. پیام‌های شما در این دستگاه حفظ می‌شوند.";
+"This iPhone has your account but not its keys. That happens after restoring a phone from a backup, because KaPay's keys are locked to the device they were created on. Enter your 12 or 24 words to unlock it here. What KaPay saved for it on this phone is kept." = "این iPhone حساب شما را دارد اما کلیدهایش را نه. این اتفاق پس از بازیابی تلفن از نسخه پشتیبان می‌افتد، چون کلیدهای KaPay به دستگاهی که روی آن ساخته شده‌اند وابسته‌اند. برای باز کردن قفل در اینجا، ۱۲ یا ۲۴ کلمه خود را وارد کنید. آنچه KaPay برای آن در این تلفن ذخیره کرده، حفظ می‌شود.";
 "This is more than the address you're sending from holds." = "این بیشتر از موجودی نشانی ارسال‌کننده است.";
 "This is much more than the network needs." = "این خیلی بیشتر از نیاز شبکه است.";
 "This is the account your 12 or 24 words open on their own." = "این حسابی است که ۱۲ یا ۲۴ کلمه شما به تنهایی آن را باز می‌کنند.";
@@ -1938,3 +1938,17 @@
 "Not confirmed" = "تأیید نشد";
 "This may have gone through, but the network didn't confirm it. Check your balance before sending again." = "ممکن است انجام شده باشد، اما شبکه آن را تأیید نکرد. پیش از ارسال دوباره، موجودی خود را بررسی کنید.";
 "Confirm sending this domain" = "تأیید ارسال این دامنه";
+"Max is what one transaction can carry: its largest %d coins. Compound UTXOs combines the rest." = "حداکثر، مقداری است که یک تراکنش می‌تواند جابه‌جا کند: %d سکه‌ی بزرگ‌ترش. «ادغام UTXOها» بقیه را یکی می‌کند.";
+"One transaction can combine %d coins, so this combines the largest %d. Compound again for the rest." = "یک تراکنش می‌تواند %d سکه را ادغام کند، پس %d سکه‌ی بزرگ‌تر ادغام می‌شوند. برای بقیه دوباره ادغام کنید.";
+"This account's keys are on this phone again, so nothing was removed." = "کلیدهای این حساب دوباره روی این تلفن هستند، پس چیزی حذف نشد.";
+"Unable to sign in to this account." = "ورود به این حساب ممکن نیست.";
+"Skip the Search: Import on Address #0" = "رد شدن از جستجو: وارد کردن روی نشانی شماره ۰";
+"The search for funds on this account's other addresses didn't finish, so Import uses address #0." = "جستجوی موجودی در نشانی‌های دیگر این حساب تمام نشد، پس وارد کردن از نشانی شماره ۰ استفاده می‌کند.";
+"Search Again" = "جستجوی دوباره";
+"Re-enter PIN" = "PIN را دوباره وارد کنید";
+"The PINs don't match." = "PINها یکسان نیستند.";
+"The network fee is now %@ KAS, more than the Review showed. Nothing was sent: check the new fee and swipe again." = "کارمزد شبکه اکنون %@ KAS است، بیشتر از آنچه بازبینی نشان داد. چیزی ارسال نشد: کارمزد جدید را بررسی کنید و دوباره بکشید.";
+"Mining reward, not spendable here" = "پاداش استخراج، اینجا قابل خرج نیست";
+"Not confirmed yet" = "هنوز تأیید نشده";
+"Just spent by a send" = "همین حالا در یک ارسال خرج شد";
+"Not spendable yet" = "هنوز قابل خرج نیست";
