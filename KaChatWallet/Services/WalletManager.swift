@@ -99,7 +99,16 @@ enum WalletSourceFamily: String, Codable, CaseIterable {
 final class WalletManager: ObservableObject {
     static let shared = WalletManager()
 
-    @Published var currentWallet: Wallet?
+    @Published var currentWallet: Wallet? {
+        didSet {
+            // The bell is per account: loaded again whenever the account changes (sign-in, switch,
+            // import, log out, delete), or one account's rows showed under the next. Balance
+            // updates keep the address and skip this.
+            if oldValue?.publicAddress != currentWallet?.publicAddress {
+                GlobalNotificationCenter.shared.reload()
+            }
+        }
+    }
     @Published var isLoading = true
     @Published var error: KasiaError?
     /// Not @Published: nothing renders it, and each toggle published the whole WalletManager -
