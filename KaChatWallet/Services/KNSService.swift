@@ -1625,6 +1625,12 @@ final class KNSProfileWriteService: ObservableObject {
                 utxos: utxos
             )
             log("COMMIT_BUILT field=\(key.rawValue) commitAmount=\(commitContext.commitAmountSompi) revealAmount=\(commitContext.revealAmountSompi)")
+            // filed before the commit goes out: 2 KAS sits at its script until the reveal spends it
+            let recoveryId = KNSRevealRecovery.begin(
+                commitTx: commitTx, context: commitContext, ownerAddress: wallet.publicAddress, ownerSpendingIndex: nil,
+                changeAddress: fundingAddress, revealTargetAddress: wallet.publicAddress, priorityFeeSompi: nil
+            )
+            defer { KNSRevealRecovery.endFlow(recoveryId) }
             let (commitTxId, _) = try await nodePool.submitTransaction(commitTx, allowOrphan: false)
             log("COMMIT_SUBMITTED field=\(key.rawValue) txId=\(commitTxId)")
 
@@ -1642,6 +1648,7 @@ final class KNSProfileWriteService: ObservableObject {
                 revealTargetAddress: wallet.publicAddress
             )
             let (revealTxId, _) = try await submitRevealWithFallback(revealTx)
+            KNSRevealRecovery.finished(recoveryId)
             log("REVEAL_SUBMITTED field=\(key.rawValue) txId=\(revealTxId)")
 
             operation.revealTxId = revealTxId
@@ -1690,213 +1697,6 @@ final class KNSProfileWriteService: ObservableObject {
             }
             throw error
         }
-    }
-}
-
-@MainActor
-final class KNSDomainInscribeService: ObservableObject {
-    static let shared = KNSDomainInscribeService()
-
-    @Published private(set) var isSubmitting = false
-
-    private let knsService = KNSService.shared
-    private let nodePool = NodePoolService.shared
-    private let walletManager = WalletManager.shared
-
-    private static let mainnetRevenueAddress = "kaspa:qyp4nvaq3pdq7609z09fvdgwtc9c7rg07fuw5zgeee7xpr085de59eseqfcmynn"
-
-    private init() {}
-
-    private func log(_ message: String) {
-        AppLog.log("[KNS_INSCRIBE] %@", message)
-    }
-
-    @discardableResult
-    func inscribeDomain(label rawLabel: String) async throws -> KNSDomainInscribeResult {
-        guard !isSubmitting else {
-            throw KasiaError.apiError("Another KNS domain inscription is already running")
-        }
-        guard let wallet = walletManager.currentWallet else {
-            throw KasiaError.walletNotFound
-        }
-        guard let privateKey = walletManager.getPrivateKey() else {
-            throw KasiaError.keychainError("Could not get private key")
-        }
-        // KNS activity is funded and settled entirely on the chatting (identity) address - no
-        // spending-address split, so nothing ends up scattered across two addresses.
-        let fundingAddress = wallet.publicAddress
-        let fundingPrivateKey = privateKey
-        guard let label = knsService.normalizeDomainLabel(rawLabel) else {
-            throw KasiaError.apiError("Invalid domain label")
-        }
-
-        let fullDomain = "\(label).kas"
-        log("START domain=\(fullDomain) address=\(wallet.publicAddress)")
-        isSubmitting = true
-        defer { isSubmitting = false }
-
-        let availability = try await knsService.checkDomainAvailability(
-            address: wallet.publicAddress,
-            domainName: fullDomain
-        )
-        guard availability.available else {
-            throw KasiaError.apiError("Domain \(fullDomain) is not available")
-        }
-
-        let feeTiers = try await knsService.fetchInscribeFeeTiers()
-        let revealKas = try revealAmountKas(label: label, isReservedDomain: availability.isReservedDomain, feeTiers: feeTiers)
-        let commitKas = commitAmountKas(for: revealKas)
-        let revealSompi = try kasToSompi(revealKas)
-        let commitSompi = try kasToSompi(commitKas)
-        log("AMOUNTS domain=\(fullDomain) revealKas=\(revealKas) commitKas=\(commitKas) revealSompi=\(revealSompi) commitSompi=\(commitSompi)")
-
-        let payload = KNSCreateDomainPayload(op: "create", p: "domain", v: label)
-        let payloadJSON = try JSONEncoder().encode(payload)
-
-        let fetchedUtxos = try await nodePool.getUtxosByAddresses([fundingAddress])
-        let utxos = WalletService.shared.unreservedUtxos(fetchedUtxos.filter { !$0.isCoinbase && $0.blockDaaScore > 0 })
-        guard !utxos.isEmpty else {
-            throw KasiaError.networkError("No spendable UTXOs available in your chatting address for KNS inscription")
-        }
-        log("UTXO domain=\(fullDomain) total=\(fetchedUtxos.count) spendable=\(utxos.count)")
-
-        let (commitTx, commitContext) = try KasiaTransactionBuilder.buildKNSAddProfileCommitTx(
-            ownerAddress: wallet.publicAddress,
-            fundingAddress: fundingAddress,
-            fundingPrivateKey: fundingPrivateKey,
-            payloadJSON: payloadJSON,
-            utxos: utxos,
-            title: "kns",
-            commitAmountSompi: commitSompi,
-            revealAmountSompi: revealSompi
-        )
-        let (commitTxId, _) = try await nodePool.submitTransaction(commitTx, allowOrphan: false)
-        log("COMMIT_SUBMITTED domain=\(fullDomain) txId=\(commitTxId)")
-
-        let revealTarget = try revealTargetAddress(
-            walletAddress: wallet.publicAddress,
-            isReservedDomain: availability.isReservedDomain
-        )
-        let revealTx = try KasiaTransactionBuilder.buildKNSAddProfileRevealTx(
-            ownerAddress: wallet.publicAddress,
-            ownerPrivateKey: privateKey,
-            changeAddress: fundingAddress,
-            commitTxId: commitTxId,
-            commitContext: commitContext,
-            revealTargetAddress: revealTarget
-        )
-        let (revealTxId, _) = try await submitRevealWithFallback(revealTx)
-        log("REVEAL_SUBMITTED domain=\(fullDomain) txId=\(revealTxId)")
-
-        let verified = await verifyDomainOwnership(
-            fullDomain: fullDomain,
-            expectedOwnerAddress: wallet.publicAddress
-        )
-        log("VERIFY domain=\(fullDomain) verified=\(verified)")
-
-        // Forced: the cache holds the pre-inscribe answer by definition.
-        _ = await knsService.fetchInfo(for: wallet.publicAddress, force: true)
-        _ = await knsService.fetchProfile(for: wallet.publicAddress, force: true)
-
-        return KNSDomainInscribeResult(
-            domain: fullDomain,
-            isReservedDomain: availability.isReservedDomain,
-            serviceFeeSompi: revealSompi,
-            commitTxId: commitTxId,
-            revealTxId: revealTxId,
-            verified: verified
-        )
-    }
-
-    private func revealTargetAddress(walletAddress: String, isReservedDomain: Bool) throws -> String {
-        if isReservedDomain {
-            return walletAddress
-        }
-        switch AppSettings.load().networkType {
-        case .mainnet:
-            return Self.mainnetRevenueAddress
-        case .testnet:
-            throw KasiaError.apiError("KNS domain inscription revenue address is not configured for testnet")
-        }
-    }
-
-    private func revealAmountKas(
-        label: String,
-        isReservedDomain: Bool,
-        feeTiers: [Int: Decimal]
-    ) throws -> Decimal {
-        if isReservedDomain {
-            return 0
-        }
-        let tier = min(max(label.count, 1), 5)
-        if let fee = feeTiers[tier] ?? feeTiers[5] {
-            return fee
-        }
-        throw KasiaError.apiError("KNS fee tier data is missing")
-    }
-
-    private func commitAmountKas(for revealKas: Decimal) -> Decimal {
-        if revealKas <= 1 {
-            return 2
-        }
-        let value = NSDecimalNumber(decimal: revealKas).doubleValue * 1.05
-        return Decimal(Int(round(value)))
-    }
-
-    private func kasToSompi(_ kas: Decimal) throws -> UInt64 {
-        guard kas >= 0 else {
-            throw KasiaError.apiError("Negative KAS amount is invalid")
-        }
-        let scaled = NSDecimalNumber(decimal: kas).multiplying(by: NSDecimalNumber(value: 100_000_000))
-        let rounded = scaled.rounding(
-            accordingToBehavior: NSDecimalNumberHandler(
-                roundingMode: .plain,
-                scale: 0,
-                raiseOnExactness: false,
-                raiseOnOverflow: true,
-                raiseOnUnderflow: true,
-                raiseOnDivideByZero: true
-            )
-        )
-        if rounded == .notANumber {
-            throw KasiaError.apiError("Failed to convert KAS amount to sompi")
-        }
-        let asInt64 = rounded.int64Value
-        guard asInt64 >= 0 else {
-            throw KasiaError.apiError("Negative sompi amount is invalid")
-        }
-        return UInt64(asInt64)
-    }
-
-    private func submitRevealWithFallback(_ revealTx: KaspaRpcTransaction) async throws -> (txId: String, endpoint: String) {
-        do {
-            return try await nodePool.submitTransaction(revealTx, allowOrphan: false)
-        } catch {
-            let message = error.localizedDescription.lowercased()
-            if message.contains("orphan") {
-                log("REVEAL_RETRY allowOrphan=true reason=\(error.localizedDescription)")
-                return try await nodePool.submitTransaction(revealTx, allowOrphan: true)
-            }
-            throw error
-        }
-    }
-
-    private func verifyDomainOwnership(
-        fullDomain: String,
-        expectedOwnerAddress: String,
-        timeout: TimeInterval = 90,
-        pollInterval: TimeInterval = 2
-    ) async -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let resolution = await knsService.resolveDomain(fullDomain),
-               resolution.ownerAddress == expectedOwnerAddress {
-                return true
-            }
-            let nanos = UInt64(max(0.1, pollInterval) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanos)
-        }
-        return false
     }
 }
 
@@ -2091,13 +1891,27 @@ final class KNSDomainTransferService: ObservableObject {
             changeAddress: changeAddress
         )
         await report(.submittingCommit)
-        let (commitTxId, _) = try await nodePool.submitTransaction(commitTx, allowOrphan: false)
+        // filed before the commit goes out: 2 KAS sits at its script until the reveal spends it
+        let recoveryId = KNSRevealRecovery.begin(
+            commitTx: commitTx, context: commitContext, ownerAddress: sourceAddress, ownerSpendingIndex: fromSpendingAddressIndex,
+            changeAddress: changeAddress, revealTargetAddress: sourceAddress, priorityFeeSompi: priorityFeeSompi
+        )
+        defer { KNSRevealRecovery.endFlow(recoveryId) }
+        let commitTxId: String
+        do {
+            (commitTxId, _) = try await nodePool.submitTransaction(commitTx, allowOrphan: false)
+        } catch let unknown as SendOutcomeUnknownError {
+            // It may yet land, with its change on the fresh address: that has to be on the list.
+            if let freshChangeIndex {
+                await walletManager.setActiveSpendingAddress(freshChangeIndex, owner: accountAddress)
+            }
+            throw unknown
+        }
         log("COMMIT_SUBMITTED domain=\(domain) txId=\(commitTxId)")
         if let freshChangeIndex {
             // The commit is accepted and its change is already on the fresh address, so the
-            // primary follows it now. Should the reveal still fail, the commit output is
-            // recoverable from the source key either way, and the pointer no longer names an
-            // address that just spent.
+            // primary follows it now, whatever becomes of the reveal (`KNSRevealRecovery` retries
+            // that), and the pointer no longer names an address that just spent.
             await walletManager.setActiveSpendingAddress(freshChangeIndex, owner: accountAddress)
         }
         await report(.waitingForCommit)
@@ -2113,6 +1927,7 @@ final class KNSDomainTransferService: ObservableObject {
         )
         await report(.submittingReveal)
         let (revealTxId, _) = try await submitRevealWithFallback(revealTx)
+        KNSRevealRecovery.finished(recoveryId)
         log("REVEAL_SUBMITTED domain=\(domain) txId=\(revealTxId)")
         await report(.verifying)
 
@@ -2783,4 +2598,129 @@ private struct KNSPagination: Codable {
     let pageSize: Int?
     let totalItems: Int?
     let totalPages: Int?
+}
+
+/// A .kas action is two transactions: the commit locks 2 KAS or so at a script, and the reveal
+/// spends it. If the reveal never goes out (the commit's answer was lost, the app was closed, a
+/// node refused it) those coins stay at a script nothing else knows about. Each commit is filed
+/// here before it is sent and the reveal is tried again when the app becomes active.
+///
+/// Only for an hour: the reveal performs what the person asked for (a transfer, a profile change),
+/// and doing that long after they saw it fail would be a surprise. Nothing secret is filed; the
+/// key is read from the Keychain at the time.
+@MainActor
+enum KNSRevealRecovery {
+    private struct Pending: Codable {
+        var commitTxId: String
+        var wallet: String
+        var redeemScript: Data
+        var commitAddress: String
+        var commitScriptPubKey: Data
+        var commitAmountSompi: UInt64
+        var revealAmountSompi: UInt64
+        var commitOutputIndex: UInt32
+        var ownerAddress: String
+        /// nil: the chatting address
+        var ownerSpendingIndex: Int?
+        var changeAddress: String
+        var revealTargetAddress: String
+        var priorityFeeSompi: UInt64?
+        var createdAt: Date
+    }
+
+    private static let storeKey = "kachat_kns_pending_reveals_v1"
+    private static let maxAge: TimeInterval = 3600
+    /// Commits whose own send is still running: it does the reveal itself.
+    private static var inFlow: Set<String> = []
+    private static var resuming = false
+
+    private static func load() -> [Pending] {
+        UserDefaults.standard.data(forKey: storeKey).flatMap { try? JSONDecoder().decode([Pending].self, from: $0) } ?? []
+    }
+
+    private static func save(_ list: [Pending]) {
+        if list.isEmpty {
+            UserDefaults.standard.removeObject(forKey: storeKey)
+        } else if let data = try? JSONEncoder().encode(list) {
+            UserDefaults.standard.set(data, forKey: storeKey)
+        }
+    }
+
+    /// Files a commit about to be sent; returns its id, computed here.
+    static func begin(
+        commitTx: KaspaRpcTransaction,
+        context: KasiaTransactionBuilder.KNSCommitContext,
+        ownerAddress: String,
+        ownerSpendingIndex: Int?,
+        changeAddress: String,
+        revealTargetAddress: String,
+        priorityFeeSompi: UInt64?
+    ) -> String {
+        let id = KasiaTransactionBuilder.computeTransactionId(commitTx)
+        inFlow.insert(id)
+        var list = load().filter { $0.commitTxId != id }
+        list.append(Pending(
+            commitTxId: id, wallet: WalletManager.shared.currentWallet?.publicAddress ?? ownerAddress,
+            redeemScript: context.redeemScript, commitAddress: context.commitAddress,
+            commitScriptPubKey: context.commitScriptPubKey, commitAmountSompi: context.commitAmountSompi,
+            revealAmountSompi: context.revealAmountSompi, commitOutputIndex: context.commitOutputIndex,
+            ownerAddress: ownerAddress, ownerSpendingIndex: ownerSpendingIndex, changeAddress: changeAddress,
+            revealTargetAddress: revealTargetAddress, priorityFeeSompi: priorityFeeSompi, createdAt: Date()
+        ))
+        save(list)
+        return id
+    }
+
+    /// The commit's own send is over, however it went: anything left is now `resume`'s.
+    static func endFlow(_ id: String) {
+        inFlow.remove(id)
+    }
+
+    /// The reveal went out.
+    static func finished(_ id: String) {
+        save(load().filter { $0.commitTxId != id })
+    }
+
+    /// Sends the reveal of any commit left on chain with none, for the signed-in account.
+    static func resume() async {
+        guard !resuming, let wallet = WalletManager.shared.currentWallet?.publicAddress else { return }
+        resuming = true
+        defer { resuming = false }
+        let now = Date()
+        // an hour on, the action is dropped (see above)
+        let expired = load().filter { now.timeIntervalSince($0.createdAt) > maxAge }
+        for p in expired { AppLog.log("[KNS] gave up on the reveal of commit %@", String(p.commitTxId.prefix(12))) }
+        if !expired.isEmpty { save(load().filter { now.timeIntervalSince($0.createdAt) <= maxAge }) }
+        for p in load() where p.wallet == wallet && !inFlow.contains(p.commitTxId) {
+            // not landed yet, or already spent by its reveal: an empty answer is either
+            guard let utxos = try? await NodePoolService.shared.getUtxosByAddresses([p.commitAddress]),
+                  utxos.contains(where: { $0.outpoint.transactionId.lowercased() == p.commitTxId.lowercased() && $0.outpoint.index == p.commitOutputIndex }),
+                  WalletManager.shared.currentWallet?.publicAddress == wallet else { continue }
+            let key = p.ownerSpendingIndex.map { WalletManager.shared.spendingPrivateKey(at: $0) } ?? WalletManager.shared.getPrivateKey()
+            guard let key else { continue }
+            do {
+                let context = KasiaTransactionBuilder.KNSCommitContext(
+                    redeemScript: p.redeemScript, commitAddress: p.commitAddress, commitScriptPubKey: p.commitScriptPubKey,
+                    commitAmountSompi: p.commitAmountSompi, revealAmountSompi: p.revealAmountSompi, commitOutputIndex: p.commitOutputIndex
+                )
+                let reveal: KaspaRpcTransaction
+                if let priorityFeeSompi = p.priorityFeeSompi {
+                    reveal = try KasiaTransactionBuilder.buildKNSAddProfileRevealTx(
+                        ownerAddress: p.ownerAddress, ownerPrivateKey: key, changeAddress: p.changeAddress, commitTxId: p.commitTxId,
+                        commitContext: context, revealTargetAddress: p.revealTargetAddress, revealPriorityFeeSompi: priorityFeeSompi
+                    )
+                } else {
+                    reveal = try KasiaTransactionBuilder.buildKNSAddProfileRevealTx(
+                        ownerAddress: p.ownerAddress, ownerPrivateKey: key, changeAddress: p.changeAddress, commitTxId: p.commitTxId,
+                        commitContext: context, revealTargetAddress: p.revealTargetAddress
+                    )
+                }
+                let (txId, _) = try await NodePoolService.shared.submitTransaction(reveal, allowOrphan: false)
+                AppLog.log("[KNS] sent the reveal of a commit left without one: %@", String(txId.prefix(12)))
+                finished(p.commitTxId)
+            } catch {
+                AppLog.log("[KNS] reveal of commit %@ failed again: %@", String(p.commitTxId.prefix(12)), error.localizedDescription)
+            }
+        }
+    }
 }

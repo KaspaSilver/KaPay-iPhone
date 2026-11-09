@@ -624,6 +624,13 @@ struct ProfileView: View {
 
     private func setPrimaryDomain(_ domain: KNSDomain) async {
         guard settingPrimaryDomainId == nil else { return }
+        // it is an on-chain transaction from this wallet, like any other
+        let approved = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            DeviceAuth.authenticate(reason: AppLocalization.string("Confirm setting your primary domain"),
+                                    onSuccess: { continuation.resume(returning: true) },
+                                    onFailure: { continuation.resume(returning: false) })
+        }
+        guard approved else { return }
         guard let walletAddress = walletManager.currentWallet?.publicAddress else {
             await MainActor.run {
                 setPrimaryMessage = KNSSetPrimaryMessage(
@@ -3201,26 +3208,6 @@ struct ChattingAddressManageView: View {
             .padding(.top, 12)
 
 
-            // What used to be two unlabelled glyphs in the navigation bar. A pair of icons has
-            // room for no words at all, so neither said what it did, and there was nowhere to put
-            // a third thing. Same button and same sheet as Manage Addresses' own Address Actions.
-            Button {
-                Haptics.impact(.light)
-                showAddressActions = true
-            } label: {
-                Text("Address Actions")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .foregroundColor(.black)
-                    .background(Capsule().fill(Color.accentColor))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-
             // Right above what it switches.
             UnderlineTabBar(
                 tabs: Tab.allCases.map { (tab: $0, title: tabLabel($0)) },
@@ -3238,13 +3225,33 @@ struct ChattingAddressManageView: View {
         }
         .navigationTitle("Chatting Address")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                AddressOptionsButton { showAddressActions = true }
+            }
+        }
         .sheet(isPresented: $showAddressActions, onDismiss: presentAddressActionChoice) {
-            addressActionsSheet
-                .presentationDetents([.height(330)])
+            let sheet = AddressActionsSheet(
+                explorerURL: settingsViewModel.settings.kaspaExplorer.addressURL(for: address),
+                onViewPrivateKey: {
+                    addressActionChoice = .privateKey
+                    showAddressActions = false
+                },
+                onViewPublicKey: {
+                    addressActionChoice = .publicKey
+                    showAddressActions = false
+                },
+                onViewInExplorer: { url in
+                    showAddressActions = false
+                    UIApplication.shared.open(url)
+                }
+            )
+            sheet
+                .presentationDetents([.height(sheet.height)])
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showPublicKeySheet) {
-            ChattingAddressPublicKeyView(address: address)
+            AddressPublicKeyView(address: address, note: "This is the public half of your chatting address. It identifies you and cannot spend anything.")
         }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 12) {
@@ -3348,51 +3355,6 @@ struct ChattingAddressManageView: View {
         case nil:
             break
         }
-    }
-
-    /// The half sheet behind "Address Actions". Same shape as Manage Addresses' and Cold
-    /// Storage's sheets of the same name, so all three read as the same object.
-    private var addressActionsSheet: some View {
-        VStack(spacing: 0) {
-            Text("Address Actions")
-                .font(.headline)
-                .padding(.top, 20)
-                .padding(.bottom, 16)
-
-            VStack(spacing: 12) {
-                ActionSheetRow(
-                    title: "View Private Key",
-                    subtitle: "The key that spends this address. Never share it.",
-                    systemImage: "key.fill"
-                ) {
-                    addressActionChoice = .privateKey
-                    showAddressActions = false
-                }
-                ActionSheetRow(
-                    title: "View Public Key",
-                    subtitle: "The public half of this address, for anyone who asks for it.",
-                    systemImage: "number"
-                ) {
-                    addressActionChoice = .publicKey
-                    showAddressActions = false
-                }
-                if let url = settingsViewModel.settings.kaspaExplorer.addressURL(for: address) {
-                    ActionSheetRow(
-                        title: "View in Explorer",
-                        subtitle: "Opens this address on your chosen block explorer.",
-                        systemImage: "globe"
-                    ) {
-                        showAddressActions = false
-                        UIApplication.shared.open(url)
-                    }
-                }
-            }
-            .padding(.horizontal, 20)
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .padding(.bottom, 20)
     }
 
     private var transactionsList: some View {
@@ -3766,13 +3728,14 @@ private struct ChattingAddressPrivateKeyView: View {
     }
 }
 
-/// The chatting address's public key, from the Address Actions sheet.
+/// An address's public key, from the Address Actions sheet.
 ///
 /// Nothing is derived or unlocked to show this: a Kaspa P2PK address IS its public key in bech32,
 /// so this decodes the address the screen already has. No reveal gate and no clipboard expiry
 /// either - unlike the private key alongside it, this is a value you hand out on purpose.
-private struct ChattingAddressPublicKeyView: View {
+struct AddressPublicKeyView: View {
     let address: String
+    let note: LocalizedStringKey
     @Environment(\.dismiss) private var dismiss
 
     @State private var toastMessage: String?
@@ -3791,7 +3754,7 @@ private struct ChattingAddressPublicKeyView: View {
                     Label("Safe to share", systemImage: "checkmark.seal.fill")
                         .font(.headline)
                         .foregroundColor(.accentColor)
-                    Text("This is the public half of your chatting address. It identifies you and cannot spend anything.")
+                    Text(note)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -4732,6 +4695,9 @@ struct WithdrawKaspaView: View {
         // the exact amount is what's sent; the field shows it in whichever unit it is in
         amountInput = request.amountText
         _ = fiatAmountState.setMaxKas(Double(request.amountSompi) / 100_000_000.0, priceInCurrency: portfolioViewModel.currentPriceUsd)
+        // a request's amount is fixed: an earlier Max must not recalculate over it
+        usedMax = false
+        maxCapped = false
     }
 
     /// Use one service's answer (the priority one, or a pick from "Other domains").
@@ -4789,7 +4755,7 @@ struct WithdrawKaspaView: View {
     }
 
     private func setMaxAmount() {
-        guard hasValidRecipient else { return }
+        guard hasValidRecipient, activeRequest == nil else { return }
         usedMax = true
         isEstimatingMax = true
         errorMessage = nil
@@ -5259,87 +5225,4 @@ private struct InAppWebView: UIViewRepresentable {
 private struct DomainProfileEditTarget: Identifiable {
     let info: KNSAddressProfileInfo
     var id: String { info.assetId ?? info.address }
-}
-
-/// "Edit KaChat Profile": the live address profile editor (`KachatLiveProfileEditor`) on both
-/// networks - it writes the `kchat:1:profile:` record, a self-send that needs no registry, so it
-/// saves on mainnet too; only the primary name waits for mainnet's registry.
-struct KaChatProfileEditorSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var walletManager = WalletManager.shared
-    @State private var showSetupGuide = false
-
-    var body: some View {
-        if KachatNamesService.isEnabled {
-            KachatLiveProfileEditor()
-        } else {
-            comingSoonEditor
-        }
-    }
-
-    private var comingSoonEditor: some View {
-        NavigationStack {
-            Form {
-                // The setup guide lives here since 5.2 - .kachat is the name KaChat sets up for
-                // you; .kas profiles are edited field by field in Your Domains.
-                if walletManager.showSetupGuides {
-                    Section {
-                        Button {
-                            showSetupGuide = true
-                        } label: {
-                            Text("Setup Guide")
-                        }
-                    } footer: {
-                        Text("Walk through claiming your .kachat name and making it yours.")
-                    }
-                }
-
-                Section {
-                    Label {
-                        Text(".kachat names are coming. Once you claim one, your avatar, banner, bio and links are set here - and they're what KaChat shows for you everywhere.")
-                            .font(.subheadline)
-                    } icon: {
-                        Image(systemName: "at.circle")
-                            .foregroundColor(.accentColor)
-                    }
-                }
-
-                Section("Avatar") {
-                    Label("Choose Avatar", systemImage: "photo")
-                        .foregroundColor(.secondary)
-                }
-
-                Section("Banner") {
-                    Label("Choose Banner", systemImage: "photo.on.rectangle")
-                        .foregroundColor(.secondary)
-                }
-
-                Section("Profile") {
-                    ForEach(["Bio", "X handle", "Website", "Telegram", "Discord user id", "Email", "GitHub", "Redirect URL"], id: \.self) { field in
-                        Text(LocalizedStringKey(field))
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                Section(".kachat Name") {
-                    HStack {
-                        Text("Name")
-                        Spacer()
-                        Text("None yet")
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .navigationTitle("Edit KaChat Profile")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .fullScreenCover(isPresented: $showSetupGuide) {
-                KachatSetupGuideView { showSetupGuide = false }
-            }
-        }
-    }
 }

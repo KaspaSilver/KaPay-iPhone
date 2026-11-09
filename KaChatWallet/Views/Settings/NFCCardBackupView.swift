@@ -345,6 +345,8 @@ struct NFCCardSecretField: View {
     let isNumeric: Bool
 
     var body: some View {
+        // blurred while the screen is recorded or mirrored, like the words themselves
+        SecureView {
         TextField(title, text: $text)
             .keyboardType(isNumeric ? .numberPad : .default)
             .textContentType(nil)
@@ -358,6 +360,7 @@ struct NFCCardSecretField: View {
             .padding()
             .background(Color(.systemGray6))
             .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
     }
 }
 

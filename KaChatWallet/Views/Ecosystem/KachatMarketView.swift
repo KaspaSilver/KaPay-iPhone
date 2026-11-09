@@ -472,7 +472,7 @@ struct KachatMarketView: View {
                     howItWorksRow(
                         icon: "hand.raised",
                         title: "Offer",
-                        detail: LocalizedStringKey(KaspaUnit.label(AppLocalization.string("Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires - and you can message the seller first.")))
+                        detail: LocalizedStringKey(KaspaUnit.label(AppLocalization.string("Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires.")))
                     )
                     howItWorksRow(
                         icon: "checkmark.shield",
@@ -518,16 +518,15 @@ struct KachatMarketView: View {
 // MARK: - Listing
 
 /// One listing in the .kachat marketplace: the name and its price, the three ways to act on it
-/// - buy it at the listed price, make an offer, or message the seller first - the offers already
+/// - buy it at the listed price or make an offer - the offers already
 /// on it, and its history.
 ///
-/// UI only, like the rest of the marketplace: no listing exists yet, so the name, price, seller
-/// and offers are redacted shapes and every final action is disabled. Buy and Make an Offer still
-/// open their sheets so the flow can be looked at. `sellerAddress` is where a real listing hands
-/// in its seller.
+/// With no `info` (a network where names haven't launched) the name, price, seller and offers are
+/// redacted shapes and every final action is disabled. `sellerAddress` is where a real listing
+/// hands in its seller.
 struct KachatListingDetailView: View {
     var sellerAddress: String? = nil
-    /// A real name (testnet only): the live detail with its actions instead of the mockup.
+    /// A real name: the live detail with its actions instead of the mockup.
     var info: KachatNames.NameInfo? = nil
 
     @State private var showBuy = false
@@ -709,7 +708,7 @@ struct KachatListingDetailView: View {
 /// Buy at the listed price: what you pay, then one confirmation. Opens full height with Cancel
 /// top left, the same as the offer sheet. Disabled until names launch.
 struct KachatBuySheet: View {
-    /// A real listing (testnet only): the live purchase instead of the mockup.
+    /// A real listing: the live purchase instead of the mockup.
     var info: KachatNames.NameInfo? = nil
     @Environment(\.dismiss) private var dismiss
 
@@ -768,7 +767,7 @@ struct KachatBuySheet: View {
 /// Make an offer: an amount, how long it stands, and what happens to the KAS meanwhile. The
 /// amount and expiry can be set so the form can be tried; sending is disabled until names launch.
 struct KachatOfferSheet: View {
-    /// A real name (testnet only): the live offer instead of the mockup.
+    /// A real name: the live offer instead of the mockup.
     var info: KachatNames.NameInfo? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var amount = ""
@@ -1099,12 +1098,19 @@ struct KachatAddressLiveNamesList: View {
     @ObservedObject private var service = KachatNamesService.shared
     @State private var names: [KachatNames.NameInfo] = []
     @State private var loaded = false
+    @State private var loadFailed = false
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
                 if !loaded {
                     ProgressView().padding(.vertical, 24)
+                } else if loadFailed {
+                    Text("Couldn't load this address's names. Pull down to try again.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.vertical, 40)
                 } else if service.registryUpgrading || names.isEmpty {
                     VStack(spacing: 10) {
                         KachatTabIcon.view(side: 40)
@@ -1138,7 +1144,13 @@ struct KachatAddressLiveNamesList: View {
         guard let key = KachatNamesRegistry.keyOf(address) else { loaded = true; return }
         if registry.refreshedAt == nil { await registry.refresh() }
         // an expired name past grace isn't theirs any more: it's available to anyone
-        names = (try? await registry.heldNames(owner: key)) ?? []
+        // a failed read keeps what's on screen: it isn't "holds no names"
+        do {
+            names = try await registry.heldNames(owner: key)
+            loadFailed = false
+        } catch {
+            loadFailed = names.isEmpty
+        }
         loaded = true
     }
 }

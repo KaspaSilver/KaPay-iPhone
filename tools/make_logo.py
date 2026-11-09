@@ -1,4 +1,4 @@
-"""Draws the KaChat Wallet logo and app icons: a teal wallet with KaChat's backward K in the middle.
+"""Draws the KaPay logo and app icons: a teal wallet with KaChat's backward K in the middle.
 
 Usage: python3 tools/make_logo.py OUT.png [SIZE] [VARIANT]
 

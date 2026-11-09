@@ -546,7 +546,7 @@ struct PassphraseAddressPreview: View {
 
     private var foundAddressRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("We picked the first address with funds. Tap another if that's not the one you chat from.")
+            Text("We picked the first address with funds. Tap another if that's not the one you use.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

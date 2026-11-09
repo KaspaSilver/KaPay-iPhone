@@ -124,6 +124,10 @@ struct KaChatApp: App {
             // .kachat news for the bell (offers, sales, renewal, expiry). Testnet only until
             // names launch on mainnet.
             Task { @MainActor in await KachatNamesRegistry.shared.refreshIfStale() }
+            // a .kas commit whose reveal never went out
+            Task { @MainActor in await KNSRevealRecovery.resume() }
+            // keys that couldn't be read at a locked launch may be readable now
+            Task { @MainActor in await WalletManager.shared.retryKeyRecoveryIfNeeded() }
 
             let isFirstActiveTransition = !hasCompletedFirstActiveTransition
             hasCompletedFirstActiveTransition = true
@@ -463,24 +467,52 @@ private enum PrivacyCoverWindow {
     /// One cover per window scene: on iPad and Mac the app can have several windows open, and
     /// each one is snapshotted (as KaChat).
     private static var windows: [UIWindow] = []
+    private static var sceneObservers: [NSObjectProtocol] = []
 
-    static func show() {
-        let covered = Set(windows.compactMap { $0.windowScene.map(ObjectIdentifier.init) })
-        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
-        where !covered.contains(ObjectIdentifier(scene)) {
-            let cover = UIWindow(windowScene: scene)
-            cover.windowLevel = .alert + 1
-            // the app's appearance (Settings' choice), which its own windows carry
-            cover.overrideUserInterfaceStyle = scene.windows.first?.overrideUserInterfaceStyle ?? .unspecified
-            cover.rootViewController = UIHostingController(rootView: PrivacyCoverView())
-            cover.isHidden = false
-            windows.append(cover)
-        }
+    /// The app's `scenePhase` stays active while any window is, so a window that goes to the
+    /// background beside an active one is only heard about from its own scene.
+    static func observeScenes() {
+        guard sceneObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        sceneObservers = [
+            center.addObserver(forName: UIScene.willDeactivateNotification, object: nil, queue: .main) { note in
+                guard let scene = note.object as? UIWindowScene else { return }
+                MainActor.assumeIsolated { cover(scene) }
+            },
+            center.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) { note in
+                guard let scene = note.object as? UIWindowScene else { return }
+                MainActor.assumeIsolated { uncover(scene) }
+            },
+        ]
     }
 
+    private static func cover(_ scene: UIWindowScene) {
+        guard !windows.contains(where: { $0.windowScene === scene }) else { return }
+        let cover = UIWindow(windowScene: scene)
+        cover.windowLevel = .alert + 1
+        // the app's appearance (Settings' choice), which its own windows carry
+        cover.overrideUserInterfaceStyle = scene.windows.first?.overrideUserInterfaceStyle ?? .unspecified
+        cover.rootViewController = UIHostingController(rootView: PrivacyCoverView())
+        cover.isHidden = false
+        windows.append(cover)
+    }
+
+    private static func uncover(_ scene: UIWindowScene) {
+        windows.filter { $0.windowScene === scene }.forEach { $0.isHidden = true }
+        windows.removeAll { $0.windowScene === scene }
+    }
+
+    static func show() {
+        observeScenes()
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.forEach(cover)
+    }
+
+    /// Only the windows that are in front again: another may still be in the background.
     static func hide() {
-        windows.forEach { $0.isHidden = true }
-        windows = []
+        observeScenes()
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }
+            .forEach(uncover)
     }
 }
 

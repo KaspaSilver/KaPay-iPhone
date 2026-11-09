@@ -188,3 +188,45 @@ struct KachatSetupGuideView: View {
             .fill(Color(.secondarySystemGroupedBackground))
     }
 }
+
+/// The wizard's fixed two-button footer: Previous left, Next right, same place on every step so
+/// it can be tapped through without chasing buttons. Matches the KaChat setup guide's bar.
+///
+/// A disabled Previous renders dimmed rather than vanishing, so Next never moves between steps.
+struct KNSWizardBottomBar: View {
+    var nextTitle: String = "Next"
+    var onBack: (() -> Void)?
+    var onNext: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button { onBack?() } label: {
+                Text("Previous")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color(.systemGray5))
+                    .foregroundColor(.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .disabled(onBack == nil)
+            .opacity(onBack == nil ? 0.35 : 1)
+
+            Button { onNext?() } label: {
+                Text(LocalizedStringKey(nextTitle))
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(Color.accentColor)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+            .disabled(onNext == nil)
+            .opacity(onNext == nil ? 0.5 : 1)
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 24)
+    }
+}

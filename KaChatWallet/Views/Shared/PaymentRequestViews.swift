@@ -363,7 +363,7 @@ struct PaymentRequestSummary: View {
                 Label("Requested by", systemImage: "checkmark.seal.fill")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.green)
-                AddressResolutionCard(address: creator)
+                AddressResolutionCard(address: creator, addressOnly: true)
                 if creator.lowercased() != request.address.lowercased() {
                     Text("Signed by their chatting address. The payment goes to the address above.")
                         .font(.caption)

@@ -17,10 +17,6 @@ struct ManageAddressesView: View {
     @State private var isLoading = false
     @State private var isGenerating = false
     @State private var isDiscovering = false
-    @State private var isConsolidating = false
-    @State private var showConsolidateConfirm = false
-    @State private var showConsolidateSuccess = false
-    @State private var consolidateSentTxIds: [String] = []
     @State private var errorMessage: String?
     @State private var qrTarget: SpendingAddressEntry?
     @State private var renameTarget: SpendingAddressEntry?
@@ -160,32 +156,6 @@ struct ManageAddressesView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
-        }
-        .sheet(isPresented: $showConsolidateConfirm) {
-            ConsolidateToPrimaryConfirmView(
-                sources: entries.filter { $0.index != walletManager.currentSpendingAddressIndex && $0.balanceSompi > 0 },
-                primaryAddress: walletManager.currentSpendingAddress() ?? ""
-            ) { extraFeeSompi in
-                consolidateToPrimary(extraFeeSompi: extraFeeSompi)
-            }
-            // .medium clipped the fee row's footer text on shorter screens once the fee
-            // picker/editable field pushed the "From" list below the fold - always opening
-            // full height avoids that ambiguity for what's a fund-affecting confirmation.
-            .presentationDetents([.large])
-        }
-        // A half sheet like every other send confirmation. It keeps its own card body rather
-        // than using `SentConfirmationSheet`, because a consolidation sweep submits one
-        // transaction per source address and the list of them is the whole point.
-        .sheet(isPresented: $showConsolidateSuccess) {
-            ConsolidateSuccessCard(
-                txIds: consolidateSentTxIds,
-                explorer: settingsViewModel.settings.kaspaExplorer
-            ) {
-                showConsolidateSuccess = false
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .presentationDetents([.height(min(420, 220 + CGFloat(consolidateSentTxIds.count) * 44))])
-            .presentationDragIndicator(.visible)
         }
         .sheet(item: $qrTarget) { entry in
             SpendingAddressQRView(entry: entry)
@@ -443,7 +413,7 @@ struct ManageAddressesView: View {
             showAddressActions = true
         } label: {
             Group {
-                if isGenerating || isDiscovering || isConsolidating {
+                if isGenerating || isDiscovering {
                     ProgressView()
                 } else {
                     Image(systemName: "slider.horizontal.3")
@@ -460,7 +430,7 @@ struct ManageAddressesView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isGenerating || isDiscovering || isConsolidating)
+        .disabled(isGenerating || isDiscovering)
         .padding(.trailing, 20)
         .padding(.bottom, 16)
         .accessibilityLabel(Text("Address Actions"))
@@ -522,7 +492,7 @@ struct ManageAddressesView: View {
                         subtitle: "Reveals the next unused address in this wallet.",
                         systemImage: "plus.circle",
                         isBusy: isGenerating,
-                        isDisabled: isDiscovering || isConsolidating
+                        isDisabled: isDiscovering
                     ) {
                         generateNew()
                         showAddressActions = false
@@ -531,7 +501,7 @@ struct ManageAddressesView: View {
                         title: "Discover Addresses",
                         subtitle: "Finds addresses holding a balance or a domain.",
                         systemImage: "magnifyingglass",
-                        isDisabled: isDiscovering || isConsolidating
+                        isDisabled: isDiscovering
                     ) {
                         discoverAddresses()
                     }
@@ -921,46 +891,6 @@ struct ManageAddressesView: View {
         }
     }
 
-    /// Sweeps every non-primary spending address's balance into the current primary, one at
-    /// a time. Best-effort: a failure on one address doesn't block the rest. `extraFeeSompi`
-    /// (chosen in the confirmation sheet) is applied to each individual sweep, same as any other
-    /// send's fee customization - there's no single combined fee to show since this can be
-    /// several separate transactions, one per source address.
-    private func consolidateToPrimary(extraFeeSompi: UInt64 = 0) {
-        guard !isConsolidating else { return }
-        isConsolidating = true
-        errorMessage = nil
-        Task {
-            guard let primaryAddress = walletManager.currentSpendingAddress() else {
-                isConsolidating = false
-                return
-            }
-            let activeIndex = walletManager.currentSpendingAddressIndex
-            var sentTxIds: [String] = []
-            // One address failing must not hide the others' success - but if nothing went out
-            // and something threw, that error is the answer, not a sheet that just closes.
-            var lastError: Error?
-            for entry in entries where entry.index != activeIndex && entry.balanceSompi > 0 {
-                do {
-                    let maxSendable = try await walletService.estimateMaxSpendingAddressAmount(index: entry.index, toAddress: primaryAddress, extraFeeSompi: extraFeeSompi).amountSompi
-                    guard maxSendable > 0 else { continue }
-                    let txId = try await walletService.sendFromSpendingAddress(index: entry.index, toAddress: primaryAddress, amountSompi: maxSendable, extraFeeSompi: extraFeeSompi)
-                    sentTxIds.append(txId)
-                } catch {
-                    lastError = error
-                }
-            }
-            await loadEntries()
-            isConsolidating = false
-            if !sentTxIds.isEmpty {
-                consolidateSentTxIds = sentTxIds
-                showConsolidateSuccess = true
-            } else if let lastError {
-                errorMessage = lastError.localizedDescription
-            }
-        }
-    }
-
     private func formatKasExact(_ sompi: UInt64) -> String {
         String(format: "%.8f", Double(sompi) / 100_000_000.0)
     }
@@ -1007,232 +937,6 @@ struct ContainsDomainTag: View {
     }
 }
 
-/// Confirm-before-you-sweep sheet for "Send All Kaspa To Primary Spend Address" - shows exactly
-/// which addresses will be swept, where the funds are going, and a fee the user can adjust,
-/// rather than firing off however-many transactions the instant the menu item is tapped.
-private struct ConsolidateToPrimaryConfirmView: View {
-    let sources: [SpendingAddressEntry]
-    let primaryAddress: String
-    let onConfirm: (UInt64) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var feeTier: WithdrawFeeTier = .normal
-    @State private var customExtraFeeSompi: UInt64?
-    @State private var isEditingFee = false
-    @State private var feeEditorText = ""
-    @FocusState private var feeFieldFocused: Bool
-
-    /// Same reference-mass shortcut used by Cold Storage's fee editor - a fixed 1-input/2-output
-    /// mass, good enough to show/edit a per-transaction fee estimate without a network round trip.
-    private var referenceMass: UInt64 { ColdStorageSendEngine.referenceMassForFeeEditor }
-
-    private var normalFeeSompi: UInt64 {
-        ColdStorageSendEngine.calculateFee(mass: referenceMass, rateSompiPerGram: KaspaFeePolicy.minimumRelayFeePerGramSompi)
-    }
-
-    /// Extra priority tip on top of the base (Normal-tier) fee - same Normal/Fast/Priority
-    /// system as the main-address withdraw flow, applied per swept address here since a
-    /// consolidation can be several separate transactions.
-    private var extraFeeSompi: UInt64 {
-        if let customExtraFeeSompi { return customExtraFeeSompi }
-        return normalFeeSompi * (feeTier.multiplier - 1)
-    }
-
-    private var effectiveFeeSompi: UInt64 {
-        normalFeeSompi + extraFeeSompi
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    if sources.isEmpty {
-                        Text("No other addresses have a balance to consolidate.")
-                            .foregroundColor(.secondary)
-                    } else {
-                        ForEach(sources) { entry in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(entry.displayLabel)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Text(entry.shortAddress)
-                                        .font(.system(.subheadline, design: .monospaced))
-                                }
-                                Spacer()
-                                Text(verbatim: "\(formatKas(entry.balanceSompi)) \(KaspaUnit.symbol)")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("From")
-                }
-
-                Section {
-                    Text(primaryAddress)
-                        .font(.system(.subheadline, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } header: {
-                    Text("To (Primary Address)")
-                }
-
-                if !sources.isEmpty {
-                    Section {
-                        Picker("Fee", selection: $feeTier) {
-                            ForEach(WithdrawFeeTier.allCases) { tier in
-                                Text(tier.rawValue).tag(tier)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .onChange(of: feeTier) { _ in
-                            customExtraFeeSompi = nil
-                            isEditingFee = false
-                        }
-
-                        HStack {
-                            Text("Network Fee")
-                            Spacer()
-                            if isEditingFee {
-                                TextField("0.00", text: $feeEditorText)
-                                    .keyboardType(.decimalPad)
-                                    .numericKeyboardDoneButton()
-                                    .multilineTextAlignment(.trailing)
-                                    .frame(maxWidth: 100)
-                                    .focused($feeFieldFocused)
-                                    .onSubmit { commitCustomFee() }
-                                Button {
-                                    commitCustomFee()
-                                } label: {
-                                    Image(systemName: "checkmark.circle.fill")
-                                }
-                                .buttonStyle(.borderless)
-                            } else {
-                                Button {
-                                    feeEditorText = formatKas(effectiveFeeSompi)
-                                    isEditingFee = true
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Text(verbatim: "~\(formatKas(effectiveFeeSompi)) \(KaspaUnit.symbol)")
-                                            .underline()
-                                        Image(systemName: "pencil")
-                                            .font(.caption2)
-                                    }
-                                    .foregroundColor(.accentColor)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    } footer: {
-                        Text(sources.count > 1
-                             ? "\(sources.count) separate transactions will be sent, one per address. Fast or Priority pays a higher fee to help them confirm sooner. Tap the fee amount to set a custom fee, applied to each."
-                             : "If the network is busy, Fast or Priority pays a higher fee to help this confirm sooner. Tap the fee amount to set a custom fee.")
-                    }
-                }
-            }
-            .navigationTitle("Consolidate to Primary")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        feeFieldFocused = false
-                    }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Confirm") {
-                        onConfirm(extraFeeSompi)
-                        dismiss()
-                    }
-                    .disabled(sources.isEmpty)
-                }
-            }
-        }
-    }
-
-    /// Commits the manually-typed total fee. Values below the network-computed minimum are
-    /// clamped up to that minimum rather than rejected outright, matching the main-address
-    /// withdraw flow's identical behavior.
-    private func commitCustomFee() {
-        defer { isEditingFee = false }
-        guard let totalSompi = KaspaUnit.sompi(fromUserText: feeEditorText) else { return }
-        customExtraFeeSompi = totalSompi > normalFeeSompi ? totalSompi - normalFeeSompi : 0
-    }
-
-    private func formatKas(_ sompi: UInt64) -> String {
-        var text = String(format: "%.8f", Double(sompi) / 100_000_000.0)
-        while text.hasSuffix("0") { text.removeLast() }
-        if text.hasSuffix(".") { text.removeLast() }
-        return text
-    }
-}
-
-/// Confirms a completed consolidation sweep - shown after "Send All Kaspa To Primary Spend
-/// Address" finishes, listing every transaction id it actually submitted (there can be more
-/// than one, one per source address swept) so the user has something concrete to check on an
-/// explorer rather than just trusting the sheet silently closed. Same half-sheet language as
-/// `SentConfirmationSheet` (checkmark + "Sent" + tappable ids), just extended to a list, since a
-/// sweep submits one transaction per source address and that list is the whole point.
-private struct ConsolidateSuccessCard: View {
-    let txIds: [String]
-    let explorer: KaspaExplorer
-    let onDismiss: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.scaled(size: 44))
-                .foregroundColor(.green)
-
-            Text("Sent")
-                .font(.headline)
-                .fontWeight(.bold)
-
-            VStack(spacing: 8) {
-                ForEach(txIds, id: \.self) { txId in
-                    if let url = explorer.txURL(for: txId) {
-                        Link(destination: url) {
-                            Text(txId)
-                                .font(.system(.footnote, design: .monospaced))
-                                .foregroundColor(.accentColor)
-                                .underline()
-                                .multilineTextAlignment(.center)
-                        }
-                    } else {
-                        Text(txId)
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                }
-            }
-
-            Button {
-                onDismiss()
-            } label: {
-                Text("OK")
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.accentColor)
-        }
-        .padding(24)
-        .frame(maxWidth: 300)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.regularMaterial)
-        )
-        .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
-    }
-}
-
 /// Scoped withdraw dialog for a single spending address — change stays on that same address
 /// (no rotation), unlike the rotate-on-send behavior of the primary. Widened
 /// from `private` so ContactsView.swift's Profile-tab "Spending Address" dropdown can reuse it
@@ -1269,6 +973,8 @@ struct SpendingAddressWithdrawView: View {
     @State private var cappedMaxAmount: String?
     /// The amount Max set: while it's still the amount, a fee change works Max out again.
     @State private var maxAmountText: String?
+    /// Coins picked in Coin Control, as against the chunk Compound pins by itself.
+    @State private var pickedCoins: [UTXO]?
     /// The base fee, or the fee at the chosen speed, couldn't be worked out: no swipe.
     @State private var feeError: String?
     @State private var tippedFeeError: String?
@@ -1596,7 +1302,8 @@ struct SpendingAddressWithdrawView: View {
                 CoinControlView(fromAddress: source.address, initialSelection: manualUtxos,
                                 unavailableReason: CoinControlView.hotWalletReason(chatting: false)) { selection in
                     manualUtxos = selection
-                    if isCompoundMode { setMaxAmount() }
+                    pickedCoins = selection
+                    if isCompoundMode || amountIsMax { setMaxAmount() }
                 }
             }
             // The confirmation is the swipe-up's own full screen (SwipeUpToSendScrollView).
@@ -1703,7 +1410,14 @@ struct SpendingAddressWithdrawView: View {
                     // send to exactly those inputs. This is why "Max" works even when the address has
                     // more UTXOs than a single tx can hold - it consolidates one batch; repeat to
                     // reduce further.
-                    let (maxSompi, utxos) = try await walletService.maxConsolidatableChunk(index: source.index, extraFeeSompi: fixedExtra, feeMultiplier: multiplier, availableUtxos: preloadedUtxos)
+                    let (maxSompi, utxos): (UInt64, [UTXO])
+                    if let pickedCoins, !pickedCoins.isEmpty {
+                        // the person chose which coins to combine
+                        maxSompi = try await walletService.estimateMaxSpendingAddressAmount(index: source.index, toAddress: recipient, manualUtxos: pickedCoins, extraFeeSompi: fixedExtra, feeMultiplier: multiplier).amountSompi
+                        utxos = pickedCoins
+                    } else {
+                        (maxSompi, utxos) = try await walletService.maxConsolidatableChunk(index: source.index, extraFeeSompi: fixedExtra, feeMultiplier: multiplier, availableUtxos: preloadedUtxos)
+                    }
                     await MainActor.run {
                         guard maxRequest == request else { return }
                         manualUtxos = utxos
@@ -2134,6 +1848,10 @@ struct SpendingAddressTransactionHistoryView: View {
     @State private var showSendSheet = false
     @State private var showCompoundSheet = false
     @State private var showPrivateKeySheet = false
+    @State private var showPublicKeySheet = false
+    @State private var showAddressActions = false
+    /// What the Address Actions row picked opens, once that sheet has finished closing.
+    @State private var afterAddressActions: (() -> Void)?
     @State private var utxoLabels: [String: String] = [:]
     @State private var renamingUtxo: UTXO?
     @State private var renameUtxoText = ""
@@ -2177,14 +1895,21 @@ struct SpendingAddressTransactionHistoryView: View {
         .navigationTitle(entry.displayLabel)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // A single ToolbarItem with both icons inside an HStack (rather than two separate
-            // ToolbarItems) so left-to-right order (Export, then Explorer) is guaranteed - but
-            // each icon draws its own circular glass background explicitly, so they read as two
-            // distinct pills with a gap between them instead of iOS's automatic toolbar-item
-            // grouping merging adjacent trailing items into one shared pill shape.
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 10) {
-                    Button {
+                AddressOptionsButton { showAddressActions = true }
+            }
+        }
+        .sheet(isPresented: $showAddressActions, onDismiss: {
+            let next = afterAddressActions
+            afterAddressActions = nil
+            next?()
+        }) {
+            let sheet = AddressActionsSheet(
+                // A quantum address keeps its key hidden until it spends: that's the point of it.
+                showsPublicKey: !WalletManager.isQuantumIndex(entry.index),
+                explorerURL: settingsViewModel.settings.kaspaExplorer.addressURL(for: entry.address),
+                onViewPrivateKey: {
+                    afterAddressActions = {
                         if settingsViewModel.settings.biometricSpendingKeyEnabled {
                             DeviceAuth.authenticate(reason: "Unlock to view this address's private key") {
                                 showPrivateKeySheet = true
@@ -2192,20 +1917,24 @@ struct SpendingAddressTransactionHistoryView: View {
                         } else {
                             showPrivateKeySheet = true
                         }
-                    } label: {
-                        Image(systemName: "square.and.arrow.up.on.square")
-                            .frame(width: 32, height: 32)
-                            .background(Circle().fill(.regularMaterial))
                     }
-                    if let url = settingsViewModel.settings.kaspaExplorer.addressURL(for: entry.address) {
-                        Link(destination: url) {
-                            Image(systemName: "globe")
-                                .frame(width: 32, height: 32)
-                                .background(Circle().fill(.regularMaterial))
-                        }
-                    }
+                    showAddressActions = false
+                },
+                onViewPublicKey: {
+                    afterAddressActions = { showPublicKeySheet = true }
+                    showAddressActions = false
+                },
+                onViewInExplorer: { url in
+                    showAddressActions = false
+                    UIApplication.shared.open(url)
                 }
-            }
+            )
+            sheet
+                .presentationDetents([.height(sheet.height)])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showPublicKeySheet) {
+            AddressPublicKeyView(address: entry.address, note: "This is the public half of this address. It cannot spend anything.")
         }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 12) {

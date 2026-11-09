@@ -16,7 +16,7 @@ import P256K
 /// recovery).
 ///
 /// Reconstructed after this file's original implementation was accidentally lost to an
-/// uncommitted-work-discarding `git checkout` earlier in development (see conversation) -
+/// uncommitted-work-discarding `git checkout` earlier in development -
 /// rebuilt from every call site's exact usage, cross-checked against `Wallet`'s own
 /// `spendingAddressIndex`/`maxSpendingAddressIndex`/`effective*` fields (which survived, since
 /// they live in Models.swift, a file the bad checkout never touched) rather than guessed from
@@ -503,6 +503,8 @@ extension WalletManager {
         var index = nextFreshQuantumIndex(owner: owner)
         guard let chainKey else { return index }
         for _ in 0..<20 {
+            // the slot the Receive QR already points at (warmed before it's on the list) stays its own
+            if owner == currentWallet?.publicAddress, index == receiveAddressIndex { index += 1 }
             guard let address = quantumAddress(at: index, chainKey: chainKey, owner: owner),
                   await WalletService.shared.spendingAddressUsedState(address) == true else { return index }
             AppLog.log("[WalletManager] Quantum slot %d already has history - skipping it", index - Self.quantumIndexBase)
@@ -511,6 +513,14 @@ extension WalletManager {
             index = nextFreshQuantumIndex(owner: owner)
         }
         return index
+    }
+
+    /// A send's change went to this quantum slot without the primary following it: it goes on the
+    /// list, or the change would be out of sight.
+    func listChangeSlot(_ index: Int, owner: String?) {
+        guard Self.isQuantumIndex(index) else { return }
+        if let owner, !accountStillSaved(owner) { return }
+        setMaxQuantumAddressIndex(index - Self.quantumIndexBase, owner: owner)
     }
 
     func nextFreshQuantumIndex() -> Int {
@@ -609,6 +619,7 @@ extension WalletManager {
         // legacy pointer, even unused, carries its key in the address itself (P2PK), so the QR
         // moves to the quantum chain the first time it is opened after the upgrade.
         if let index = receiveAddressIndex, Self.isQuantumIndex(index), let address = spendingAddress(at: index),
+           !isQuantumAddressSpentLocally(address),
            await WalletService.shared.spendingAddressUsedState(address) != true {
             chosen = (index, address)
         } else {
@@ -925,10 +936,17 @@ extension WalletManager {
             }
         }
 
-        let allUtxos = (try? await NodePoolService.shared.getUtxosByAddresses(Array(addressesByIndex.values))) ?? []
         var balanceByAddress: [String: UInt64] = [:]
-        for utxo in allUtxos {
-            balanceByAddress[utxo.address, default: 0] += utxo.amount
+        if let allUtxos = try? await NodePoolService.shared.getUtxosByAddresses(Array(addressesByIndex.values)) {
+            for utxo in allUtxos {
+                balanceByAddress[utxo.address, default: 0] += utxo.amount
+            }
+        } else {
+            // A failed read isn't an empty address: the last figures known, which also keeps a
+            // funded address in the From lists.
+            for entry in cachedSpendingAddressList() {
+                balanceByAddress[entry.address] = entry.balanceSompi
+            }
         }
 
         return addressesByIndex.keys.sorted().map { index in

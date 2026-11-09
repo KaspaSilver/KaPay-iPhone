@@ -20,11 +20,8 @@ extension WalletService {
         return try await operationTask.value
     }
 
-    /// Sends a plain KAS transfer from the wallet's identity address to an arbitrary
-    /// recipient address (Profile > Chatting Address > Withdraw Kaspa). Unlike sendPayment,
-    /// this carries no KaChat protocol payload and no extra bookkeeping
-    /// (pending message, delivery status, etc.) since the recipient isn't necessarily a
-    /// contact. Returns the submitted transaction id.
+    /// Sends a plain KAS transfer from the wallet's chatting address to any recipient address.
+    /// Returns the submitted transaction id.
     /// `expectedFeeSompi`: the fee the Review showed. A send built at the swipe that would pay more
     /// (its coins changed since the Review) throws `SendFeeChangedError` and sends nothing.
     func sendWithdrawal(toAddress: String, amountSompi: UInt64, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0, expectedFeeSompi: UInt64? = nil) async throws -> String {
@@ -65,7 +62,7 @@ extension WalletService {
             var resolvedManualUtxos: [UTXO]?
             if let manualUtxos, !manualUtxos.isEmpty {
                 func outpointKey(_ utxo: UTXO) -> String { "\(utxo.outpoint.transactionId):\(utxo.outpoint.index)" }
-                let spendableByOutpoint = Dictionary(uniqueKeysWithValues: spendable.map { (outpointKey($0), $0) })
+                let spendableByOutpoint = Dictionary(spendable.map { (outpointKey($0), $0) }, uniquingKeysWith: { first, _ in first })
                 let resolved = manualUtxos.compactMap { spendableByOutpoint[outpointKey($0)] }
                 guard !resolved.isEmpty else {
                     throw KasiaError.networkError("Selected UTXOs are no longer available - please reselect")
@@ -88,10 +85,10 @@ extension WalletService {
             let txId: String
             let endpoint: String
             do {
-                (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false)
+                (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false, escalateOrphan: false)
             } catch let unknown as SendOutcomeUnknownError {
-                // it may have landed: its coins stay out of the next send
-                self.recordSpend(tx)
+                // No hold on its coins: a resend then picks the same ones, so at most one can land.
+                self.dropUtxoCache()
                 throw unknown
             }
             AppLog.log("[WalletService] Withdrawal submitted: \(txId) via \(endpoint)")
@@ -243,7 +240,7 @@ extension WalletService {
             throw KasiaError.keychainError("Could not derive this spending address")
         }
         // Fresh change index for the primary only: past the all-time max, so it has never been
-        // revealed, funded or offered (the same rule `sendPaymentInternal` uses). Decided up
+        // revealed, funded or offered (the same rule as a .kas transfer). Decided up
         // front and applied only after the node accepts the transaction, so a failed send moves
         // nothing. If the fresh address cannot be derived this instant, change stays put and
         // the primary stays put with it - rotating onto an address the change did not reach
@@ -257,7 +254,8 @@ extension WalletService {
         // change back would park funds on a revealed address (KIP-22). A legacy primary keeps
         // rotating as before; both rotate onto a fresh quantum slot now. A self-send (Compound)
         // still consolidates into the address itself, shield off.
-        if !isSelfSend, WalletManager.isQuantumIndex(index) || index == WalletManager.shared.currentSpendingAddressIndex {
+        let isPrimary = index == WalletManager.shared.currentSpendingAddressIndex
+        if !isSelfSend, WalletManager.isQuantumIndex(index) || isPrimary {
             if let slot = await WalletManager.shared.verifiedFreshQuantumSlot() {
                 freshChangeIndex = slot.index
                 changeAddress = slot.address
@@ -298,7 +296,7 @@ extension WalletService {
             var resolvedManualUtxos: [UTXO]?
             if let manualUtxos, !manualUtxos.isEmpty {
                 func outpointKey(_ utxo: UTXO) -> String { "\(utxo.outpoint.transactionId):\(utxo.outpoint.index)" }
-                let spendableByOutpoint = Dictionary(uniqueKeysWithValues: spendable.map { (outpointKey($0), $0) })
+                let spendableByOutpoint = Dictionary(spendable.map { (outpointKey($0), $0) }, uniquingKeysWith: { first, _ in first })
                 let resolved = manualUtxos.compactMap { spendableByOutpoint[outpointKey($0)] }
                 guard !resolved.isEmpty else {
                     throw KasiaError.networkError("Selected UTXOs are no longer available - please reselect")
@@ -328,27 +326,38 @@ extension WalletService {
             try self.checkFeeAgainstReview(tx, spending: spendable, expectedFeeSompi: expectedFeeSompi)
 
             AppLog.log("[WalletService] Submitting spending-address withdrawal via RPC manager...")
-            @MainActor func noteSpend() async {
-                // its coins stay out of the next send from this address until the spend is in a block
-                self.recordSpend(tx)
+            @MainActor func noteSpend(outcomeKnown: Bool) async {
+                // Its coins stay out of the next send from this address until the spend is in a
+                // block. Not when the outcome is unknown: a resend must pick the same coins, so
+                // that at most one of the two can land.
+                if outcomeKnown { self.recordSpend(tx) } else { self.dropUtxoCache() }
+                // the session's "never used" answer for these is out of date now
+                self.markSpendingAddressUsed(fromAddress)
+                if let changeAddress { self.markSpendingAddressUsed(changeAddress) }
                 if WalletManager.isQuantumIndex(index) {
                     // the spend put this address's key on chain for good (self-sends included)
                     await WalletManager.shared.markQuantumAddressSpent(fromAddress, owner: owner)
                 }
                 if let freshChangeIndex {
-                    // The primary follows its change onto the fresh address. Manage Addresses
-                    // listens for this and moves its star at once.
-                    await WalletManager.shared.setActiveSpendingAddress(freshChangeIndex, owner: owner)
+                    if isPrimary {
+                        // The primary follows its change onto the fresh address. Manage Addresses
+                        // listens for this and moves its star at once.
+                        await WalletManager.shared.setActiveSpendingAddress(freshChangeIndex, owner: owner)
+                    } else {
+                        // Sending from another quantum address leaves the primary where it is;
+                        // the change only has to be on the list.
+                        WalletManager.shared.listChangeSlot(freshChangeIndex, owner: owner)
+                    }
                 }
             }
             do {
-                let (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false)
+                let (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false, escalateOrphan: false)
                 AppLog.log("[WalletService] Spending-address withdrawal submitted: \(txId) via \(endpoint)")
-                await noteSpend()
+                await noteSpend(outcomeKnown: true)
                 return txId
             } catch let unknown as SendOutcomeUnknownError {
                 // It may have landed: its change has to stay visible, and a quantum source counts as spent.
-                await noteSpend()
+                await noteSpend(outcomeKnown: false)
                 throw unknown
             }
         }
@@ -450,13 +459,26 @@ extension WalletService {
             utxos: spendable,
             amount: amountSompi,
             recipientScriptPubKey: recipientScriptPubKey,
-            senderScriptPubKey: senderScriptPubKey,
+            senderScriptPubKey: Self.reviewChangeScript(index: index, fromAddress: fromAddress, toAddress: toAddress, senderScriptPubKey: senderScriptPubKey),
             manualUtxos: resolvedManualUtxos,
             extraFeeSompi: extraFeeSompi,
             virtualDaaScore: vds,
             signatureScriptSize: WalletManager.isQuantumIndex(index)
                 ? KasiaTransactionBuilder.kip22SignatureScriptSize : 66
         )
+    }
+
+    /// The script a send from this address pays its change to, for pricing the Review. The send
+    /// itself (`sendFromSpendingAddress`) puts a primary's or quantum source's change on a fresh
+    /// quantum slot, a 35-byte P2SH script where a legacy address's is 34: pricing that with the
+    /// source's script comes out 1,100 sompi low. The slot isn't chosen yet, and only the length
+    /// counts, so a stand-in of the same shape does.
+    @MainActor private static func reviewChangeScript(index: Int, fromAddress: String, toAddress: String, senderScriptPubKey: Data) -> Data {
+        let isSelfSend = toAddress.lowercased() == fromAddress.lowercased()
+        guard !isSelfSend, WalletManager.isQuantumIndex(index) || index == WalletManager.shared.currentSpendingAddressIndex else {
+            return senderScriptPubKey
+        }
+        return Data([0xaa, 0x20]) + Data(repeating: 0, count: 32) + Data([0x87])
     }
 
     /// Maximum sendable amount from a specific spending address (balance minus the send-all
@@ -563,7 +585,7 @@ extension WalletService {
     private func resolveManualUtxos(_ manualUtxos: [UTXO]?, against spendable: [UTXO]) -> [UTXO]? {
         guard let manualUtxos, !manualUtxos.isEmpty else { return nil }
         func outpointKey(_ utxo: UTXO) -> String { "\(utxo.outpoint.transactionId):\(utxo.outpoint.index)" }
-        let spendableByOutpoint = Dictionary(uniqueKeysWithValues: spendable.map { (outpointKey($0), $0) })
+        let spendableByOutpoint = Dictionary(spendable.map { (outpointKey($0), $0) }, uniquingKeysWith: { first, _ in first })
         let resolved = manualUtxos.compactMap { spendableByOutpoint[outpointKey($0)] }
         return resolved.isEmpty ? nil : resolved
     }
@@ -610,6 +632,12 @@ extension WalletService {
         reserveOutpoints(tx.inputs.map { Self.outpointKey($0.previousOutpoint) })
     }
 
+    /// The UTXO cache still lists coins a send may have spent.
+    func dropUtxoCache() {
+        cachedUtxos = []
+        cachedUtxosTimestamp = nil
+    }
+
     /// `recordSpend` for outpoints given as "txid:index" (any transaction `NodePoolService`
     /// submits: .kas and .kachat names, profiles, combines, Cold Storage).
     func reserveOutpoints(_ keys: [String]) {
@@ -617,8 +645,7 @@ extension WalletService {
         for key in keys {
             reservedOutpoints[key] = until
         }
-        cachedUtxos = []
-        cachedUtxosTimestamp = nil
+        dropUtxoCache()
     }
 
     /// Whether an address has ever appeared in a transaction, independent of its current

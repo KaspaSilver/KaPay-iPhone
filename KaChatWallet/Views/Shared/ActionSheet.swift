@@ -670,5 +670,84 @@ struct UnderlineTabBar<Tab: Hashable>: View {
     }
 }
 
+/// The options button at the top right of every address page (the chatting address, each
+/// spending address, each Cold Storage address). Opens `AddressActionsSheet`.
+struct AddressOptionsButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptics.impact(.light)
+            action()
+        } label: {
+            Image(systemName: "ellipsis")
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(.regularMaterial))
+        }
+        .accessibilityLabel(Text("Address Actions"))
+    }
+}
+
+/// The same half sheet on every address page. A row that opens another screen closes this
+/// sheet first and opens it from `onDismiss`, as a sheet presented while another is still
+/// closing can be dropped.
+struct AddressActionsSheet: View {
+    /// A quantum address keeps its key hidden until it spends, so it has none to show.
+    var showsPublicKey = true
+    let explorerURL: URL?
+    /// Nil where the app doesn't hold the key (Cold Storage).
+    var onViewPrivateKey: (() -> Void)? = nil
+    let onViewPublicKey: () -> Void
+    let onViewInExplorer: (URL) -> Void
+
+    /// Fits however many rows are showing.
+    var height: CGFloat {
+        let rows = (onViewPrivateKey == nil ? 0 : 1) + (showsPublicKey ? 1 : 0) + (explorerURL == nil ? 0 : 1)
+        return 90 + CGFloat(rows) * 80
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("Address Actions")
+                .font(.headline)
+                .padding(.top, 20)
+                .padding(.bottom, 16)
+
+            VStack(spacing: 12) {
+                if let onViewPrivateKey {
+                    ActionSheetRow(
+                        title: "View Private Key",
+                        subtitle: "The key that spends this address. Never share it.",
+                        systemImage: "key.fill",
+                        action: onViewPrivateKey
+                    )
+                }
+                if showsPublicKey {
+                    ActionSheetRow(
+                        title: "View Public Key",
+                        subtitle: "The public half of this address, for anyone who asks for it.",
+                        systemImage: "number",
+                        action: onViewPublicKey
+                    )
+                }
+                if let explorerURL {
+                    ActionSheetRow(
+                        title: "View in Explorer",
+                        subtitle: "Opens this address on your chosen block explorer.",
+                        systemImage: "globe"
+                    ) {
+                        onViewInExplorer(explorerURL)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .padding(.bottom, 20)
+    }
+}
+
 // MARK: - Wallet action tile
 

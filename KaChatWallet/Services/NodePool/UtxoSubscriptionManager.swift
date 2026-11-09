@@ -70,6 +70,10 @@ final class UtxoSubscriptionManager: ObservableObject {
     private var failoverAttempts: Int = 0
     private var lastFailoverAttemptAt: Date?
 
+    /// Retries a subscribe that failed on every node. By then the health loop is gone (the
+    /// subscribe's cleanup cancelled it), so nothing else would ever try again.
+    private var resubscribeRetryTask: Task<Void, Never>?
+
     // MARK: - Configuration
 
     /// Health check interval (ping every 15s)
@@ -172,6 +176,7 @@ final class UtxoSubscriptionManager: ObservableObject {
 
         guard !availableNodes.isEmpty else {
             state = .failed
+            scheduleResubscribeRetry()
             if allCapableNodes.isEmpty {
                 throw KasiaError.networkError("No capable nodes in pool (need synced + UTXO indexed)")
             } else {
@@ -229,7 +234,33 @@ final class UtxoSubscriptionManager: ObservableObject {
 
         // All nodes failed
         state = .failed
+        scheduleResubscribeRetry()
         throw lastError ?? KasiaError.networkError("All capable nodes failed")
+    }
+
+    /// Keeps retrying on a capped backoff (1, 2, 4, 8, 16, 30, 30...s) while the subscription
+    /// stays failed and wanted. What arrived meanwhile is left to the consumers' catch-up.
+    private func scheduleResubscribeRetry() {
+        guard resubscribeRetryTask == nil else { return }
+        resubscribeRetryTask = Task { @MainActor [weak self] in
+            var attempt = 0
+            while !Task.isCancelled {
+                let backoff = min(30.0, pow(2.0, Double(attempt)))
+                try? await Task.sleep(nanoseconds: UInt64(backoff * 1_000_000_000))
+                guard let self, !Task.isCancelled, self.state == .failed,
+                      !self.subscribedAddresses.isEmpty else { break }
+                do {
+                    try await self.subscribe(addresses: self.subscribedAddresses)
+                    AppLog.log("[UtxoSub] Resubscribed after %d failed retries", attempt)
+                    NotificationCenter.default.post(name: .rpcSubscriptionsRestored, object: nil)
+                    break
+                } catch {
+                    attempt += 1
+                }
+            }
+            // unsubscribe() clears it itself, and a newer retry may have taken the slot by then
+            if !Task.isCancelled { self?.resubscribeRetryTask = nil }
+        }
     }
 
     /// Clean up existing subscription without changing state to disconnected
@@ -272,6 +303,8 @@ final class UtxoSubscriptionManager: ObservableObject {
         healthCheckTask = nil
         // a subscribe still queued or running must not re-subscribe after this
         subscribeInFlight?.cancel()
+        resubscribeRetryTask?.cancel()
+        resubscribeRetryTask = nil
 
         // Remove notification handlers from connections
         if let conn = primaryConnection, let handlerId = primaryHandlerId {
@@ -745,7 +778,10 @@ final class UtxoSubscriptionManager: ObservableObject {
         // Resubscribe to current addresses
         do {
             try await subscribe(addresses: subscribedAddresses)
+            // The old path's socket died with the change: what arrived in between needs catching up.
+            NotificationCenter.default.post(name: .rpcSubscriptionsRestored, object: nil)
         } catch {
+            // performSubscribe has armed the retry if this was a real failure
             AppLog.log("[UtxoSub] Resubscription after epoch change failed: %@", error.localizedDescription)
         }
     }

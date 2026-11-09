@@ -407,7 +407,7 @@ final class KachatHubModel: ObservableObject {
         do {
             listings = try await registry.listings()
             lapsed = try await registry.lapsed()
-            grace = (try? await registry.inGrace()) ?? []
+            grace = (try? await registry.inGrace()) ?? grace
             // the chatting address and every used address of this wallet (IOS-085)
             if KachatNamesActions.shared.myKey != nil {
                 let own = try await KachatNamesActions.shared.ownNamesAndOffers(heldOnly: false)
@@ -1840,7 +1840,8 @@ struct KachatTxSheet<Inputs: View>: View {
             loadPayer: {
                 payerInfo = operation.flatMap { actions.payer(for: $0) }.map { KachatPayerInfo(address: $0.address, key: $0.key) }
                 guard let address = payerInfo?.address, address != actions.myAddress else { return }
-                let utxos = (try? await NodePoolService.shared.getUtxosByAddresses([address])) ?? []
+                // a failed read leaves the balance unknown, not 0
+                guard let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address]) else { return }
                 payerBalance = utxos.reduce(UInt64(0)) { $0 + $1.amount }
             },
             startOnBusyNetwork: {
@@ -2994,8 +2995,11 @@ struct KachatLiveNameDetail: View {
         if !ownedByWallet, let ownerAddress, let id = try? await registry.identity(address: ownerAddress) {
             ownerLabel = id.label
         }
-        history = (try? await registry.history(name: info.name)) ?? []
-        offers = Self.currentOffers((try? await registry.offers(for: info.name)) ?? [], owner: info.owner, history: history)
+        // a failed read keeps what's on screen: it isn't "no history" or "no offers"
+        history = (try? await registry.history(name: info.name)) ?? history
+        if let open = try? await registry.offers(for: info.name) {
+            offers = Self.currentOffers(open, owner: info.owner, history: history)
+        }
         if !offers.isEmpty {
             await actions.refreshVirtualDaa()
             // Expired offers don't stay on your name: the owner's app (and the buyer's) send
@@ -3791,263 +3795,6 @@ struct KachatSourceInput: Equatable {
     }
 }
 
-/// The address profile (KACHAT_NAMES.md section 7): where the avatar, banner and bio come from
-/// (a social profile link each - they can be different accounts), a Linktree link, and which of
-/// your names labels you - written as a `kchat:1:profile:` self-transfer. No free text and no
-/// uploads: what shows comes from a platform that moderates it.
-struct KachatLiveProfileEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var registry = KachatNamesRegistry.shared
-
-    /// Each piece's source: a platform from the picker plus the handle typed after its prefix.
-    @State private var avatarIn = KachatSourceInput()
-    @State private var bannerIn = KachatSourceInput()
-    @State private var bioIn = KachatSourceInput()
-    @State private var avatarLookup: KachatSocialLookup = .none
-    @State private var bannerLookup: KachatSocialLookup = .none
-    @State private var bioLookup: KachatSocialLookup = .none
-    @State private var linktree = ""
-    @State private var primary = ""
-    @State private var activeNames: [String] = []
-    @State private var loaded = false
-    @State private var showSave = false
-    @State private var showClear = false
-
-    private typealias Kind = KachatNames.SocialSource.Kind
-
-    private var profile: KachatNames.Profile {
-        var p = KachatNames.Profile()
-        p.avatar = avatarIn.source(.avatar)?.link
-        p.banner = bannerIn.source(.banner)?.link
-        p.bio = bioIn.source(.bio)?.link
-        p.linktree = KachatNames.Profile.linktreeLink(username: linktree)
-        p.primaryName = primary.isEmpty ? nil : primary
-        return p.sanitized()
-    }
-
-    /// A filled-in field whose lookup hasn't found what it shows (still looking, unreachable, or
-    /// nothing there). It doesn't block saving - a social site being slow or unreachable from
-    /// this phone must never stop a profile (or a primary name) from saving; the link is saved
-    /// as entered and every viewer's app looks it up itself. The editor just says so.
-    private func notReviewed(_ input: KachatSourceInput, _ lookup: KachatSocialLookup) -> Bool {
-        !input.isEmpty && lookup != .found
-    }
-
-    private var hasUncheckedLinks: Bool {
-        notReviewed(avatarIn, avatarLookup) || notReviewed(bannerIn, bannerLookup) || notReviewed(bioIn, bioLookup)
-    }
-
-    /// Only a malformed handle or Linktree username stops a save.
-    private var blocked: Bool {
-        avatarIn.isBad(.avatar) || bannerIn.isBad(.banner) || bioIn.isBad(.bio) || badLinktree
-    }
-
-    /// The Linktree field holds just the username (`linktr.ee/` is shown in front of it).
-    private var badLinktree: Bool {
-        let t = linktree.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !t.isEmpty && KachatNames.Profile.linktreeLink(username: t) == nil
-    }
-
-    /// Once one field's account is found, the empty fields take the same account where its
-    /// platform can fill them - one handle sets up the whole profile, and each stays editable.
-    private func fillEmpty(from input: KachatSourceInput) {
-        let fits = { (kind: Kind) in KachatNames.SocialSource.Platform.choices(for: kind).contains(input.platform) }
-        if avatarIn.isEmpty, fits(.avatar) { avatarIn = input }
-        if bannerIn.isEmpty, fits(.banner) { bannerIn = input }
-        if bioIn.isEmpty, fits(.bio) { bioIn = input }
-    }
-
-    /// Platform picker, the handle after the platform's prefix, and the preview of what it shows.
-    private func sourceField(_ input: Binding<KachatSourceInput>, _ kind: Kind, _ lookup: Binding<KachatSocialLookup>) -> some View {
-        Group {
-            Picker("Account on", selection: input.platform) {
-                ForEach(KachatNames.SocialSource.Platform.choices(for: kind), id: \.self) { p in
-                    Text(verbatim: p.displayName).tag(p)
-                }
-            }
-            .pickerStyle(.menu)
-            HStack(spacing: 0) {
-                Text(verbatim: input.wrappedValue.platform.prefix).foregroundColor(.secondary)
-                TextField(input.wrappedValue.platform == .discord ? LocalizedStringKey("invite") : LocalizedStringKey("handle"), text: input.handle)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .onChange(of: input.wrappedValue.handle) { _ in
-                        // A whole pasted link: switch the picker to its platform, keep the handle.
-                        if let pasted = input.wrappedValue.pastedSource(kind) {
-                            input.wrappedValue = KachatSourceInput(platform: pasted.platform, handle: pasted.displayHandle)
-                        }
-                    }
-                // One tap empties the field; saving then writes the profile without it.
-                if !input.wrappedValue.handle.isEmpty {
-                    Button {
-                        input.wrappedValue = KachatSourceInput()
-                        lookup.wrappedValue = .none
-                    } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text("Clear"))
-                }
-            }
-            // Only while the handle names an account: no empty row, and the lookup starts when it
-            // appears.
-            if let link = input.wrappedValue.source(kind)?.link {
-                KachatSocialPreview(link: link, kind: kind, lookup: lookup)
-            }
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Label {
-                        Text("Your profile belongs to your address, not to a name: it stays the same when you buy, sell or let a name go.")
-                            .font(.subheadline)
-                    } icon: {
-                        Image(systemName: "person.text.rectangle").foregroundColor(.accentColor)
-                    }
-                } footer: {
-                    Text("Each piece comes from a social profile you link, exactly as that platform shows it, so its moderation applies here too. You can use one account for all three, or mix them.")
-                }
-                Section {
-                    sourceField($avatarIn, .avatar, $avatarLookup)
-                } header: { Text("Avatar") } footer: {
-                    if avatarIn.isBad(.avatar) { invalidHandleNote }
-                }
-                Section {
-                    sourceField($bannerIn, .banner, $bannerLookup)
-                } header: { Text("Banner") } footer: {
-                    if bannerIn.isBad(.banner) { invalidHandleNote }
-                }
-                Section {
-                    sourceField($bioIn, .bio, $bioLookup)
-                } header: { Text("Bio") } footer: {
-                    if bioIn.isBad(.bio) { invalidHandleNote }
-                }
-                Section {
-                    HStack(spacing: 0) {
-                        Text(verbatim: "linktr.ee/").foregroundColor(.secondary)
-                        TextField("username", text: $linktree)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        if !linktree.isEmpty {
-                            Button {
-                                linktree = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(Text("Clear"))
-                        }
-                    }
-                } header: { Text("Links") } footer: {
-                    if badLinktree {
-                        Text("Enter your Linktree username: letters, numbers, dots, dashes or underscores.").foregroundColor(.red)
-                    } else {
-                        Text("Add your Linktree to point people to your other accounts and websites.")
-                    }
-                }
-                Section {
-                    // The primary name needs the registry: until it launches on this network
-                    // (mainnet) there's no name to pick, so the profile saves without one.
-                    if KachatNamesService.isLaunched {
-                        Picker("Primary name", selection: $primary) {
-                            Text("None").tag("")
-                            ForEach(activeNames, id: \.self) { n in Text(verbatim: "\(n).kachat").tag(n) }
-                        }
-                    } else {
-                        HStack {
-                            Text("Primary name")
-                            Spacer()
-                            Text("Coming soon").foregroundColor(.secondary)
-                        }
-                    }
-                } header: {
-                    Text(".kachat Name")
-                } footer: {
-                    if KachatNamesService.isLaunched {
-                        Text("KaChat shows you by your primary name while you own it and it's active; otherwise by your oldest active name, or your address.")
-                    } else {
-                        Text(".kachat names aren't on mainnet yet. Your avatar, banner, bio and links save now; you can pick a primary name once names launch.")
-                    }
-                }
-                Section {
-                    Button {
-                        showSave = true
-                    } label: {
-                        HStack { Spacer(); Text("Save Profile").font(.headline); Spacer() }
-                    }
-                    // Saves on every network: a profile is a self-send, with no registry behind it.
-                    .disabled(!loaded || blocked || !KachatNamesService.profilesEnabled)
-                } footer: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if hasUncheckedLinks {
-                            Text("Some links couldn't be checked from this phone right now. They're saved as entered, and people's apps load them when they can.")
-                        }
-                        Text("Saving writes your profile to the chain from your address to itself, for a network fee. Profiles are public.")
-                    }
-                }
-                Section {
-                    Button(role: .destructive) {
-                        showClear = true
-                    } label: {
-                        HStack { Spacer(); Text("Clear Profile").font(.headline); Spacer() }
-                    }
-                    // Same gate as saving: a clear IS a save, of the empty record.
-                    .disabled(!loaded || !KachatNamesService.profilesEnabled)
-                } footer: {
-                    Text("Clearing writes an empty profile to the chain from your address to itself, for a network fee, so KaChat shows nothing for your address again.")
-                }
-            }
-            .sheet(isPresented: $showSave) {
-                KachatProfileSaveSheet(title: "Save Profile", confirmTitle: "Save Profile", doneTitle: "Profile saved",
-                                       makeProfile: { profile }, onSaved: { dismiss() })
-            }
-            // The newest record is the whole profile, so the empty record IS "this address has
-            // nothing": the indexer and every app show nothing for it from then on.
-            .sheet(isPresented: $showClear) {
-                KachatProfileSaveSheet(title: "Clear Profile", confirmTitle: "Clear Profile", doneTitle: "Profile cleared",
-                                       makeProfile: { KachatNames.Profile() }, onSaved: { dismiss() })
-            }
-            .onChange(of: avatarLookup) { v in if v == .found { fillEmpty(from: avatarIn) } }
-            .onChange(of: bannerLookup) { v in if v == .found { fillEmpty(from: bannerIn) } }
-            .onChange(of: bioLookup) { v in if v == .found { fillEmpty(from: bioIn) } }
-            .navigationTitle("Edit KaChat Profile")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-            .task { await load() }
-        }
-    }
-
-    private var invalidHandleNote: some View {
-        Text("That doesn't look like a handle on this platform.").foregroundColor(.red)
-    }
-
-    private func load() async {
-        guard let address = KachatNamesActions.shared.myAddress else { loaded = true; return }
-        await registry.refreshIfStale()
-        // start from the newest profile, wherever it was saved (another device included)
-        await registry.syncOwnProfile(address: address)
-        var p = registry.ownProfile(for: address)?.profile
-        if p == nil { p = try? await registry.identity(address: address).profile }
-        if let p {
-            avatarIn = KachatSourceInput(stored: p.avatar, .avatar)
-            bannerIn = KachatSourceInput(stored: p.banner, .banner)
-            bioIn = KachatSourceInput(stored: p.bio, .bio)
-            linktree = KachatNames.Profile.linktreeUsername(p.linktree)
-        }
-        if let key = KachatNamesRegistry.keyOf(address) {
-            activeNames = ((try? await registry.names(owner: key, includeInactive: false)) ?? []).map(\.name)
-        }
-        if let pn = p?.primaryName, activeNames.contains(pn) { primary = pn }
-        loaded = true
-    }
-
-}
-
 /// Review before a profile record goes out - what will be saved, the network fee, the main
 /// address's balance before and after - the same confirmation every other name action shows.
 /// Used by Edit KaChat Profile and by Set as Primary.
@@ -4278,7 +4025,8 @@ final class KachatExpiredNamesModel: ObservableObject {
         await registry.refreshIfStale(maxAge: 300)
         let grace = registry.graceMs
         let now = KachatNames.nowMs()
-        let owned = (try? await registry.names(owner: me, includeInactive: true)) ?? []
+        // a failed read keeps the banner as it is
+        guard let owned = try? await registry.names(owner: me, includeInactive: true) else { return }
         let inGrace = owned.filter { $0.status(graceMs: grace, nowMs: now) == .grace }.sorted { $0.expiresAt < $1.expiresAt }
         // assigned only on a change: each assignment redraws the whole Profile scroll
         if inGrace != expired { expired = inGrace }

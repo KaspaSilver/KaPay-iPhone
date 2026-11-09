@@ -84,7 +84,7 @@ Every screen that moves Kaspa is the same steps, built from the shared pieces in
 `Views/Shared/SendKaspaComponents.swift`. Change those pieces, not one screen.
 
 1. **To**: `SendStepScreen` + `SendStepQuestion` ("Who are you sending to?") + `SendRecipientCard`
-   (address or name; Paste, Scan QR and Addresses pills under the field). Cancel sits at the
+   (address or name; Paste, Scan QR and Contacts pills under the field). Cancel sits at the
    bottom beside Continue (`SendContinueButton`) on a first step; later steps have Back and Cancel
    in the header (`SendStepHeader`).
 2. **From**: "Where are you sending from?": the Chatting Address and Choose an Address pills;
@@ -141,7 +141,8 @@ and are never erased automatically. Biometrics for Account Login is off by defau
 on existing installs, so a phone with no passcode can still see its account; the words, private keys and
 sends still need the phone's lock. A `.kachat` name resolves only if the chain holds its record
 (`confirmOnChain`), and Accept Offer checks the on-chain amount against what was shown.
-Every way of removing an account (Delete Account, the sign-in list's Delete, the recovery screen's
+A .kas commit is filed before it's sent (`KNSRevealRecovery`), and if its reveal never went out it
+is retried when the app becomes active, for an hour. Every way of removing an account (Delete Account, the sign-in list's Delete, the recovery screen's
 Remove) goes through `WalletManager.removeLocalData`: Cold Storage, Portfolio, contacts, bell history,
 .kachat reminders, spending-address files and keys, and the Nextcloud login, whose app password is
 revoked first. The Secure Enclave key goes only when no saved account and no Keychain snapshot remain.
@@ -158,12 +159,16 @@ fee error (either estimate; Try Again works it out again). The shown fee include
 (`WalletService.maxSendAmount`), and a Max amount is worked out again when the speed changes. At the
 swipe the send is rebuilt from that moment's coins; if it would pay more than the Review showed
 (`checkFeeAgainstReview`, 1,000 sompi margin) nothing is sent (`SendFeeChangedError`) and the
-Review re-estimates.
+Review re-estimates. The Review prices change at the script it will really go to: a primary's or
+quantum source's change goes to a fresh quantum slot (35 bytes, `reviewChangeScript`). Only the primary
+rotates there; another quantum source just lists the slot. The Receive QR's slot is never given to
+change, and a slot that has held change or spent isn't shown again.
 
 **Coins**: whatever `NodePoolService.submitTransaction` or `submitRpcTransaction(_:expectedTxId:)`
 sends (every send, .kas and .kachat names, combines, Cold Storage) stays out of the next send, Max
-and fee for two minutes (`WalletService.reserveOutpoints`, `unreservedUtxos`), on success and on an
-unknown outcome, and the UTXO cache is dropped; name sends pick only unreserved coins. Available,
+and fee for two minutes (`WalletService.reserveOutpoints`, `unreservedUtxos`), and the UTXO cache is
+dropped; name sends pick only unreserved coins. Not after "Not confirmed": a resend then picks the
+same coins, so at most one of the two can land. A `.kachat` commit resend likewise ignores the hold. Available,
 Compound and Coin Control count the coins a send can spend (`withdrawalSpendable` for the chatting
 address); Coin Control greys out the rest, and a selection whose coins are all gone is an error, not
 automatic. An address with more than `maxInputsPerTransaction` coins gets a Max (and a Compound) of
@@ -176,7 +181,9 @@ back. The same words on the other network are the same account (`isSameAccount`)
 waits in `signInFailureMessage` for the rebuilt accounts screen. The passphrase search gives up after
 12 s ("Skip the Search", Search Again). Every account's words item is tightened at launch. A new NFC
 PIN is typed twice, and a swapped card stops before a PIN try. The Passcode Required alert has its
-own window. A sheet picked from another sheet opens from that sheet's `onDismiss`. The privacy cover
+own window. A sheet picked from another sheet opens from that sheet's `onDismiss`.
+Every single-address page has one `AddressOptionsButton` at the top right, opening `AddressActionsSheet`:
+no View Public Key on a quantum address, no View Private Key on a Cold Storage address. The privacy cover
 has one window per scene (iPad windows). A submit that never left ("Not connected to", "Circuit
 breaker open") isn't a lost answer. `AppLog.log` cuts every address in a line to "…" and its last 8 characters (as KaChat).
 
@@ -234,7 +241,18 @@ breaker open") isn't a lost answer. `AppLog.log` cuts every address in a line to
 - `KachatNamesRegistry` reads .kachat names through `AppSettings.indexerURL` (Settings >
   Connection > Domains, editable so anyone can run their own indexer; blank = the network's
   default) while it serves this registry and keeps up, else walks the chain itself; the Domains
-  tab shows which.
+  tab shows which. An indexer that fails three requests in a row within two minutes
+  (`fromIndexer`, `indexerOutageConfirmed`) moves every read to the chain, market reads included; one
+  timeout only fails that read. The chain copy answers only
+  once a walk has reached the live UTXOs (`readChainState`, `reachedTip`): before that a read
+  fails, so a name never reads as free or unowned and saved names keep showing. While the indexer
+  is in use the copy is walked every 30 minutes (2 hours on an expensive connection). Without an
+  indexer, other people's profiles come from their own chain records (`chainProfile`). A failed read
+  never counts as "none": screens keep what they show, a typed name says it couldn't be looked up, and
+  a pending claim waits. `confirmOnChain` always checks the record's live UTXO: a chain copy can be hours old. Anything that
+  spends or withdraws on a registry answer first asks `answersAreCurrent`. After a failover the indexer
+  isn't tried again for 2 minutes, doubling to 15, until one of its data reads works.
+  Balances, coins, sends, open-app receive notices and Portfolio never touch the indexer; push does.
 - `AppSettings` (`Models/Models.swift`) holds only wallet settings; a blob from an older build
   (with KaChat's chat settings) still decodes, every field falling back to its default.
 
@@ -292,7 +310,7 @@ through `primary_address` alone. Registration and updates are signed like KaChat
 has no notification extension); a tap routes by its `type` and `name`. Settings > Notifications is one page:
 Push Notifications, Address Activity, sound, vibration. It asks for notification permission once, when
 its tabs first show. Entitlements carry `aps-environment` (development / production). The service
-still has to send on the wallet's topic and skip chat pushes for it: see `PUSH_SERVICE.md`.
+sends on the wallet's topic and skips chat pushes for it: see `PUSH_SERVICE.md`.
 
 ## Server hand-offs
 

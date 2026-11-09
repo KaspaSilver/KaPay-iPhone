@@ -672,6 +672,9 @@ extension KachatNames {
         var events: [Event]
         /// when the live set was last confirmed against a node (unix ms)
         var verifiedAt: Int64?
+        /// A walk has reached the live UTXOs at least once. Until then this copy is only part of
+        /// the registry: a name missing from it may well exist, so nothing is answered from it.
+        var reachedTip: Bool? = nil
 
         /// The genesis: the lone genesis gap.
         static func atGenesis(_ m: Manifest) -> RegistryState {
@@ -1213,6 +1216,10 @@ extension KachatNames.RegistryState {
         /// a tracked UTXO was spent by a transaction this state already applied: the state is
         /// inconsistent (the caller walks again from the genesis)
         var stale = false
+        /// every tracked UTXO was still live: the state is the registry as it stands
+        var reachedTip = false
+        /// `maxRounds` ended the walk with more to do (the caller walks on)
+        var ranOutOfRounds = false
     }
 
     /// Moves the state forward to the chain's current registry. `live(addresses)` answers which
@@ -1244,6 +1251,7 @@ extension KachatNames.RegistryState {
             let spent = byAddress.flatMap { a, ops in ops.filter { !unspent.contains($0) }.map { (a, $0) } }
             if spent.isEmpty {
                 report.unresolved = []
+                report.reachedTip = true
                 return report
             }
             var candidates: [String: KachatNames.TxView] = [:]
@@ -1299,6 +1307,7 @@ extension KachatNames.RegistryState {
             }
             sortEventsByTime()
         }
+        report.ranOutOfRounds = true
         return report
     }
 

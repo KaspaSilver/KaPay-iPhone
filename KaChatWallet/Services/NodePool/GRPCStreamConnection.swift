@@ -49,7 +49,12 @@ struct PendingRequest {
     var continuation: CheckedContinuation<Protowire_KaspadMessage, Error>?
     let sentAt: Date
     let timeout: TimeInterval
-    let timeoutTask: Task<Void, Never>
+    var timeoutTask: Task<Void, Never>
+    /// The caller has had its timeout; the entry stays for `lateResponseGrace` to absorb the
+    /// node's late answer (see `handleTimeout`).
+    var timedOut = false
+    /// The connection it was sent on: once that stream is gone no late answer can come.
+    var generation = 0
 
     var isExpired: Bool {
         Date().timeIntervalSince(sentAt) > timeout
@@ -217,14 +222,15 @@ actor GRPCStreamConnection {
     private var consecutiveSuccesses: Int = 0
     private var consecutiveFailures: Int = 0
 
-    /// Recently timed-out request types (to silently ignore late responses)
-    private var recentlyTimedOutTypes: Set<KaspaRequestType> = []
+    /// How long a timed-out request keeps its type's slot, waiting for the node's late answer.
+    private let lateResponseGrace: TimeInterval = 5
 
     /// Connection timestamp
     private var connectedAt: Date?
 
-    /// Bumped on every successful (re)connect. A gRPC stream's server-side notification
-    /// subscriptions (notifyUtxosChanged / notifyBlockAdded) die with the stream - they are
+    /// Bumped on every (re)connect attempt and every `disconnect()`, so it also tells a gRPC
+    /// callback whether the stream it came from is still the current one. A gRPC stream's
+    /// server-side notification subscriptions (notifyUtxosChanged / notifyBlockAdded) die with the stream - they are
     /// NOT carried over when this connection transparently self-reconnects (`scheduleAutoReconnect`,
     /// `GRPCConnectionPool.reconnectDisconnected`). Subscribers record the generation they
     /// subscribed on and compare against this to know the subscription must be re-sent.
@@ -239,6 +245,12 @@ actor GRPCStreamConnection {
     /// hammered with a new attempt every ~100ms-1s indefinitely, which risks perpetuating
     /// exactly the resource pressure causing the rejections in the first place.
     private var reconnectAttempts: Int = 0
+
+    /// The sleeping or running self-reconnect, which a deliberate `disconnect()` calls off.
+    private var autoReconnectTask: Task<Void, Never>?
+
+    /// The stream ended while its connect was still waiting for the connection to be ready.
+    private var streamClosedWhileConnecting = false
 
     // MARK: - Initialization
 
@@ -270,8 +282,8 @@ actor GRPCStreamConnection {
 
     // MARK: - Connection Lifecycle
 
-    /// Connection timeout in seconds
-    private let connectionTimeout: TimeInterval = 3.0
+    /// Connection timeout in seconds: TCP, TLS and HTTP/2 setup on a slow cellular link must fit.
+    private let connectionTimeout: TimeInterval = 5.0
 
     /// The connect running now, which a second caller joins.
     private var connectingTask: Task<Void, Error>?
@@ -283,7 +295,12 @@ actor GRPCStreamConnection {
     func connect() async throws {
         if state == .connected { return }
         if state == .connecting, let running = connectingTask {
-            try await running.value
+            do {
+                try await running.value
+            } catch is CancellationError where !Task.isCancelled {
+                // the caller who started that connect lost its hedged race, and this one didn't
+                try await connect()
+            }
             return
         }
         guard state == .disconnected else {
@@ -291,13 +308,22 @@ actor GRPCStreamConnection {
         }
 
         state = .connecting
-        let task = Task { try await self.connectWithTimeout() }
+        connectionGeneration += 1
+        streamClosedWhileConnecting = false
+        let generation = connectionGeneration
+        let task = Task { try await self.connectWithTimeout(generation: generation) }
         connectingTask = task
         defer { if connectingTask == task { connectingTask = nil } }
-        try await task.value
+        // A hedged request that lost the race is awaited by its group, so it must not sit out
+        // the connect timeout here.
+        try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
-    private func connectWithTimeout() async throws {
+    private func connectWithTimeout(generation: Int) async throws {
         // Use a task with timeout for the connection
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
@@ -309,7 +335,7 @@ actor GRPCStreamConnection {
 
                 // Actual connection task
                 group.addTask {
-                    try await self.performConnect()
+                    try await self.performConnect(generation: generation)
                 }
 
                 // Wait for first to complete (success or timeout)
@@ -317,36 +343,57 @@ actor GRPCStreamConnection {
                 group.cancelAll()
             }
 
+            // disconnect() ran during the wait and has closed this attempt.
+            guard generation == connectionGeneration else {
+                throw KasiaError.networkError("Connection closed")
+            }
+            // Refused before the connect finished (see handleStreamClosed).
+            if streamClosedWhileConnecting {
+                throw KasiaError.networkError("Stream closed during connect")
+            }
+
+            // The breaker and reconnectAttempts are left alone until the node really answers
+            // (handleResponse): a connection that opens says nothing about a stream it refuses.
             state = .connected
             connectedAt = Date()
-            connectionGeneration += 1
             lastActivityAt = Date()
-            circuitBreaker.reset()
-            reconnectAttempts = 0
 
             // Suppress noisy connection logs
 
         } catch {
+            // disconnect() closed this attempt already; a newer connect may own the channel now.
+            guard generation == connectionGeneration else { throw error }
+
             state = .disconnected
-            circuitBreaker.recordFailure()
+            // A caller walking away (a hedged request that lost) says nothing about the node.
+            if !(error is CancellationError) {
+                circuitBreaker.recordFailure()
+            }
             // Clean up partial connection state (channel only - group is shared)
             stream?.sendEnd(promise: nil)
             stream = nil
-            // Properly close the channel and wait for completion to prevent leaks
-            if let ch = channel {
+            // Properly close the channel and wait for completion to prevent leaks. Taken off the
+            // property first: a new connect can start during the await.
+            let ch = channel
+            channel = nil
+            if let ch {
                 _ = try? await ch.close().get()
             }
-            channel = nil
             throw error
         }
     }
 
     /// Internal connection logic (separated for timeout handling)
-    private func performConnect() async throws {
+    private func performConnect(generation: Int) async throws {
+        // disconnect() got in before this task started: a socket opened now would be orphaned.
+        guard generation == connectionGeneration else {
+            throw KasiaError.networkError("Connection closed")
+        }
+
         // Use ClientConnection instead of GRPCChannelPool to avoid retain cycle memory leaks
         // GRPCChannelPool.with() creates internal ConnectionManager/ConnectionPool objects
         // that have retain cycles (connectivityDelegate -> CYCLE BACK) and never get released
-        let channel: GRPCChannel
+        let channel: ClientConnection
         if endpoint.secure {
             // TLS-terminated nodes (e.g. Kaspium's own - see Endpoint.secure's doc comment)
             // reject plaintext HTTP/2 entirely, so a plain .insecure() connection to one of
@@ -366,7 +413,7 @@ actor GRPCStreamConnection {
         // Start bidirectional stream with response handler
         let stream = client.messageStream { [weak self] response in
             Task {
-                await self?.handleResponse(response)
+                await self?.handleResponse(response, generation: generation)
             }
         }
         self.stream = stream
@@ -374,13 +421,37 @@ actor GRPCStreamConnection {
         // Monitor stream status to detect when server closes connection
         stream.status.whenComplete { [weak self] result in
             Task {
-                await self?.handleStreamClosed(result: result)
+                await self?.handleStreamClosed(result: result, generation: generation)
             }
+        }
+
+        // ClientConnection connects lazily and starting the call above returns at once, so wait
+        // here (under the timeout) for the connection to really be up. A first failure ends the
+        // attempt: the caller has other nodes, and grpc-swift's own retries end with the close.
+        while true {
+            switch channel.connectivity.state {
+            case .ready:
+                return
+            case .transientFailure, .shutdown:
+                throw KasiaError.networkError("Connection failed")
+            case .idle, .connecting:
+                break
+            }
+            try await Task.sleep(nanoseconds: 25_000_000)
         }
     }
 
     /// Handle stream being closed (by server or error)
-    private func handleStreamClosed(result: Result<GRPCStatus, Error>) {
+    private func handleStreamClosed(result: Result<GRPCStatus, Error>, generation: Int) {
+        // The close of an older stream says nothing about the one running now.
+        guard generation == connectionGeneration else { return }
+
+        // Dead before its connect finished: the connect reports that as a failure.
+        if state == .connecting {
+            streamClosedWhileConnecting = true
+            return
+        }
+
         // Only process if we think we're connected
         guard state == .connected else { return }
 
@@ -416,6 +487,11 @@ actor GRPCStreamConnection {
             }
         }
 
+        // No late answer can come on a stream that is gone: don't let the next stream wait for one.
+        for pending in pendingRequests.values where pending.timedOut {
+            forgetTimedOutRequest(pending)
+        }
+
         scheduleAutoReconnect()
     }
 
@@ -426,14 +502,15 @@ actor GRPCStreamConnection {
     /// happened to pick that exact endpoint for a request - which could take a while, or never
     /// happen before a hedge round already exhausted its (small) candidate list and failed.
     ///
-    /// Only reached from `handleStreamClosed`, which already guards on `state == .connected` at
+    /// Only started from `handleStreamClosed` (its own retry aside), which already guards on `state == .connected` at
     /// the time of the unexpected drop - a deliberate `disconnect()` call sets `state` to
     /// `.disconnected` itself first, so `handleStreamClosed`'s guard fails and this never fires
     /// for intentional disconnects (pool teardown, wallet switch, etc).
     private func scheduleAutoReconnect() {
         reconnectAttempts += 1
         let attempt = reconnectAttempts
-        Task { [weak self] in
+        autoReconnectTask?.cancel()
+        autoReconnectTask = Task { [weak self] in
             guard let self else { return }
             // First attempt: small jitter only, in case many connections drop in the same
             // instant (observed: ~20+ sockets aborting within the same second on a network path
@@ -449,14 +526,32 @@ actor GRPCStreamConnection {
                 delaySeconds = backoff + Double.random(in: 0...0.3) * backoff
             }
             try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
-            guard await self.state == .disconnected else { return }
-            try? await self.connect()
+            guard !Task.isCancelled, await self.state == .disconnected else { return }
+            do {
+                try await self.connect()
+            } catch {
+                // connect() can really fail now that it waits for the connection: keep trying
+                // on the backoff until the node answers or disconnect() calls this off.
+                guard !Task.isCancelled else { return }
+                await self.scheduleAutoReconnect()
+            }
         }
     }
 
     /// Disconnect from the endpoint
     func disconnect() async {
+        // Before the guard: a self-reconnect sleeping out its backoff has state == .disconnected.
+        autoReconnectTask?.cancel()
+        autoReconnectTask = nil
+
         guard state != .disconnected else { return }
+
+        // Before the first await, so a stream close landing during it can't look like an
+        // unexpected drop and schedule a reconnect. The new generation ends any connect under way.
+        state = .disconnected
+        connectedAt = nil
+        reconnectAttempts = 0
+        connectionGeneration += 1
 
         // Cancel all pending requests
         for (_, pending) in pendingRequests {
@@ -471,15 +566,13 @@ actor GRPCStreamConnection {
         stream?.sendEnd(promise: nil)
         stream = nil
 
-        // Properly close the channel and wait for completion to prevent leaks
-        if let ch = channel {
+        // Properly close the channel and wait for completion to prevent leaks. Taken off the
+        // property first: a new connect can start during the await.
+        let ch = channel
+        channel = nil
+        if let ch {
             _ = try? await ch.close().get()
         }
-        channel = nil
-
-        state = .disconnected
-        connectedAt = nil
-        reconnectAttempts = 0
 
         AppLog.log("[GRPCStream] Disconnected from %@", endpoint.key)
     }
@@ -498,7 +591,7 @@ actor GRPCStreamConnection {
         timeout: TimeInterval
     ) async throws -> Protowire_KaspadMessage {
         // Check connection first
-        guard let stream = stream, state == .connected else {
+        guard stream != nil, state == .connected else {
             // Only check circuit breaker if not connected
             guard circuitBreaker.checkState() else {
                 throw KasiaError.networkError("Circuit breaker open for \(endpoint.key)")
@@ -525,10 +618,11 @@ actor GRPCStreamConnection {
             throw CancellationError()
         }
 
-        // The connection can drop while this caller sat in the slot queue: the `stream` the guard
-        // above captured is then a dead handle, and sending on it would register a request that
-        // only its timeout ever cleans up. Fail the same way as a never-connected call instead.
-        guard state == .connected, self.stream != nil else {
+        // The connection can drop while this caller sat in the slot queue, and may be back on a
+        // new stream by now, so the stream is read only here: sending on a dead one would register
+        // a request that only its timeout ever cleans up, and its send failure would then take
+        // the new stream down. With no stream, fail the same way as a never-connected call.
+        guard state == .connected, let stream = self.stream else {
             reservedTypes.remove(type)
             releaseTypeSlot(type)
             throw KasiaError.networkError("Not connected to \(endpoint.key)")
@@ -539,6 +633,7 @@ actor GRPCStreamConnection {
         let requestId = requestIdCounter
 
         let startTime = Date()
+        let generation = connectionGeneration
 
         // Cancellation stops the CALLER waiting; it does not touch the wire. Responses are
         // matched FIFO by type (see `awaitTypeSlot`), so pulling a cancelled request out of its
@@ -570,6 +665,7 @@ actor GRPCStreamConnection {
                     timeoutTask: timeoutTask
                 )
                 pendingRequests[requestId] = pending
+                pendingRequests[requestId]?.generation = connectionGeneration
 
                 // Add to type queue, handing the reservation over to the queue entry itself.
                 if requestQueues[type] == nil {
@@ -584,7 +680,7 @@ actor GRPCStreamConnection {
 
                 promise.futureResult.whenFailure { [weak self] error in
                     Task {
-                        await self?.handleSendFailure(requestId: requestId, error: error)
+                        await self?.handleSendFailure(requestId: requestId, error: error, generation: generation)
                     }
                 }
 
@@ -608,7 +704,13 @@ actor GRPCStreamConnection {
     }
 
     /// Handle incoming response
-    private func handleResponse(_ message: Protowire_KaspadMessage) {
+    private func handleResponse(_ message: Protowire_KaspadMessage, generation: Int) {
+        // From a stream since replaced: it could only be matched to a request it doesn't answer.
+        guard generation == connectionGeneration else { return }
+
+        // The node really is talking on this stream, so the reconnect backoff can start over.
+        reconnectAttempts = 0
+
         // Check for notifications first
         if let payload = message.payload {
             switch payload {
@@ -642,11 +744,8 @@ actor GRPCStreamConnection {
             if let knownType = responseType {
                 circuitBreaker.recordSuccess()
 
-                // Silently ignore late responses for recently timed-out requests
-                if !recentlyTimedOutTypes.contains(knownType) {
-                    // Unexpected unmatched response - log for debugging
-                    AppLog.log("[GRPCStream] Unmatched response on %@: %@", endpoint.key, String(describing: knownType))
-                }
+                // Unexpected unmatched response - log for debugging
+                AppLog.log("[GRPCStream] Unmatched response on %@: %@", endpoint.key, String(describing: knownType))
             }
             return
         }
@@ -683,28 +782,26 @@ actor GRPCStreamConnection {
 
     /// Handle request timeout
     private func handleTimeout(requestId: UInt64) {
-        guard let pending = pendingRequests.removeValue(forKey: requestId) else {
+        guard let pending = pendingRequests[requestId] else {
             return
         }
 
-        // Remove from type queue
-        if var queue = requestQueues[pending.type] {
-            queue.removeAll { $0 == requestId }
-            if queue.isEmpty {
-                requestQueues.removeValue(forKey: pending.type)
-            } else {
-                requestQueues[pending.type] = queue
-            }
+        // Second firing: the grace below is over and the node never answered.
+        if pending.timedOut {
+            forgetTimedOutRequest(pending)
+            return
         }
-        releaseTypeSlot(pending.type)
 
-        // Track this type as recently timed out (to silently ignore late responses)
-        recentlyTimedOutTypes.insert(pending.type)
-
-        // Clear the timeout tracking after a delay
-        Task {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)  // 5 seconds
-            recentlyTimedOutTypes.remove(pending.type)
+        // Responses are matched FIFO by type, so a node's late answer would go to the next request
+        // of this type. The entry stays queued, holding the type's slot, for a while: a late answer
+        // is then matched to it and dropped, as the caller is gone.
+        pendingRequests[requestId]?.timedOut = true
+        pendingRequests[requestId]?.continuation = nil
+        pendingRequests[requestId]?.timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: UInt64(lateResponseGrace * 1_000_000_000))
+            if !Task.isCancelled {
+                self.handleTimeout(requestId: requestId)
+            }
         }
 
         // Record failure
@@ -713,13 +810,30 @@ actor GRPCStreamConnection {
         circuitBreaker.recordFailure()
 
         pending.continuation?.resume(throwing: KasiaError.networkError("Request timeout"))
+        if pending.generation != connectionGeneration { forgetTimedOutRequest(pending) }
 
         AppLog.log("[GRPCStream] Request timeout on %@ (type: %@)",
               endpoint.key, String(describing: pending.type))
     }
 
+    /// Drops a timed-out request kept for its late answer and frees its type's slot.
+    private func forgetTimedOutRequest(_ pending: PendingRequest) {
+        pendingRequests.removeValue(forKey: pending.id)
+        pending.timeoutTask.cancel()
+
+        if var queue = requestQueues[pending.type] {
+            queue.removeAll { $0 == pending.id }
+            if queue.isEmpty {
+                requestQueues.removeValue(forKey: pending.type)
+            } else {
+                requestQueues[pending.type] = queue
+            }
+        }
+        releaseTypeSlot(pending.type)
+    }
+
     /// Handle send failure
-    private func handleSendFailure(requestId: UInt64, error: Error) {
+    private func handleSendFailure(requestId: UInt64, error: Error, generation: Int) {
         guard let pending = pendingRequests.removeValue(forKey: requestId) else {
             return
         }
@@ -744,8 +858,10 @@ actor GRPCStreamConnection {
 
         // Check if the error indicates the stream is dead (AlreadyComplete, closed, etc.)
         // If so, mark connection as disconnected to force reconnection on retry
+        // (Of the stream this request went out on: a newer one is not the one that died.)
         let errorDesc = String(describing: error).lowercased()
-        if errorDesc.contains("alreadycomplete") ||
+        if generation == connectionGeneration,
+           errorDesc.contains("alreadycomplete") ||
            errorDesc.contains("already complete") ||
            errorDesc.contains("connection closed") ||
            errorDesc.contains("stream closed") {

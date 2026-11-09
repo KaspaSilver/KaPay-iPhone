@@ -555,6 +555,8 @@ final class PushNotificationManager: ObservableObject {
     private func runWatchedUpdate(fromDebounceTask: Bool = false) async {
         guard let token = deviceToken, isRegistered else {
             updateWatchedPending = false
+            // or every later update would see a task "still running" and wait behind it for good
+            if fromDebounceTask { updateWatchedTask = nil }
             return
         }
         // CRITICAL: when running INSIDE the debounce task, do NOT cancel it - cancelling the very

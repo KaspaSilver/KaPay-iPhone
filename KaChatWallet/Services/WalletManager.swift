@@ -106,6 +106,8 @@ final class WalletManager: ObservableObject {
             // updates keep the address and skip this.
             if oldValue?.publicAddress != currentWallet?.publicAddress {
                 GlobalNotificationCenter.shared.reload()
+                // the Receive QR's head start was for the previous account
+                ReceiveAddressWarmCache.address = nil
             }
         }
     }
@@ -491,14 +493,18 @@ final class WalletManager: ObservableObject {
         return wallet
     }
 
-    /// - Parameter removeRemoteBackup: also delete the encrypted archive on the user's
-    ///   Nextcloud. Off unless the user picked the option that names it.
-    func deleteWallet(removeRemoteBackup: Bool = false) async throws {
+    func deleteWallet() async throws {
         // The recovery screen's Remove: only while its account is still the one in the active
         // slot with no keys behind it. A recovery left over from before an import (or keys back
         // since) would otherwise erase a working account's keys.
         if currentWallet == nil, let stale = walletNeedingKeyRecovery {
             let stored = try? keychainService.loadWallet()
+            // A copy of the keys that failed to read at launch (the phone was locked) may read
+            // now: erasing it would lose what could still have been restored.
+            if let stored, Self.isSameAccount(stored.publicAddress, stale.publicAddress),
+               case .missing = keychainService.keyMaterialStatus() {
+                _ = restoreKeysFromSnapshot(for: stored)
+            }
             guard case .missing = keychainService.keyMaterialStatus(),
                   let stored, Self.isSameAccount(stored.publicAddress, stale.publicAddress) else {
                 walletNeedingKeyRecovery = nil
@@ -510,13 +516,7 @@ final class WalletManager: ObservableObject {
         walletNeedingKeyRecovery = nil
 
         // Unregister from push notifications before clearing wallet
-        await PushNotificationManager.shared.unregister()
-
-        // The user's Nextcloud archive, if asked, while the credentials still exist to
-        // authenticate with. The app password goes with the rest of the account's data.
-        if removeRemoteBackup, NextcloudService.shared.isConnected {
-            try await NextcloudService.shared.deleteRemoteBackup()
-        }
+        await unregisterPushBriefly()
 
         if let walletAddressToDelete {
             await removeLocalData(forAccount: walletAddressToDelete)
@@ -568,7 +568,7 @@ final class WalletManager: ObservableObject {
     func logout() async {
         guard let wallet = currentWallet else { return }
 
-        await PushNotificationManager.shared.unregister()
+        await unregisterPushBriefly()
         WalletService.shared.stopPolling()
         resetInMemoryStateForAccountSwitch()
 
@@ -702,7 +702,7 @@ final class WalletManager: ObservableObject {
             return
         }
 
-        await PushNotificationManager.shared.unregister()
+        await unregisterPushBriefly()
         WalletService.shared.stopPolling()
 
         // Remove the stored wallet's local data, then clear local key material.
@@ -736,9 +736,42 @@ final class WalletManager: ObservableObject {
         NotificationCenter.default.post(name: .settingsDidChange, object: nil)
     }
 
+    /// A locked launch couldn't read the keys' saved copy, so the recovery screen came up: the app
+    /// is in front now, so that copy is tried again before anyone is asked for their words.
+    func retryKeyRecoveryIfNeeded() async {
+        guard currentWallet == nil, let wallet = walletNeedingKeyRecovery,
+              case .missing = keychainService.keyMaterialStatus(),
+              restoreKeysFromSnapshot(for: wallet) else { return }
+        walletNeedingKeyRecovery = nil
+        await loadWallet(force: true)
+    }
+
+    /// Telling the push service this device is leaving, for at most a few seconds: on a server
+    /// that hangs, a Log Out or Delete would otherwise sit for over a minute with nothing on
+    /// screen. The request carries on in the background; it's best effort either way.
+    private func unregisterPushBriefly() async {
+        final class Once { var done = false }
+        let once = Once()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let finish = { @MainActor in
+                guard !once.done else { return }
+                once.done = true
+                continuation.resume()
+            }
+            Task { @MainActor in
+                await PushNotificationManager.shared.unregister()
+                finish()
+            }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                finish()
+            }
+        }
+    }
+
     /// Everything an account keeps on this device besides its keys, on both networks' addresses
     /// (mainnet and testnet keep its data under different ones): what removing it has to take.
-    /// The app password KaPay made on the user's Nextcloud is revoked first, while its login still
+    /// The app password the user connected Nextcloud with is revoked first, while its login still
     /// exists to authenticate with. Leaves Cold Storage and the Portfolio on no wallet.
     private func removeLocalData(forAccount publicAddress: String) async {
         for address in Self.accountAddressVariants(publicAddress) {
@@ -755,6 +788,13 @@ final class WalletManager: ObservableObject {
             AddressBookManager.shared.removeAllData(forWalletAddress: address)
             GlobalNotificationCenter.removeAllData(forWalletAddress: address)
             Self.removeSpendingData(forAccount: address)
+            // what else this device filed under the address
+            let defaults = UserDefaults.standard
+            for key in [balanceCacheKey(for: address), "kachat_account_added_at.\(address)", chattingIndexKey(for: address),
+                        walletSourceFamilyKey(for: address), "kachat_show_setup_guides_\(address)"] {
+                defaults.removeObject(forKey: key)
+            }
+            keychainService.deleteAllKachatCommitSalts(walletAddress: address)
         }
         ColdStorageManager.shared.setCurrentWallet(nil)
         PortfolioManager.shared.setCurrentWallet(nil)

@@ -324,6 +324,8 @@ final class AddressActivityNotifier: ObservableObject {
         // funds is worse than a rare stray ping.
 
         guard !handledTxIds.contains(txId) else { return }
+        // the lookup above can take a while: an answer for an account no longer signed in is dropped
+        guard WalletManager.shared.currentWallet?.publicAddress == walletAddress else { return }
         markHandled(txId: txId, wallet: walletAddress)
 
         if !isSelfSend, pushShowsReceive(blockTimeMs: nil) {

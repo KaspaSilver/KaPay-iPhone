@@ -2192,6 +2192,10 @@ struct ColdStorageAddressTransactionHistoryView: View {
     @State private var showReceiveSheet = false
     @State private var showSendSheet = false
     @State private var showCompoundSheet = false
+    @State private var showAddressActions = false
+    @State private var showPublicKeySheet = false
+    /// What the Address Actions row picked opens, once that sheet has finished closing.
+    @State private var afterAddressActions: (() -> Void)?
     @State private var utxoLabels: [String: String] = [:]
     @State private var renamingUtxo: UTXO?
     @State private var renameUtxoText = ""
@@ -2236,12 +2240,32 @@ struct ColdStorageAddressTransactionHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                if let url = settingsViewModel.settings.kaspaExplorer.addressURL(for: entry.address) {
-                    Link(destination: url) {
-                        Image(systemName: "globe")
-                    }
-                }
+                AddressOptionsButton { showAddressActions = true }
             }
+        }
+        .sheet(isPresented: $showAddressActions, onDismiss: {
+            let next = afterAddressActions
+            afterAddressActions = nil
+            next?()
+        }) {
+            // no View Private Key: a cold address's key stays on the signer
+            let sheet = AddressActionsSheet(
+                explorerURL: settingsViewModel.settings.kaspaExplorer.addressURL(for: entry.address),
+                onViewPublicKey: {
+                    afterAddressActions = { showPublicKeySheet = true }
+                    showAddressActions = false
+                },
+                onViewInExplorer: { url in
+                    showAddressActions = false
+                    UIApplication.shared.open(url)
+                }
+            )
+            sheet
+                .presentationDetents([.height(sheet.height)])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showPublicKeySheet) {
+            AddressPublicKeyView(address: entry.address, note: "This is the public half of this address. It cannot spend anything.")
         }
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 12) {

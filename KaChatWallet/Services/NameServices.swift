@@ -420,6 +420,10 @@ final class NameServicesClient: ObservableObject {
         if wanted == .kachat, results.contains(where: { $0.tld == .kachat && $0.notLive }) || !NameServiceTLD.kachat.isLive {
             return String(localized: ".kachat names aren't live on this network yet")
         }
+        // the service couldn't be asked: that says nothing about whether the name exists
+        if results.contains(where: { $0.tld == wanted && $0.failed }) {
+            return String(localized: "Couldn't look up \(wanted.suffix) right now. Try again in a moment.")
+        }
         return String(localized: "No \(wanted.suffix) domain found")
     }
 

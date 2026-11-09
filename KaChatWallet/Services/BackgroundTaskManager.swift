@@ -2,7 +2,7 @@ import Foundation
 import BackgroundTasks
 import UserNotifications
 
-/// Manages background fetch tasks for checking new messages when app is in background
+/// Manages the background fetch task that refreshes the balance while the app is in the background
 @MainActor
 final class BackgroundTaskManager {
     static let shared = BackgroundTaskManager()

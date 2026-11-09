@@ -216,6 +216,25 @@ final class KeychainService {
         try deleteSensitiveDataRaw(keyName: Self.kachatSaltKeyName(id: id, walletAddress: walletAddress))
     }
 
+    /// Every pending .kachat commit salt of a wallet: its account is being removed.
+    func deleteAllKachatCommitSalts(walletAddress: String) {
+        let prefix = "kachat_names_commit_salt_\(Self.walletHashSuffix(walletAddress.lowercased()))_"
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName,
+            kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return }
+        for item in items {
+            guard let account = item[kSecAttrAccount as String] as? String, account.hasPrefix(prefix) else { continue }
+            try? deleteSensitiveDataRaw(keyName: account)
+        }
+    }
+
     private static func kachatSaltKeyName(id: String, walletAddress: String) -> String {
         "kachat_names_commit_salt_\(walletHashSuffix(walletAddress.lowercased()))_\(id)"
     }
@@ -422,16 +441,7 @@ final class KeychainService {
         let deviceId = try deviceIdentifier()
         let keyName = "\(baseKey.rawValue).\(deviceId)"
 
-        // Wrap with Secure Enclave
-        let wrapped: Data
-        if let wrappedData = tryWrapPrivateKey(data) {
-            wrapped = wrappedData
-        } else {
-            // Fallback to raw storage if SE unavailable
-            wrapped = data
-        }
-
-        try saveSensitiveDataRaw(wrapped, keyName: keyName, accessible: Self.accessibility(for: baseKey))
+        try saveSensitiveDataRaw(try wrappedForStorage(data), keyName: keyName, accessible: Self.accessibility(for: baseKey))
     }
 
     /// The words and passphrase are readable only while the phone is unlocked: nothing that runs in
@@ -448,9 +458,24 @@ final class KeychainService {
         seedTighteningLock.unlock()
         guard isNew else { return }
         let update = [kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly] as CFDictionary
+        var moved = false
         for includeAccessGroup in [true, false] {
-            SecItemUpdate(genericPasswordQueryForKey(keyName, includeAccessGroup: includeAccessGroup) as CFDictionary, update)
+            let status = SecItemUpdate(genericPasswordQueryForKey(keyName, includeAccessGroup: includeAccessGroup) as CFDictionary, update)
+            if status == errSecSuccess { moved = true }
         }
+        // refused (a locked phone, say): tried again on the next read or launch
+        if !moved {
+            seedTighteningLock.lock()
+            tightenedSeedItems.remove(keyName)
+            seedTighteningLock.unlock()
+        }
+    }
+
+    /// The private key filed for a saved account (`privateKey.<device>.<address>`), as against the
+    /// signed-in account's own (`privateKey.<device>`), which push sign-in reads while locked.
+    private func isSavedAccountPrivateKey(_ account: String) -> Bool {
+        guard let deviceId = try? deviceIdentifier() else { return false }
+        return account.hasPrefix("\(KeychainKey.privateKey.rawValue).\(deviceId).")
     }
 
     /// Every saved account's words item onto the unlocked-only rule, at launch: one is otherwise
@@ -467,9 +492,11 @@ final class KeychainService {
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
               let items = result as? [[String: Any]] else { return }
         for item in items {
-            guard let account = item[kSecAttrAccount as String] as? String,
-                  account.hasPrefix(KeychainKey.seedPhrase.rawValue) else { continue }
-            tightenSeedItem(keyName: account)
+            guard let account = item[kSecAttrAccount as String] as? String else { continue }
+            // a saved account's private key too: only the signed-in account's is read while locked
+            if account.hasPrefix(KeychainKey.seedPhrase.rawValue) || isSavedAccountPrivateKey(account) {
+                tightenSeedItem(keyName: account)
+            }
         }
     }
 
@@ -500,14 +527,19 @@ final class KeychainService {
     private func saveSensitiveDataForAccount(_ data: Data, baseKey: KeychainKey, publicAddress: String) throws {
         let keyName = try accountScopedKeyName(baseKey: baseKey, publicAddress: publicAddress)
 
-        let wrapped: Data
-        if let wrappedData = tryWrapPrivateKey(data) {
-            wrapped = wrappedData
-        } else {
-            wrapped = data
-        }
+        // Only the signed-in account's private key is read while the phone is locked (push sign-in).
+        try saveSensitiveDataRaw(try wrappedForStorage(data), keyName: keyName, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+    }
 
-        try saveSensitiveDataRaw(wrapped, keyName: keyName, accessible: Self.accessibility(for: baseKey))
+    /// `data` wrapped by the Secure Enclave. Stored unwrapped only where there is no Secure Enclave
+    /// (the Simulator, for one): on a phone that has one, a wrap that fails is an error, not a
+    /// quiet downgrade of the keys it protects.
+    private func wrappedForStorage(_ data: Data) throws -> Data {
+        if let wrapped = tryWrapPrivateKey(data) { return wrapped }
+        if SecureEnclave.isAvailable {
+            throw KasiaError.keychainError(AppLocalization.string("Couldn't protect your keys with this iPhone's Secure Enclave. Nothing was saved. Try again."))
+        }
+        return data
     }
 
     /// The accounts with saved keys on this device, read from the Keychain itself: after an app

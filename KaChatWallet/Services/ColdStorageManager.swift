@@ -175,10 +175,17 @@ final class ColdStorageManager: ObservableObject {
         }
 
         let allAddresses = Array(addressesByIndex.values)
-        let utxos = (try? await NodePoolService.shared.getUtxosByAddresses(allAddresses)) ?? []
         var balanceByAddress: [String: UInt64] = [:]
-        for utxo in utxos {
-            balanceByAddress[utxo.address, default: 0] += utxo.amount
+        let balancesKey = addressBalancesKey(for: account.id)
+        if let utxos = try? await NodePoolService.shared.getUtxosByAddresses(allAddresses) {
+            for utxo in utxos {
+                balanceByAddress[utxo.address, default: 0] += utxo.amount
+            }
+            UserDefaults.standard.set(try? JSONEncoder().encode(balanceByAddress), forKey: balancesKey)
+        } else if let saved = UserDefaults.standard.data(forKey: balancesKey),
+                  let known = try? JSONDecoder().decode([String: UInt64].self, from: saved) {
+            // a failed read isn't an empty address: the last figures known
+            balanceByAddress = known
         }
 
         return addressesByIndex.map { index, address in
@@ -586,6 +593,10 @@ final class ColdStorageManager: ObservableObject {
         UserDefaults.standard.set(data, forKey: hiddenIndicesKey(for: accountId))
     }
 
+    private func addressBalancesKey(for accountId: UUID) -> String {
+        "kachat_cold_storage_balances_" + accountId.uuidString
+    }
+
     private func hiddenIndicesKey(for accountId: UUID) -> String {
         "kachat_cold_storage_hidden_" + accountId.uuidString
     }
@@ -626,6 +637,7 @@ final class ColdStorageManager: ObservableObject {
         for id in idsToClear {
             UserDefaults.standard.removeObject(forKey: addressLabelsKey(for: id))
             UserDefaults.standard.removeObject(forKey: hiddenIndicesKey(for: id))
+            UserDefaults.standard.removeObject(forKey: addressBalancesKey(for: id))
         }
         accounts = []
     }

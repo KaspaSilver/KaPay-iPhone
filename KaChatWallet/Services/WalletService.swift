@@ -169,8 +169,14 @@ final class WalletService: ObservableObject {
                 switch state {
                 case .subscribed:
                     if !self.isUtxoSubscribed { self.isUtxoSubscribed = true }
+                    self.pollTask?.cancel()
+                    self.pollTask = nil
                 case .disconnected, .failed:
                     if self.isUtxoSubscribed { self.isUtxoSubscribed = false }
+                    // Lost mid-session (a network change while nodes were down): the balance keeps
+                    // moving by polling while `UtxoSubscriptionManager` keeps retrying.
+                    guard self.hasCompletedInitialSync, WalletManager.shared.currentWallet != nil else { break }
+                    if self.pollTask == nil { self.startFallbackPolling() }
                 case .connecting, .failover:
                     break
                 }

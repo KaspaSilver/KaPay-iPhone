@@ -33,7 +33,7 @@ final class CacheManager: ObservableObject {
             case .webResponses:
                 return AppLocalization.string("Link previews and API responses held by the system's network cache.")
             case .temporaryFiles:
-                return AppLocalization.string("Scratch files from sending photos and voice notes. Safe to remove at any time.")
+                return AppLocalization.string("Temporary files the app no longer needs. Safe to remove at any time.")
             }
         }
 

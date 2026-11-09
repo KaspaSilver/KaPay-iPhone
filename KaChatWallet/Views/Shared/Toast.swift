@@ -31,7 +31,7 @@ struct ToastBanner: View {
         HStack(spacing: 8) {
             Image(systemName: style.iconName)
                 .foregroundColor(style.iconColor)
-            Text(message)
+            Text(AppLocalization.string(message))
                 .font(.subheadline)
                 .foregroundColor(.primary)
         }

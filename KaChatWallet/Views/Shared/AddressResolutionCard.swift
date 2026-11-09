@@ -12,6 +12,8 @@ struct AddressResolutionCard: View {
     /// The domain that resolved to it, when the user typed one (shown at once, before the
     /// profile fetch lands).
     var domain: String? = nil
+    /// Only the address counts here (a signature proves it, and says nothing of any name).
+    var addressOnly = false
 
     @State private var profile: KNSAddressProfileInfo?
     @State private var isLoadingProfile = false
@@ -36,10 +38,12 @@ struct AddressResolutionCard: View {
                 )
                 VStack(alignment: .leading, spacing: 2) {
                     let name = displayName(for: address)
-                    Text(name ?? (isLoadingProfile ? "Looking up..." : "No domain"))
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(name == nil ? .secondary : .primary)
-                        .lineLimit(1)
+                    if !addressOnly {
+                        Text(name ?? (isLoadingProfile ? "Looking up..." : "No domain"))
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(name == nil ? .secondary : .primary)
+                            .lineLimit(1)
+                    }
                     Text(address)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundColor(.secondary)

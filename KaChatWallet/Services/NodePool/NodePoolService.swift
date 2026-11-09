@@ -37,8 +37,8 @@ final class NodePoolService: ObservableObject {
     /// True when the pattern of failures says gRPC node connections are blocked wholesale on
     /// this network (censorship/DPI, corporate firewall): the device is online, zero nodes are
     /// active, and many DISTINCT nodes have failed recently with not a single success. The
-    /// connection status screen surfaces this honestly (receiving messages still works over the
-    /// indexer's HTTPS; sending needs a node). Cleared automatically the moment any node
+    /// connection status screen surfaces this honestly (balances and sending need a node).
+    /// Cleared automatically the moment any node
     /// answers, and both the flag and its failure accounting reset on every boot, pin switch,
     /// and network path change, so a verdict earned on hotel WiFi cannot outlive that network.
     /// No verdict is formed inside the grace window after any of those events: the parallel
@@ -94,8 +94,6 @@ final class NodePoolService: ObservableObject {
         // Reset per-node health stats (latency EWMA, error rates) on a network path change
         // (WiFi<->cellular, VPN toggle) - a node's observed latency/error history from the old
         // path is meaningless on the new one and would otherwise bias selection with stale data.
-        // The only other place this was wired up (KaspaRPCRouter) is dead code that's never
-        // instantiated, so this was never actually happening.
         epochMonitor.onEpochChange { [weak self] newEpochId in
             Task {
                 guard let self else { return }
@@ -628,14 +626,18 @@ final class NodePoolService: ObservableObject {
     ///
     /// Whatever it spends is held back from the next send (`WalletService.reserveOutpoints`), here
     /// rather than at each caller, so no send path (.kas and .kachat names, combines, Cold Storage)
-    /// can skip it: on success, and on an unknown outcome, which may yet land.
-    func submitTransaction(_ transaction: KaspaRpcTransaction, allowOrphan: Bool = false) async throws -> (txId: String, endpoint: String) {
+    /// can skip it. Not on an unknown outcome: a resend then picks the same coins, so at most one
+    /// of the two can land, where different coins would let both.
+    ///
+    /// `escalateOrphan: false` stops it resubmitting with `allowOrphan: true` after orphan
+    /// rejections, for sends that move money and must not sit in a node's orphan pool.
+    func submitTransaction(_ transaction: KaspaRpcTransaction, allowOrphan: Bool = false, escalateOrphan: Bool = true) async throws -> (txId: String, endpoint: String) {
         do {
-            let sent = try await submitTransactionUnrecorded(transaction, allowOrphan: allowOrphan)
+            let sent = try await submitTransactionUnrecorded(transaction, allowOrphan: allowOrphan, escalateOrphan: escalateOrphan)
             reserveInputs(of: transaction.toProtobuf())
             return sent
         } catch let unknown as SendOutcomeUnknownError {
-            reserveInputs(of: transaction.toProtobuf())
+            WalletService.shared.dropUtxoCache()
             throw unknown
         }
     }
@@ -646,7 +648,7 @@ final class NodePoolService: ObservableObject {
         })
     }
 
-    private func submitTransactionUnrecorded(_ transaction: KaspaRpcTransaction, allowOrphan: Bool) async throws -> (txId: String, endpoint: String) {
+    private func submitTransactionUnrecorded(_ transaction: KaspaRpcTransaction, allowOrphan: Bool, escalateOrphan: Bool) async throws -> (txId: String, endpoint: String) {
         do {
             let sent = try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: allowOrphan)
             return try await checkedSubmit(sent, rpcTransaction: transaction.toProtobuf(), expectedTxId: KasiaTransactionBuilder.computeTransactionId(transaction))
@@ -670,14 +672,16 @@ final class NodePoolService: ObservableObject {
                 } catch {
                     answerLost = answerLost || error is SubmitAnswerLostError
                 }
-                do {
-                    let sent = try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: true)
-                    AppLog.log("[NodePool] %@ submitted as an orphan: its parent hadn't reached that node yet", String(sent.txId.prefix(12)))
-                    return try await checkedSubmit(sent, rpcTransaction: transaction.toProtobuf(), expectedTxId: expectedTxId)
-                } catch let unknown as SendOutcomeUnknownError {
-                    throw unknown
-                } catch {
-                    answerLost = answerLost || error is SubmitAnswerLostError
+                if escalateOrphan {
+                    do {
+                        let sent = try await submitRpcTransaction(transaction.toProtobuf(), allowOrphan: true)
+                        AppLog.log("[NodePool] %@ submitted as an orphan: its parent hadn't reached that node yet", String(sent.txId.prefix(12)))
+                        return try await checkedSubmit(sent, rpcTransaction: transaction.toProtobuf(), expectedTxId: expectedTxId)
+                    } catch let unknown as SendOutcomeUnknownError {
+                        throw unknown
+                    } catch {
+                        answerLost = answerLost || error is SubmitAnswerLostError
+                    }
                 }
             }
             let txId = KasiaTransactionBuilder.computeTransactionId(transaction)
@@ -701,7 +705,7 @@ final class NodePoolService: ObservableObject {
             reserveInputs(of: rpcTransaction)
             return sent
         } catch let unknown as SendOutcomeUnknownError {
-            reserveInputs(of: rpcTransaction)
+            WalletService.shared.dropUtxoCache()
             throw unknown
         }
     }
@@ -1031,6 +1035,13 @@ final class NodePoolService: ObservableObject {
 
         if utxoResponse.hasError && !utxoResponse.error.message.isEmpty {
             throw KasiaError.networkError(utxoResponse.error.message)
+        }
+
+        // Responses are matched by type alone, so coins for addresses not asked about are a crossed
+        // or broken answer: refused, and the next node asked.
+        let requested = Set(addresses.map { $0.lowercased() })
+        guard utxoResponse.entries.allSatisfy({ $0.address.isEmpty || requested.contains($0.address.lowercased()) }) else {
+            throw KasiaError.networkError("UTXO response for addresses not requested")
         }
 
         return try utxoResponse.entries.compactMap { entry -> UTXO? in

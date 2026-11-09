@@ -503,11 +503,11 @@ struct SecuritySettingsPage: View {
     /// after authentication succeeds, so a failed or cancelled prompt leaves the switch exactly
     /// where it was instead of flipping and flipping back.
     private func biometricToggle(_ title: String, reason: String, isOn: Binding<Bool>) -> some View {
-        Toggle(title, isOn: Binding(
+        Toggle(LocalizedStringKey(title), isOn: Binding(
             get: { isOn.wrappedValue },
             set: { requested in
                 guard requested != isOn.wrappedValue else { return }
-                DeviceAuth.authenticate(reason: reason) {
+                DeviceAuth.authenticate(reason: AppLocalization.string(reason)) {
                     isOn.wrappedValue = requested
                     settingsViewModel.saveSettings()
                 } onFailure: {

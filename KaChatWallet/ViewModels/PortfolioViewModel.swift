@@ -1128,9 +1128,14 @@ final class PortfolioViewModel: ObservableObject {
         incoming.portfolios.removeAll {
             PortfolioSync.isPristineSeed($0, transactions: incoming.transactions, fees: incoming.fees)
         }
-        let merged = PortfolioSync.merge([syncState, incoming])
+        var merged = PortfolioSync.merge([syncState, incoming])
         // compared in the merge's own order, so a backup that adds nothing writes nothing
-        guard merged != PortfolioSync.merge([syncState]), !merged.portfolios.isEmpty else { return false }
+        guard merged != PortfolioSync.merge([syncState]) else { return false }
+        // Every portfolio here was deleted on another device: back to an untouched one, as a new
+        // wallet starts. Refusing the import left the deleted one here, to come back from an edit.
+        if merged.portfolios.isEmpty {
+            merged.portfolios = [Portfolio(id: UUID(), name: "Portfolio 1", sortOrder: 0, createdAt: Date())]
+        }
         PortfolioLedgerStore.savePortfolios(merged.portfolios, walletAddress: wallet)
         PortfolioLedgerStore.save(merged.transactions, walletAddress: wallet)
         PortfolioLedgerStore.saveFees(merged.fees, walletAddress: wallet)

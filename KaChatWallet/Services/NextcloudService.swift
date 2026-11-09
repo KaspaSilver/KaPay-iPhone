@@ -108,7 +108,7 @@ enum NextcloudError: LocalizedError {
 }
 
 /// The user's own Nextcloud server, for one thing: backing up Contacts and the Portfolio.
-/// Connect with an app password. Two files:
+/// Connect with an app password. The files:
 /// - `backupFileName` in the backup folder: the contacts, encrypted (`BackupEnvelope`). It's the same
 ///   file KaChat uses, with the same key, so both apps and all of an account's devices sync through
 ///   it: read, merge, then write only if the file is missing something this device has. With
@@ -384,6 +384,7 @@ final class NextcloudService: ObservableObject {
         guard let account = captured ?? account, let server = account.serverURL else { return }
         var request = URLRequest(url: server.appendingPathComponent("ocs/v2.php/core/apppassword"))
         request.httpMethod = "DELETE"
+        request.timeoutInterval = 8 // best effort, and an account removal waits on it
         request.setValue("true", forHTTPHeaderField: "OCS-APIRequest")
         applyAuth(&request, account: account)
         do {
@@ -393,31 +394,6 @@ final class NextcloudService: ObservableObject {
         } catch {
             AppLog.log("%@", "[Nextcloud] App password revoke failed: \(error.localizedDescription)")
         }
-    }
-
-    /// Deletes the contacts and Portfolio backups from the user's Nextcloud. Only ever on the user's
-    /// say-so (the Delete Account option that names it). KaChat's copy of the account uses the same
-    /// contacts file, and writes it again if it still has the contacts.
-    func deleteRemoteBackup() async throws {
-        var paths = ["\(backupFolderPath)/\(Self.backupFileName)"]
-            + (Self.singlePortfolioFileNames + Self.plainContactsFileNames).map { Self.backupPath($0) }
-        // Without the key this account's Portfolio files can't be told from anyone else's: the
-        // contacts still go, and the error says the rest didn't.
-        var portfolioError: Error?
-        if let wallet = currentWalletAddress {
-            do {
-                let server = try await readServerPortfolios(walletAtStart: wallet)
-                paths += server.own.map(\.file.path) + server.ownUnreadable.map(\.path)
-            } catch {
-                portfolioError = error
-            }
-        }
-        for path in paths {
-            try await deleteFile(path)
-        }
-        if let wallet = currentWalletAddress { setLastKnownBackupETag(nil, walletAddress: wallet) }
-        if let portfolioError { throw portfolioError }
-        AppLog.log("%@", "[Nextcloud] Backup deleted")
     }
 
     /// Revokes the app password a wallet's stored Nextcloud login holds: for removing an account,
@@ -482,7 +458,7 @@ final class NextcloudService: ObservableObject {
     }
 
     private func scheduleBackup(after delay: TimeInterval) {
-        guard autoBackupEnabled, isConnected, let walletAtStart = currentWalletAddress else { return }
+        guard autoBackupEnabled, isConnected, !needsReconnect, let walletAtStart = currentWalletAddress else { return }
         backupTask?.cancel()
         backupTask = Task { [weak self] in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
@@ -500,7 +476,7 @@ final class NextcloudService: ObservableObject {
     /// The app opened or came back: with Automatic Sync on, brings in another device's Portfolio
     /// changes. A change still owed is uploaded instead, which merges the server's copy in first.
     private func syncWithServerOnOpen() {
-        guard autoBackupEnabled, isConnected, let walletAtStart = currentWalletAddress else { return }
+        guard autoBackupEnabled, isConnected, !needsReconnect, let walletAtStart = currentWalletAddress else { return }
         if let lastServerCheck, Date().timeIntervalSince(lastServerCheck) < Self.serverCheckInterval { return }
         lastServerCheck = Date()
         if pendingBackup {
@@ -523,7 +499,7 @@ final class NextcloudService: ObservableObject {
 
     /// Going to the background with a Portfolio change still owed: upload it inside a background task.
     private func backUpPendingInBackground() {
-        guard autoBackupEnabled, isConnected, pendingBackup else { return }
+        guard autoBackupEnabled, isConnected, !needsReconnect, pendingBackup else { return }
         var taskId: UIBackgroundTaskIdentifier = .invalid
         taskId = UIApplication.shared.beginBackgroundTask(withName: "kachat.wallet.backup") {
             UIApplication.shared.endBackgroundTask(taskId)
@@ -561,7 +537,7 @@ final class NextcloudService: ObservableObject {
     /// Syncs the contacts when at least `minInterval` past the last time (hourly on background, daily
     /// on the launch catch-up), or when the dirty flag says an upload is still owed.
     private func autoBackupIfDue(minInterval: TimeInterval) async {
-        guard autoBackupEnabled, isConnected, let walletAtStart = currentWalletAddress else { return }
+        guard autoBackupEnabled, isConnected, !needsReconnect, let walletAtStart = currentWalletAddress else { return }
         let last = lastAutoSyncAt?.timeIntervalSince1970 ?? 0
         guard Date().timeIntervalSince1970 - last >= minInterval || pendingSyncDirty else { return }
         await performAutomaticSync(walletAtStart: walletAtStart)
@@ -1003,6 +979,17 @@ final class NextcloudService: ObservableObject {
                 guard currentWalletAddress == walletAtStart else { return }
                 setBackupFolder(found)
             }
+            // Once this account's encrypted file is there, a plain file proves nothing: anyone who
+            // can write to the folder could have put it there, and merging it would add their
+            // address under a friend's name.
+            if let key = backupEncryptionKey(),
+               let encrypted = try? await downloadFile("\(backupFolderPath)/\(Self.backupFileName)", maxBytes: 50_000_000),
+               BackupEnvelope.parse(encrypted) != nil,
+               (try? await BackupEnvelope.decryptIfEnvelopedDetached(encrypted, key: key, walletAddress: walletAtStart)) != nil {
+                guard currentWalletAddress == walletAtStart, let merged = scopedKey(Self.plainContactsMergedKey) else { return }
+                UserDefaults.standard.set(true, forKey: merged)
+                return
+            }
             // Every name, not just the newest: a device on an older build may have kept writing an
             // older one. Newest edit or deletion wins, so an old file can't undo a newer change.
             for name in Self.plainContactsFileNames {
@@ -1055,8 +1042,6 @@ final class NextcloudService: ObservableObject {
     /// What the backup folder holds, as far as the Portfolio is concerned.
     private struct ServerPortfolios {
         var own: [ServerPortfolioFile] = []
-        /// This account's encrypted files that won't decrypt: never read, but still its own.
-        var ownUnreadable: [NextcloudFile] = []
         /// Lowercased names of everything else there: another account's portfolio, or any other
         /// file. A portfolio's file goes beside these, never over them.
         var taken: Set<String> = []
@@ -1107,11 +1092,16 @@ final class NextcloudService: ObservableObject {
                 result.own.append(ServerPortfolioFile(file: file, backup: backup, isPlain: isPlain))
             case .ownUnreadable:
                 // ours, so its name stays free for this account's portfolio of that name
-                result.ownUnreadable.append(file)
                 AppLog.log("%@", "[Nextcloud] A Portfolio file of this account can't be decrypted: \(file.name)")
             default:
                 result.taken.insert(file.name.lowercased())
             }
+        }
+        // Once any of this account's files is encrypted, a plain one proves nothing (its owner is a
+        // public address): it may have been planted, so it is left alone like anyone else's.
+        if result.own.contains(where: { !$0.isPlain }) {
+            for found in result.own where found.isPlain { result.taken.insert(found.file.name.lowercased()) }
+            result.own.removeAll(where: \.isPlain)
         }
         return result
     }
@@ -1248,10 +1238,12 @@ final class NextcloudService: ObservableObject {
         }
 
         let deletedIds = Set(state.tombstones.filter { $0.kind == .portfolio }.map(\.id))
+        // a name just written is a current portfolio's, whatever the listing from before said
+        let writtenNames = Set(names.values.map { $0.lowercased() })
         // With nothing uploaded, no file carries a deletion: the deleted portfolio's file stays.
         for found in server.own where !state.portfolios.isEmpty {
             let ids = found.backup.portfolios.map(\.id)
-            guard !ids.contains(where: { names[$0]?.lowercased() == found.file.name.lowercased() }) else { continue }
+            guard !writtenNames.contains(found.file.name.lowercased()) else { continue }
             // Only for what this device knows the fate of: never a portfolio it simply doesn't have.
             // This device's own untouched seed, uploaded while it carried a deletion, goes too.
             guard ids.allSatisfy({ names[$0] != nil || deletedIds.contains($0.uuidString) || seedIds.contains($0) }) else { continue }
