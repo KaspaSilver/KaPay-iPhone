@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "ברירת מחדל (מומלץ)";
 "Delete That Screenshot" = "מחקו את צילום המסך";
 "Delete saved address" = "מחיקת כתובת שמורה";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "ארנקים שונים שומרים את ה-Kaspa שלכם בנתיבי כתובות שונים. בחרו מאיפה המילים האלה מגיעות כדי ש-KaPay ימצא את הכספים והדומיינים שלכם.";
 "Disconnect" = "התנתקות";
 "Disconnect Nextcloud" = "ניתוק Nextcloud";
 "Do you already have a domain?" = "יש לכם כבר דומיין?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "מה נשמר במטמון";
 "When a spending address receives Kaspa from someone else." = "כשכתובת הוצאה מקבלת Kaspa ממישהו אחר.";
 "Where are you sending from?" = "מאיפה אתה שולח?";
-"Where are your 12 or 24 words from?" = "מאיפה 12 או 24 המילים שלכם?";
 "Where do you want to be paid?" = "לאן תרצה לקבל את התשלום?";
 "Which domain should this profile use?" = "באיזה דומיין הפרופיל הזה צריך להשתמש?";
 "Who are you sending to?" = "למי אתה שולח?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "אישור הגדרת הדומיין הראשי שלכם";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "קבעו מחיר משלכם. ה-KAS שלכם ממתין בשרשרת עד שהמוכר יקבל, תמשכו את ההצעה או שתפוג.";
 "Couldn't load this address's names. Pull down to try again." = "לא ניתן היה לטעון את השמות של הכתובת הזו. משכו למטה כדי לנסות שוב.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "בחרנו את הכתובת הראשונה שיש בה כספים. הקישו על אחרת אם זו לא הכתובת שבה אתם משתמשים.";
 "This is the public half of this address. It cannot spend anything." = "זהו החלק הציבורי של הכתובת הזו. לא ניתן להוציא איתו דבר.";
+"Standard Kaspa Wallet" = "ארנק Kaspa רגיל";
+"Has history" = "יש היסטוריה";
+"See Every Wallet Type" = "הצגת כל סוגי הארנקים";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay בודק את המילים שלך מול כל סוגי ארנקי Kaspa, כך שלא צריך לדעת מאיזה ארנק הן הגיעו.";
+"This address has history, so this looks like the right account." = "לכתובת הזו יש היסטוריה, כך שנראה שזה החשבון הנכון.";
+"No funds or history on this address." = "אין כספים או היסטוריה בכתובת הזו.";
+"We picked the most likely account. Tap another if that's not the one you use." = "בחרנו את החשבון הסביר ביותר. אם זה לא החשבון שבו משתמשים, אפשר להקיש על אחר.";
+"Your Account" = "החשבון שלך";

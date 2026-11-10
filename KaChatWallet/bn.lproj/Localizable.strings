@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "ডিফল্ট (প্রস্তাবিত)";
 "Delete That Screenshot" = "ওই স্ক্রিনশট মুছুন";
 "Delete saved address" = "সংরক্ষিত ঠিকানা মুছুন";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "বিভিন্ন ওয়ালেট আপনার Kaspa আলাদা আলাদা ঠিকানা পাথে রাখে। এই শব্দগুলো কোথা থেকে এসেছে তা বেছে নিন, যাতে KaPay আপনার ফান্ড ও ডোমেইন খুঁজে পায়।";
 "Disconnect" = "সংযোগ বিচ্ছিন্ন করুন";
 "Disconnect Nextcloud" = "Nextcloud সংযোগ বিচ্ছিন্ন করুন";
 "Do you already have a domain?" = "আপনার কি আগে থেকেই ডোমেইন আছে?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "কী ক্যাশ করা আছে";
 "When a spending address receives Kaspa from someone else." = "যখন কোনো খরচের ঠিকানা অন্য কারও কাছ থেকে Kaspa পায়।";
 "Where are you sending from?" = "আপনি কোথা থেকে পাঠাচ্ছেন?";
-"Where are your 12 or 24 words from?" = "আপনার ১২ বা ২৪টি শব্দ কোথা থেকে এসেছে?";
 "Where do you want to be paid?" = "আপনি কোথায় পেমেন্ট নিতে চান?";
 "Which domain should this profile use?" = "এই প্রোফাইল কোন ডোমেইন ব্যবহার করবে?";
 "Who are you sending to?" = "আপনি কাকে পাঠাচ্ছেন?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "আপনার প্রাথমিক ডোমেইন সেট করা নিশ্চিত করুন";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "নিজের দাম ঠিক করুন। বিক্রেতা গ্রহণ না করা পর্যন্ত, আপনি অফার প্রত্যাহার না করা পর্যন্ত, বা মেয়াদ শেষ না হওয়া পর্যন্ত আপনার KAS চেইনে অপেক্ষা করে।";
 "Couldn't load this address's names. Pull down to try again." = "এই ঠিকানার নামগুলো লোড করা যায়নি। আবার চেষ্টা করতে নিচে টানুন।";
-"We picked the first address with funds. Tap another if that's not the one you use." = "আমরা ফান্ড থাকা প্রথম ঠিকানাটি বেছে নিয়েছি। এটি আপনার ব্যবহৃত ঠিকানা না হলে অন্যটিতে ট্যাপ করুন।";
 "This is the public half of this address. It cannot spend anything." = "এটি এই ঠিকানার পাবলিক অংশ। এটি দিয়ে কিছু খরচ করা যায় না।";
+"Standard Kaspa Wallet" = "স্ট্যান্ডার্ড Kaspa ওয়ালেট";
+"Has history" = "ইতিহাস আছে";
+"See Every Wallet Type" = "সব ধরনের ওয়ালেট দেখুন";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay আপনার শব্দগুলো সব ধরনের Kaspa ওয়ালেটের সাথে মিলিয়ে দেখে, তাই সেগুলো কোন ওয়ালেট থেকে এসেছে তা আপনাকে জানতে হবে না।";
+"This address has history, so this looks like the right account." = "এই ঠিকানার ইতিহাস আছে, তাই এটিই সঠিক অ্যাকাউন্ট বলে মনে হচ্ছে।";
+"No funds or history on this address." = "এই ঠিকানায় কোনো তহবিল বা ইতিহাস নেই।";
+"We picked the most likely account. Tap another if that's not the one you use." = "আমরা সবচেয়ে সম্ভাব্য অ্যাকাউন্টটি বেছে নিয়েছি। এটি আপনার না হলে অন্যটিতে ট্যাপ করুন।";
+"Your Account" = "আপনার অ্যাকাউন্ট";

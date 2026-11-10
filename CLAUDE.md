@@ -63,8 +63,8 @@ the user already has, on a Java Card loaded with
 Not cold storage: the card never generates or uses a key. The card commands and backup format are
 that repo's `docs/PROTOCOL.md`, shared across apps; change them there first. Settings > Back Up
 Account > Back Up to NFC Card (`NFCCardBackupView`, behind the seed phrase's biometric gate) only exists for an account
-with a passphrase, which is what protects it: it's never written to the card. The Import chooser's
-Restore from NFC Card (`NFCCardRestoreView`) reads with the 6-digit PIN, asks for the passphrase and
+with a passphrase, which is what protects it: it's never written to the card. Import's name screen has
+Restore from NFC Card at the bottom (`NFCCardRestoreView`) reads with the 6-digit PIN, asks for the passphrase and
 checks it against the saved chatting address. Saving to a card never clears the backup warning. The
 App ID needs Near Field Communication Tag Reading on.
 
@@ -178,8 +178,7 @@ its largest coins, one transaction's worth (`WalletService.oneTransactionChunk`)
 there works only while that account is still in the slot with no keys, and import or Log Out clears
 a recovery left from before. A keychain write that fails part-way puts the slot's previous account
 back. The same words on the other network are the same account (`isSameAccount`). A sign-in error
-waits in `signInFailureMessage` for the rebuilt accounts screen. The passphrase search gives up after
-12 s ("Skip the Search", Search Again). Every account's words item is tightened at launch. A new NFC
+waits in `signInFailureMessage` for the rebuilt accounts screen. Import has no wallet list: after the words and "Did you use a passphrase?", `findImportAccounts` derives every `WalletSourceFamily` (Standard 0..<50, KDX and OneKey 0..<20, Chainge 0), makes one UTXO call plus a transactions-count per type's #0, keeps those with funds or history, and lists them with the most funded type first ("Your Account", or live under the passphrase field). Nothing found is Standard #0; the search gives up after 12 s ("Skip the Search", Search Again). "See Every Wallet Type" lists each type's #0. Every account's words item is tightened at launch. A new NFC
 PIN is typed twice, and a swapped card stops before a PIN try. The Passcode Required alert has its
 own window. A sheet picked from another sheet opens from that sheet's `onDismiss`.
 Every single-address page has one `AddressOptionsButton` at the top right, opening `AddressActionsSheet`:

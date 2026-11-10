@@ -80,9 +80,7 @@ struct OnboardingView: View {
                 CreateWalletView()
             }
             .navigationDestination(isPresented: $showImportWallet) {
-                // Source-wallet chooser first (KasWare-style): the picked wallet decides the
-                // identity derivation path family, then seed entry continues as before.
-                ImportSourceWalletView()
+                ImportNameStep()
             }
             .sheet(item: $accountActionsTarget, onDismiss: {
                 let next = afterAccountActions

@@ -64,15 +64,6 @@ struct SavedAccountSummary: Identifiable, Equatable, Codable {
 ///   taggedHash("TapTweak", xOnlyPubkey) mod n. Address comes from the tweaked key.
 ///
 /// Raw values are persisted (UserDefaults, keyed per derived address) - do not rename cases.
-/// An address the import's passphrase step found on the identity chain.
-struct FoundChattingAddress: Identifiable, Equatable {
-    let index: Int
-    let address: String
-    let balanceSompi: UInt64
-
-    var id: Int { index }
-}
-
 enum WalletSourceFamily: String, Codable, CaseIterable {
     case kaspaStandard
     case kaspaLegacy972
@@ -84,15 +75,44 @@ enum WalletSourceFamily: String, Codable, CaseIterable {
         self != .chainge
     }
 
-    /// Human-readable base path, for the import chooser UI.
-    var pathDescription: String {
+    /// How import names this wallet type. Standard covers KaChat, KasWare, Kaspium, Kastle,
+    /// Core Golang CLI, OKX and Ledger, which all use the same addresses.
+    var displayName: String {
         switch self {
-        case .kaspaStandard: return "m/44'/111111'/0'"
-        case .kaspaLegacy972: return "m/44'/972/0'"
-        case .chainge: return "m/44'/111111'/0'/0'"
-        case .oneKey: return "m/44'/111111'/0' (OneKey)"
+        case .kaspaStandard: return AppLocalization.string("Standard Kaspa Wallet")
+        case .kaspaLegacy972: return "KDX / Kaspanet Web"
+        case .chainge: return "Chainge"
+        case .oneKey: return "OneKey"
         }
     }
+
+    /// How many addresses import's auto-detect checks. The standard chain keeps the depth of one
+    /// page of the chatting address picker; the others only have to be recognised.
+    var importSearchDepth: Range<Int> {
+        switch self {
+        case .kaspaStandard: return 0..<50
+        case .kaspaLegacy972, .oneKey: return 0..<20
+        case .chainge: return 0..<1
+        }
+    }
+}
+
+/// Which wallet type and address an import should open.
+struct ImportAccountChoice: Equatable {
+    var family: WalletSourceFamily = .kaspaStandard
+    var index = 0
+}
+
+/// An address import's auto-detect looked at (`WalletManager.findImportAccounts`).
+struct ImportAccountCandidate: Identifiable, Equatable {
+    let family: WalletSourceFamily
+    let index: Int
+    let address: String
+    var balanceSompi: UInt64 = 0
+    var hasHistory = false
+
+    var choice: ImportAccountChoice { ImportAccountChoice(family: family, index: index) }
+    var id: String { "\(family.rawValue)-\(index)" }
 }
 
 @MainActor
@@ -373,9 +393,9 @@ final class WalletManager: ObservableObject {
     ///   during the import wizard. Persisted per derived address so key-repair and
     ///   seed-fallback paths re-derive the same identity.
     /// - Parameter family: identity derivation-path family of the wallet this seed comes from
-    ///   (the KasWare-style source-wallet selection in the import flow). `.kaspaStandard` for
-    ///   every create and for imports of KaChat/KasWare/Kaspium/Core CLI/OKX/Ledger seeds.
-    ///   Persisted per derived address, exactly like the main-address index.
+    ///   (found by import's auto-detect, `findImportAccounts`). `.kaspaStandard` for every
+    ///   create and for imports of KaChat/KasWare/Kaspium/Core CLI/OKX/Ledger seeds.
+    ///   Persisted per derived address, exactly like the chatting index.
     /// - Parameter owesBackup: a brand-new account made here (`commitCreatedWallet`): it is
     ///   marked as owing its backup before anything is saved.
     func importWallet(from seedPhrase: SeedPhrase, alias: String = "My Account", chattingAddressIndex: Int = 0, family: WalletSourceFamily = .kaspaStandard, owesBackup: Bool = false) async throws -> Wallet {
@@ -1670,32 +1690,103 @@ final class WalletManager: ObservableObject {
         return KaspaAddress.fromPublicKey(publicKeyData, network: network).address
     }
 
-    /// For an import's passphrase step, before there's an account: address #0 plus every other
-    /// address on the identity chain holding funds, in index order. Nil when the words are invalid
-    /// or the balances couldn't be checked. Single-address families only ever yield index 0.
-    func findChattingAddresses(words: [String], passphrase: String, family: WalletSourceFamily, indices: Range<Int>) async -> [FoundChattingAddress]? {
-        let seedPhrase = SeedPhrase(words: words, passphrase: passphrase.isEmpty ? nil : passphrase)
-        guard var seed = bip39.mnemonicToSeed(seedPhrase.phrase, passphrase: seedPhrase.passphrase ?? "") else { return nil }
-        let baseNode = identityBaseNode(seed: seed, family: family)
-        seed.zeroOut()
-
+    /// Family-aware: single-address families (Chainge) only ever yield index 0; hardened-index
+    /// families (legacy 972) and the OneKey tweak are handled inside chattingAddress.
+    private func chattingAddresses(indices: Range<Int>, baseNode: (key: Data, chainCode: Data), family: WalletSourceFamily) -> [(index: Int, address: String)] {
         var derived: [(index: Int, address: String)] = []
         for index in indices {
             guard family.supportsIndexScan || index == 0 else { break }
             guard let address = chattingAddress(at: index, baseNode: baseNode, family: family) else { continue }
             derived.append((index, address))
         }
-        guard !derived.isEmpty,
-              let utxos = try? await NodePoolService.shared.getUtxosByAddresses(derived.map(\.address)) else { return nil }
+        return derived
+    }
+
+    /// Address #0 of every wallet type these words could be, for an import before there's an
+    /// account: the rows "See Every Wallet Type" offers. Needs no network.
+    func importAddressesAtZero(words: [String], passphrase: String) -> [ImportAccountCandidate] {
+        let seedPhrase = SeedPhrase(words: words, passphrase: passphrase.isEmpty ? nil : passphrase)
+        guard var seed = bip39.mnemonicToSeed(seedPhrase.phrase, passphrase: seedPhrase.passphrase ?? "") else { return [] }
+        defer { seed.zeroOut() }
+        return WalletSourceFamily.allCases.flatMap { importCandidates(seed: seed, family: $0, indices: 0..<1) }
+    }
+
+    /// Import's auto-detect: every wallet type's addresses, keeping the ones with funds, plus any
+    /// address #0 with transaction history (a chat identity or an emptied wallet holds no coins).
+    /// The wallet type holding the most comes first and each type's addresses are in index order,
+    /// so the first entry is the likeliest account. Empty when nothing has any activity; nil when
+    /// the words are invalid or the balances couldn't be checked.
+    func findImportAccounts(words: [String], passphrase: String) async -> [ImportAccountCandidate]? {
+        let seedPhrase = SeedPhrase(words: words, passphrase: passphrase.isEmpty ? nil : passphrase)
+        guard var seed = bip39.mnemonicToSeed(seedPhrase.phrase, passphrase: seedPhrase.passphrase ?? "") else { return nil }
+        let candidates = WalletSourceFamily.allCases.flatMap {
+            importCandidates(seed: seed, family: $0, indices: $0.importSearchDepth)
+        }
+        seed.zeroOut()
+        guard !candidates.isEmpty else { return nil }
+
+        async let balances = try? NodePoolService.shared.getUtxosByAddresses(candidates.map(\.address))
+        async let used = addressesWithHistory(candidates.filter { $0.index == 0 }.map(\.address))
+        guard let utxos = await balances else { return nil }
+        let withHistory = await used
+
         var balanceByAddress: [String: UInt64] = [:]
         for utxo in utxos {
             balanceByAddress[utxo.address, default: 0] += utxo.amount
         }
-        return derived.compactMap { entry in
-            let balance = balanceByAddress[entry.address] ?? 0
-            guard entry.index == 0 || balance > 0 else { return nil }
-            return FoundChattingAddress(index: entry.index, address: entry.address, balanceSompi: balance)
+        var totals: [WalletSourceFamily: UInt64] = [:]
+        var active: [ImportAccountCandidate] = []
+        for var candidate in candidates {
+            candidate.balanceSompi = balanceByAddress[candidate.address] ?? 0
+            candidate.hasHistory = withHistory.contains(candidate.address)
+            guard candidate.balanceSompi > 0 || candidate.hasHistory else { continue }
+            totals[candidate.family, default: 0] += candidate.balanceSompi
+            active.append(candidate)
         }
+        let familyOrder = WalletSourceFamily.allCases
+        return active.sorted { lhs, rhs in
+            guard lhs.family != rhs.family else { return lhs.index < rhs.index }
+            let (left, right) = (totals[lhs.family] ?? 0, totals[rhs.family] ?? 0)
+            if left != right { return left > right }
+            // Ties go to the earlier type, so the standard wallet wins when nothing tells them apart.
+            return (familyOrder.firstIndex(of: lhs.family) ?? 0) < (familyOrder.firstIndex(of: rhs.family) ?? 0)
+        }
+    }
+
+    private func importCandidates(seed: Data, family: WalletSourceFamily, indices: Range<Int>) -> [ImportAccountCandidate] {
+        let baseNode = identityBaseNode(seed: seed, family: family)
+        return chattingAddresses(indices: indices, baseNode: baseNode, family: family).map {
+            ImportAccountCandidate(family: family, index: $0.index, address: $0.address)
+        }
+    }
+
+    /// The addresses with at least one transaction. A failed probe counts as no history: this only
+    /// ranks what import shows first, and every wallet type stays one tap away.
+    private func addressesWithHistory(_ addresses: [String]) async -> Set<String> {
+        let restBase = AppSettings.load().kaspaRestAPIURL
+        return await withTaskGroup(of: String?.self) { group in
+            for address in addresses {
+                group.addTask { await Self.addressHasHistory(address, restBase: restBase) ? address : nil }
+            }
+            var found = Set<String>()
+            for await address in group {
+                if let address { found.insert(address) }
+            }
+            return found
+        }
+    }
+
+    private nonisolated static func addressHasHistory(_ address: String, restBase: String) async -> Bool {
+        struct TransactionsCount: Decodable { let total: Int }
+        guard var components = URLComponents(string: restBase) else { return false }
+        components.path += "/addresses/\(address)/transactions-count"
+        guard let url = components.url else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 8
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let count = try? JSONDecoder().decode(TransactionsCount.self, from: data) else { return false }
+        return count.total > 0
     }
 
     // MARK: - Storage

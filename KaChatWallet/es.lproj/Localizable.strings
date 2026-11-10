@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "Predeterminado (recomendado)";
 "Delete That Screenshot" = "Borra esa captura de pantalla";
 "Delete saved address" = "Eliminar dirección guardada";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "Cada cartera guarda tu Kaspa en rutas de dirección distintas. Elige de dónde vienen estas palabras para que KaPay encuentre tus fondos y tus dominios.";
 "Disconnect" = "Desconectar";
 "Disconnect Nextcloud" = "Desconectar Nextcloud";
 "Do you already have a domain?" = "¿Ya tienes un dominio?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "Qué hay en la caché";
 "When a spending address receives Kaspa from someone else." = "Cuando una dirección de gasto recibe Kaspa de otra persona.";
 "Where are you sending from?" = "¿Desde dónde envías?";
-"Where are your 12 or 24 words from?" = "¿De dónde vienen tus 12 o 24 palabras?";
 "Where do you want to be paid?" = "¿Dónde quieres recibir el pago?";
 "Which domain should this profile use?" = "¿Qué dominio debe usar este perfil?";
 "Who are you sending to?" = "¿A quién se lo envías?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "Confirma que quieres establecer tu dominio principal";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "Pon tu propio precio. Tus KAS esperan en la cadena hasta que el vendedor acepte, retires la oferta o caduque.";
 "Couldn't load this address's names. Pull down to try again." = "No se pudieron cargar los nombres de esta dirección. Desliza hacia abajo para intentarlo de nuevo.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "Elegimos la primera dirección con fondos. Toca otra si esa no es la que usas.";
 "This is the public half of this address. It cannot spend anything." = "Esta es la parte pública de esta dirección. No puede gastar nada.";
+"Standard Kaspa Wallet" = "Billetera Kaspa estándar";
+"Has history" = "Tiene historial";
+"See Every Wallet Type" = "Ver todos los tipos de billetera";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay comprueba tus palabras con todos los tipos de billetera Kaspa, así que no necesitas saber de cuál proceden.";
+"This address has history, so this looks like the right account." = "Esta dirección tiene historial, así que parece la cuenta correcta.";
+"No funds or history on this address." = "No hay fondos ni historial en esta dirección.";
+"We picked the most likely account. Tap another if that's not the one you use." = "Elegimos la cuenta más probable. Toca otra si no es la que usas.";
+"Your Account" = "Tu cuenta";

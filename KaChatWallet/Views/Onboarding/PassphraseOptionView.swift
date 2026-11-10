@@ -15,7 +15,8 @@ import SwiftUI
 ///      updating underneath as you type. That live address is the point: it is the only direct
 ///      evidence that a passphrase opens a DIFFERENT account rather than protecting the same one,
 ///      and a balance is how someone importing can tell they typed the right one.
-///   3. `explainer` - plain-language, back only, so reading about it always returns to the screen
+///   3. `found` - import with no passphrase: the wallet these words were found in.
+///   4. `explainer` - plain-language, back only, so reading about it always returns to the screen
 ///      it was opened from (the question, or the entry screen, which links it too).
 ///
 /// The caller (`CreateWalletView` / `ImportWalletView`) performs the actual wallet commit via
@@ -29,6 +30,7 @@ struct PassphraseOptionView: View {
     private enum Step {
         case question
         case entry
+        case found
         case explainer
     }
 
@@ -36,11 +38,9 @@ struct PassphraseOptionView: View {
     /// The words behind this flow, for the live address preview on the entry screen. Empty is
     /// tolerated - the preview simply does not appear.
     var seedWords: [String] = []
-    /// Identity derivation family, so the previewed address matches what the import will actually
-    /// produce for a seed coming from another wallet.
-    var family: WalletSourceFamily = .kaspaStandard
-    /// Set on import: the preview looks for the address holding funds and writes the choice here.
-    var chattingAddressIndex: Binding<Int>?
+    /// Set on import: the preview searches every wallet type for these words and writes the
+    /// choice here.
+    var importChoice: Binding<ImportAccountChoice>?
     /// Performs the create/import commit with the chosen passphrase ("" = none). Throwing surfaces
     /// an inline error here and re-enables the buttons; on success the app router swaps onboarding
     /// for the main app, so this view is torn down automatically.
@@ -62,14 +62,12 @@ struct PassphraseOptionView: View {
     init(
         mode: Mode,
         seedWords: [String] = [],
-        family: WalletSourceFamily = .kaspaStandard,
-        chattingAddressIndex: Binding<Int>? = nil,
+        importChoice: Binding<ImportAccountChoice>? = nil,
         onProceed: @escaping (String) async throws -> Void
     ) {
         self.mode = mode
         self.seedWords = seedWords
-        self.family = family
-        self.chattingAddressIndex = chattingAddressIndex
+        self.importChoice = importChoice
         self.onProceed = onProceed
         // Creating only reaches here through "Advanced: Create with a Passphrase", which has
         // already answered the question.
@@ -81,6 +79,7 @@ struct PassphraseOptionView: View {
             switch step {
             case .question: questionScreen
             case .entry: entryScreen
+            case .found: foundScreen
             case .explainer: explainerScreen
             }
         }
@@ -140,21 +139,18 @@ struct PassphraseOptionView: View {
                 .disabled(isBusy)
 
                 Button {
-                    submit(passphrase: "")
+                    // Held from here, not only once the search starts: Import must not be
+                    // tappable before the search has run.
+                    isSearchingAddresses = true
+                    step = .found
                 } label: {
-                    Group {
-                        if isBusy {
-                            ProgressView()
-                        } else {
-                            Text("No")
-                                .font(.headline)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.accentColor.opacity(0.15))
-                    .foregroundColor(.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    Text("No")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.accentColor.opacity(0.15))
+                        .foregroundColor(.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
                 .buttonStyle(.plain)
                 .disabled(isBusy)
@@ -200,51 +196,24 @@ struct PassphraseOptionView: View {
                 PassphraseAddressPreview(
                     words: seedWords,
                     passphrase: passphrase,
-                    family: family,
+                    family: .kaspaStandard,
                     showsFundsHint: mode == .importExisting,
-                    selectedIndex: chattingAddressIndex,
-                    isSearching: chattingAddressIndex == nil ? nil : $isSearchingAddresses
+                    selection: importChoice,
+                    isSearching: importChoice == nil ? nil : $isSearchingAddresses
                 )
                 .disabled(isBusy)
 
-                Button {
+                primaryButton(
+                    title: mode == .create ? "Continue" : "Import",
+                    searching: isSearchingAddresses && !passphrase.isEmpty,
+                    enabled: canSubmitPassphrase
+                ) {
                     submitFromEntry()
-                } label: {
-                    Group {
-                        if isBusy {
-                            ProgressView().tint(.white)
-                        } else if isSearchingAddresses && !passphrase.isEmpty {
-                            HStack(spacing: 8) {
-                                ProgressView().tint(.white)
-                                Text("Finding your address...")
-                                    .font(.headline)
-                            }
-                        } else {
-                            Text(mode == .create ? "Continue" : "Import")
-                                .font(.headline)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(canSubmitPassphrase ? Color.accentColor : Color.gray)
-                    .foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
-                .buttonStyle(.plain)
-                .disabled(!canSubmitPassphrase || isBusy)
 
                 // The search is a network round trip: never the only way forward.
                 if mode == .importExisting, isSearchingAddresses, !passphrase.isEmpty, !isBusy {
-                    Button {
-                        submitFromEntry(skippingSearch: true)
-                    } label: {
-                        Text("Skip the Search: Import on Address #0")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.accentColor)
+                    skipSearchButton { submitFromEntry(skippingSearch: true) }
                 }
 
                 Button {
@@ -279,6 +248,95 @@ struct PassphraseOptionView: View {
                 .disabled(isBusy)
             }
         }
+    }
+
+    // MARK: - 3. Found (import, no passphrase)
+
+    private var foundScreen: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Your Account")
+                    .font(.title3.weight(.bold))
+
+                Text("KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                PassphraseAddressPreview(
+                    words: seedWords,
+                    passphrase: "",
+                    family: .kaspaStandard,
+                    showsFundsHint: true,
+                    selection: importChoice,
+                    isSearching: $isSearchingAddresses
+                )
+                .disabled(isBusy)
+
+                primaryButton(title: "Import", searching: isSearchingAddresses, enabled: !isSearchingAddresses) {
+                    submit(passphrase: "")
+                }
+
+                if isSearchingAddresses, !isBusy {
+                    skipSearchButton {
+                        importChoice?.wrappedValue = ImportAccountChoice()
+                        submit(passphrase: "")
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .navigationTitle("Import Account")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Back") { step = .question }
+                    .disabled(isBusy)
+            }
+        }
+    }
+
+    private func primaryButton(
+        title: LocalizedStringKey,
+        searching: Bool,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Group {
+                if isBusy {
+                    ProgressView().tint(.white)
+                } else if searching {
+                    HStack(spacing: 8) {
+                        ProgressView().tint(.white)
+                        Text("Finding your address...")
+                            .font(.headline)
+                    }
+                } else {
+                    Text(title)
+                        .font(.headline)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .background(enabled ? Color.accentColor : Color.gray)
+            .foregroundColor(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled || isBusy)
+    }
+
+    private func skipSearchButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("Skip the Search: Import on Address #0")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.accentColor)
     }
 
     private var passphraseFields: some View {
@@ -323,7 +381,7 @@ struct PassphraseOptionView: View {
         }
     }
 
-    // MARK: - 3. What is a passphrase?
+    // MARK: - 4. What is a passphrase?
 
     private var explainerScreen: some View {
         ScrollView {
@@ -396,7 +454,7 @@ struct PassphraseOptionView: View {
             error = "The passphrases do not match. Please re-enter them."
             return
         }
-        if skippingSearch { chattingAddressIndex?.wrappedValue = 0 }
+        if skippingSearch { importChoice?.wrappedValue = ImportAccountChoice() }
         submit(passphrase: passphrase)
     }
 
@@ -434,18 +492,21 @@ struct PassphraseAddressPreview: View {
     var chattingIndex: UInt32 = 0
     let family: WalletSourceFamily
     let showsFundsHint: Bool
-    /// Set when the chatting address isn't known yet: the preview checks the first addresses on
-    /// the identity chain, picks the first with funds, and lets the user pick another.
-    var selectedIndex: Binding<Int>?
+    /// Set when the account isn't known yet: the preview searches every wallet type, picks the
+    /// likeliest account, and lets the user pick another.
+    var selection: Binding<ImportAccountChoice>?
     /// True while that search runs, so the caller can hold its Import until the pick is made.
     var isSearching: Binding<Bool>?
 
-    /// The same depth as one page of the chatting address picker.
-    private static let searchDepth = 0..<50
     /// How long Import waits for that search before letting go and importing onto #0.
     private static let searchTimeoutNanoseconds: UInt64 = 12_000_000_000
 
-    @State private var foundAddresses: [FoundChattingAddress] = []
+    /// What the search found, likeliest first.
+    @State private var foundAddresses: [ImportAccountCandidate] = []
+    /// Address #0 of every wallet type, for words the search can't place.
+    @State private var everyWalletType: [ImportAccountCandidate] = []
+    @State private var showsEveryWalletType = false
+    @State private var previewHasHistory = false
     @State private var previewAddress: String?
     @State private var previewTask: Task<Void, Never>?
     /// What `previewAddress` holds: nil while looking it up, or when the lookup failed.
@@ -473,8 +534,13 @@ struct PassphraseAddressPreview: View {
                 .textSelection(.enabled)
                 .animation(.none, value: previewAddress)
             previewBalanceRow
-            if foundAddresses.count > 1 {
+            if foundAddresses.count > 1 || showsEveryWalletType {
                 foundAddressRows
+            }
+            if selection != nil, isSearching?.wrappedValue != true, !everyWalletType.isEmpty, !showsEveryWalletType {
+                Button("See Every Wallet Type") { showsEveryWalletType = true }
+                    .font(.caption.weight(.semibold))
+                    .padding(.top, 4)
             }
             if searchIncomplete {
                 VStack(alignment: .leading, spacing: 6) {
@@ -535,39 +601,68 @@ struct PassphraseAddressPreview: View {
         }
         .padding(.top, 4)
         if showsFundsHint, let previewBalanceSompi {
-            Text(previewBalanceSompi > 0
-                 ? "This address holds funds, so this looks like the right account."
-                 : "No funds on this address. If you expected funds here, check your passphrase.")
+            fundsHint(balance: previewBalanceSompi)
                 .font(.caption)
-                .foregroundColor(previewBalanceSompi > 0 ? .green : .orange)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
+    @ViewBuilder
+    private func fundsHint(balance: UInt64) -> some View {
+        if balance > 0 {
+            Text("This address holds funds, so this looks like the right account.")
+                .foregroundColor(.green)
+        } else if previewHasHistory {
+            Text("This address has history, so this looks like the right account.")
+                .foregroundColor(.green)
+        } else if passphrase.isEmpty {
+            Text("No funds or history on this address.")
+                .foregroundColor(.secondary)
+        } else {
+            Text("No funds on this address. If you expected funds here, check your passphrase.")
+                .foregroundColor(.orange)
+        }
+    }
+
+    private var visibleAddressRows: [ImportAccountCandidate] {
+        guard showsEveryWalletType else { return foundAddresses }
+        let foundIDs = Set(foundAddresses.map(\.id))
+        return foundAddresses + everyWalletType.filter { !foundIDs.contains($0.id) }
+    }
+
     private var foundAddressRows: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("We picked the first address with funds. Tap another if that's not the one you use.")
+            Text("We picked the most likely account. Tap another if that's not the one you use.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            ForEach(foundAddresses) { found in
+            ForEach(visibleAddressRows) { found in
                 Button {
                     select(found)
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: selectedIndex?.wrappedValue == found.index ? "checkmark.circle.fill" : "circle")
+                        Image(systemName: selection?.wrappedValue == found.choice ? "checkmark.circle.fill" : "circle")
                             .foregroundColor(.accentColor)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Address #\(found.index)")
+                            Text(verbatim: found.family.displayName)
                                 .font(.caption.weight(.semibold))
+                            Text("Address #\(found.index)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                             Text(verbatim: "\(found.address.prefix(14))...\(found.address.suffix(6))")
                                 .font(.system(.caption2, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
-                        Text(verbatim: KaspaUnit.amount(found.balanceSompi))
-                            .font(.caption.weight(.semibold))
-                            .foregroundColor(found.balanceSompi > 0 ? .green : .secondary)
+                        if found.balanceSompi > 0 {
+                            Text(verbatim: KaspaUnit.amount(found.balanceSompi))
+                                .font(.caption.weight(.semibold))
+                                .foregroundColor(.green)
+                        } else if found.hasHistory {
+                            Text("Has history")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                     .contentShape(Rectangle())
                 }
@@ -577,10 +672,11 @@ struct PassphraseAddressPreview: View {
         .padding(.top, 8)
     }
 
-    private func select(_ found: FoundChattingAddress) {
-        selectedIndex?.wrappedValue = found.index
+    private func select(_ found: ImportAccountCandidate) {
+        selection?.wrappedValue = found.choice
         previewAddress = found.address
         previewBalanceSompi = found.balanceSompi
+        previewHasHistory = found.hasHistory
     }
 
     private func schedulePreview(for typed: String) {
@@ -594,11 +690,14 @@ struct PassphraseAddressPreview: View {
         }
         previewBalanceSompi = nil
         previewBalanceFailed = false
+        previewHasHistory = false
         foundAddresses = []
-        selectedIndex?.wrappedValue = 0
+        everyWalletType = []
+        showsEveryWalletType = false
+        selection?.wrappedValue = ImportAccountChoice()
         // Held from the first keystroke, not only once the lookup starts: an Import tapped in
         // the pause would otherwise go to #0.
-        isSearching?.wrappedValue = selectedIndex != nil
+        isSearching?.wrappedValue = selection != nil
         previewTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
@@ -617,7 +716,8 @@ struct PassphraseAddressPreview: View {
             // a further pause, so only the passphrase someone stopped typing is looked up
             try? await Task.sleep(nanoseconds: 450_000_000)
             guard !Task.isCancelled else { return }
-            if selectedIndex != nil {
+            if selection != nil {
+                everyWalletType = walletManager.importAddressesAtZero(words: words, passphrase: typed)
                 // A slow or unreachable node lets Import go after the timeout, onto #0, and says
                 // so; an answer that comes later is ignored.
                 let token = UUID()
@@ -629,25 +729,26 @@ struct PassphraseAddressPreview: View {
                     searchIncomplete = true
                     previewBalanceFailed = true
                     isSearching?.wrappedValue = false
+                    // a node-less search falls back to one REST call per address: stop those
+                    previewTask?.cancel()
                 }
                 searchTimeoutTask = timeout
-                let found = await walletManager.findChattingAddresses(
-                    words: words,
-                    passphrase: typed,
-                    family: family,
-                    indices: Self.searchDepth
-                )
+                let found = await walletManager.findImportAccounts(words: words, passphrase: typed)
                 timeout.cancel()
                 guard !Task.isCancelled, searchToken == token else { return }
                 searchToken = nil
                 isSearching?.wrappedValue = false
-                guard let found, let first = found.first(where: { $0.balanceSompi > 0 }) ?? found.first else {
+                guard let found else {
                     searchIncomplete = true
                     previewBalanceFailed = true
                     return
                 }
                 foundAddresses = found
-                select(first)
+                if let first = found.first {
+                    select(first)
+                } else {
+                    previewBalanceSompi = 0
+                }
                 return
             }
             let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])

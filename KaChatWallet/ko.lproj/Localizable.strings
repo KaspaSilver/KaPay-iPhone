@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "기본값 (권장)";
 "Delete That Screenshot" = "그 스크린샷 삭제";
 "Delete saved address" = "저장된 주소 삭제";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "지갑마다 Kaspa를 보관하는 주소 경로가 다릅니다. KaPay이 자금과 도메인을 찾을 수 있도록 이 단어가 어디서 왔는지 고르세요.";
 "Disconnect" = "연결 해제";
 "Disconnect Nextcloud" = "Nextcloud 연결 해제";
 "Do you already have a domain?" = "이미 도메인이 있나요?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "캐시된 항목";
 "When a spending address receives Kaspa from someone else." = "지출 주소가 다른 사람에게서 Kaspa를 받을 때.";
 "Where are you sending from?" = "어디에서 보내나요?";
-"Where are your 12 or 24 words from?" = "12개 또는 24개 단어는 어디서 왔나요?";
 "Where do you want to be paid?" = "어디로 받을까요?";
 "Which domain should this profile use?" = "이 프로필에 어떤 도메인을 사용할까요?";
 "Who are you sending to?" = "누구에게 보내나요?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "기본 도메인 설정 확인";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "원하는 가격을 제시하세요. 판매자가 수락하거나, 제안을 철회하거나, 기간이 만료될 때까지 KAS는 체인에서 대기합니다.";
 "Couldn't load this address's names. Pull down to try again." = "이 주소의 이름을 불러오지 못했습니다. 아래로 당겨 다시 시도하세요.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "자금이 있는 첫 번째 주소를 선택했습니다. 사용하는 주소가 아니면 다른 주소를 탭하세요.";
 "This is the public half of this address. It cannot spend anything." = "이 주소의 공개 부분입니다. 이것으로는 아무것도 사용할 수 없습니다.";
+"Standard Kaspa Wallet" = "표준 Kaspa 지갑";
+"Has history" = "기록 있음";
+"See Every Wallet Type" = "모든 지갑 유형 보기";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay이 모든 종류의 Kaspa 지갑과 단어를 대조하므로 어느 지갑의 단어인지 몰라도 됩니다.";
+"This address has history, so this looks like the right account." = "이 주소에 기록이 있어 올바른 계정으로 보입니다.";
+"No funds or history on this address." = "이 주소에는 자금이나 기록이 없습니다.";
+"We picked the most likely account. Tap another if that's not the one you use." = "가장 가능성이 높은 계정을 선택했습니다. 사용하는 계정이 아니면 다른 계정을 탭하세요.";
+"Your Account" = "내 계정";

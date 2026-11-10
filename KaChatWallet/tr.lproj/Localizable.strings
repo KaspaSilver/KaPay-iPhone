@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "Varsayılan (Önerilen)";
 "Delete That Screenshot" = "O Ekran Görüntüsünü Sil";
 "Delete saved address" = "Kayıtlı adresi sil";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "Farklı cüzdanlar Kaspa'nı farklı adres yollarında saklar. KaPay'in fonlarını ve alan adlarını bulabilmesi için bu kelimelerin nereden geldiğini seç.";
 "Disconnect" = "Bağlantıyı Kes";
 "Disconnect Nextcloud" = "Nextcloud Bağlantısını Kes";
 "Do you already have a domain?" = "Zaten bir alan adın var mı?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "Önbellekte Neler Var";
 "When a spending address receives Kaspa from someone else." = "Bir harcama adresi başkasından Kaspa aldığında.";
 "Where are you sending from?" = "Nereden gönderiyorsun?";
-"Where are your 12 or 24 words from?" = "12 veya 24 kelimen nereden?";
 "Where do you want to be paid?" = "Ödemeyi nereye almak istiyorsun?";
 "Which domain should this profile use?" = "Bu profil hangi alan adını kullansın?";
 "Who are you sending to?" = "Kime gönderiyorsun?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "Birincil alan adını ayarlamayı onayla";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "Kendi fiyatını belirle. KAS'ın, satıcı kabul edene, teklifi geri çekene veya süresi dolana kadar zincirde bekler.";
 "Couldn't load this address's names. Pull down to try again." = "Bu adresin adları yüklenemedi. Tekrar denemek için aşağı çek.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "Bakiyesi olan ilk adresi seçtik. Kullandığın adres bu değilse başka birine dokun.";
 "This is the public half of this address. It cannot spend anything." = "Bu, bu adresin genel yarısıdır. Hiçbir şey harcayamaz.";
+"Standard Kaspa Wallet" = "Standart Kaspa Cüzdanı";
+"Has history" = "Geçmişi var";
+"See Every Wallet Type" = "Tüm Cüzdan Türlerini Gör";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay kelimelerinizi her tür Kaspa cüzdanıyla karşılaştırır, bu yüzden hangi cüzdandan geldiklerini bilmeniz gerekmez.";
+"This address has history, so this looks like the right account." = "Bu adresin geçmişi var, yani doğru hesap gibi görünüyor.";
+"No funds or history on this address." = "Bu adreste bakiye veya geçmiş yok.";
+"We picked the most likely account. Tap another if that's not the one you use." = "En olası hesabı seçtik. Kullandığınız bu değilse başka birine dokunun.";
+"Your Account" = "Hesabınız";

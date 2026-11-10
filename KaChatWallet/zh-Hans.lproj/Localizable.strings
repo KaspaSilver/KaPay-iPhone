@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "默认（推荐）";
 "Delete That Screenshot" = "删除那张截图";
 "Delete saved address" = "删除已保存的地址";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "不同的钱包把你的 Kaspa 存在不同的地址路径上。请选择这些单词来自哪里，这样 KaPay 才能找到你的资金和域名。";
 "Disconnect" = "断开连接";
 "Disconnect Nextcloud" = "断开 Nextcloud";
 "Do you already have a domain?" = "你已经有域名了吗？";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "缓存了什么";
 "When a spending address receives Kaspa from someone else." = "当支出地址收到别人发来的 Kaspa 时。";
 "Where are you sending from?" = "你要从哪里发送？";
-"Where are your 12 or 24 words from?" = "你的 12 或 24 个单词来自哪里？";
 "Where do you want to be paid?" = "你想收款到哪里？";
 "Which domain should this profile use?" = "此个人资料应使用哪个域名？";
 "Who are you sending to?" = "你要发送给谁？";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "确认设置你的主域名";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "自行出价。你的 KAS 会在链上等待，直到卖家接受、你撤回报价或报价过期。";
 "Couldn't load this address's names. Pull down to try again." = "无法加载此地址的名称。下拉即可重试。";
-"We picked the first address with funds. Tap another if that's not the one you use." = "我们选择了第一个有资金的地址。如果这不是你使用的地址，请轻点其他地址。";
 "This is the public half of this address. It cannot spend anything." = "这是此地址的公开部分，无法用它花费任何资金。";
+"Standard Kaspa Wallet" = "标准 Kaspa 钱包";
+"Has history" = "有历史记录";
+"See Every Wallet Type" = "查看所有钱包类型";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay 会用你的助记词核对每一种 Kaspa 钱包，所以你不需要知道它们来自哪个钱包。";
+"This address has history, so this looks like the right account." = "此地址有历史记录，看起来是正确的账户。";
+"No funds or history on this address." = "此地址没有资金或历史记录。";
+"We picked the most likely account. Tap another if that's not the one you use." = "我们选择了最可能的账户。如果这不是你使用的账户，请点按其他账户。";
+"Your Account" = "你的账户";

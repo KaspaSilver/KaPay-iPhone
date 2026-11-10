@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "Default (Recommended)";
 "Delete That Screenshot" = "Delete That Screenshot";
 "Delete saved address" = "Delete saved address";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains.";
 "Disconnect" = "Disconnect";
 "Disconnect Nextcloud" = "Disconnect Nextcloud";
 "Do you already have a domain?" = "Do you already have a domain?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "What's Cached";
 "When a spending address receives Kaspa from someone else." = "When a spending address receives Kaspa from someone else.";
 "Where are you sending from?" = "Where are you sending from?";
-"Where are your 12 or 24 words from?" = "Where are your 12 or 24 words from?";
 "Where do you want to be paid?" = "Where do you want to be paid?";
 "Which domain should this profile use?" = "Which domain should this profile use?";
 "Who are you sending to?" = "Who are you sending to?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "Confirm setting your primary domain";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires.";
 "Couldn't load this address's names. Pull down to try again." = "Couldn't load this address's names. Pull down to try again.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "We picked the first address with funds. Tap another if that's not the one you use.";
 "This is the public half of this address. It cannot spend anything." = "This is the public half of this address. It cannot spend anything.";
+"Standard Kaspa Wallet" = "Standard Kaspa Wallet";
+"Has history" = "Has history";
+"See Every Wallet Type" = "See Every Wallet Type";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from.";
+"This address has history, so this looks like the right account." = "This address has history, so this looks like the right account.";
+"No funds or history on this address." = "No funds or history on this address.";
+"We picked the most likely account. Tap another if that's not the one you use." = "We picked the most likely account. Tap another if that's not the one you use.";
+"Your Account" = "Your Account";

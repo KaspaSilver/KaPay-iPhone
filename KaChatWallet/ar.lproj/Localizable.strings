@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "افتراضي (موصى به)";
 "Delete That Screenshot" = "احذف لقطة الشاشة تلك";
 "Delete saved address" = "حذف العنوان المحفوظ";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "تخزّن المحافظ المختلفة Kaspa الخاص بك على مسارات عناوين مختلفة. اختر المحفظة التي جاءت منها هذه الكلمات ليجد KaPay أموالك ونطاقاتك.";
 "Disconnect" = "قطع الاتصال";
 "Disconnect Nextcloud" = "قطع اتصال Nextcloud";
 "Do you already have a domain?" = "هل لديك نطاق بالفعل؟";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "ما المخزَّن مؤقتًا";
 "When a spending address receives Kaspa from someone else." = "عندما يستلم عنوان إنفاق Kaspa من شخص آخر.";
 "Where are you sending from?" = "من أين ترسل؟";
-"Where are your 12 or 24 words from?" = "من أين جاءت كلماتك الـ 12 أو 24؟";
 "Where do you want to be paid?" = "أين تريد أن تستلم الدفعة؟";
 "Which domain should this profile use?" = "أي نطاق يجب أن يستخدمه هذا الملف الشخصي؟";
 "Who are you sending to?" = "إلى من ترسل؟";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "تأكيد تعيين نطاقك الأساسي";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "حدد السعر الذي تريده. يبقى KAS الخاص بك على السلسلة حتى يقبل البائع أو تسحب العرض أو تنتهي صلاحيته.";
 "Couldn't load this address's names. Pull down to try again." = "تعذر تحميل أسماء هذا العنوان. اسحب لأسفل للمحاولة مرة أخرى.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "اخترنا أول عنوان يحتوي على رصيد. اضغط على عنوان آخر إذا لم يكن هذا هو الذي تستخدمه.";
 "This is the public half of this address. It cannot spend anything." = "هذا هو النصف العام من هذا العنوان، ولا يمكنه إنفاق أي شيء.";
+"Standard Kaspa Wallet" = "محفظة Kaspa القياسية";
+"Has history" = "له سجل";
+"See Every Wallet Type" = "عرض كل أنواع المحافظ";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "يفحص KaPay كلماتك مقابل كل أنواع محافظ Kaspa، فلا تحتاج إلى معرفة المحفظة التي جاءت منها.";
+"This address has history, so this looks like the right account." = "لهذا العنوان سجل، لذا يبدو أن هذا هو الحساب الصحيح.";
+"No funds or history on this address." = "لا توجد أموال أو سجل على هذا العنوان.";
+"We picked the most likely account. Tap another if that's not the one you use." = "اخترنا الحساب الأرجح. اضغط على حساب آخر إذا لم يكن هذا هو الذي تستخدمه.";
+"Your Account" = "حسابك";

@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "デフォルト（推奨）";
 "Delete That Screenshot" = "そのスクリーンショットを削除";
 "Delete saved address" = "保存したアドレスを削除";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "ウォレットによって、Kaspaを保管するアドレスのパスが異なります。KaPayが資金とドメインを見つけられるよう、これらの単語がどこのものかを選んでください。";
 "Disconnect" = "切断";
 "Disconnect Nextcloud" = "Nextcloudを切断";
 "Do you already have a domain?" = "すでにドメインをお持ちですか？";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "キャッシュされているもの";
 "When a spending address receives Kaspa from someone else." = "支出アドレスが他の人からKaspaを受け取ったとき。";
 "Where are you sending from?" = "どこから送りますか？";
-"Where are your 12 or 24 words from?" = "12語または24語はどこのものですか？";
 "Where do you want to be paid?" = "どこで受け取りますか？";
 "Which domain should this profile use?" = "このプロフィールにはどのドメインを使いますか？";
 "Who are you sending to?" = "誰に送りますか？";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "プライマリドメインの設定を確認";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "希望の価格を指定できます。KASは、売り手が承諾するか、オファーを取り下げるか、期限が切れるまでチェーン上で待機します。";
 "Couldn't load this address's names. Pull down to try again." = "このアドレスの名前を読み込めませんでした。下に引いてもう一度お試しください。";
-"We picked the first address with funds. Tap another if that's not the one you use." = "資金のある最初のアドレスを選択しました。使用しているアドレスと異なる場合は、別のアドレスをタップしてください。";
 "This is the public half of this address. It cannot spend anything." = "これはこのアドレスの公開部分です。何も使うことはできません。";
+"Standard Kaspa Wallet" = "標準のKaspaウォレット";
+"Has history" = "履歴あり";
+"See Every Wallet Type" = "すべてのウォレットの種類を表示";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPayがあらゆる種類のKaspaウォレットと照合するため、どのウォレットの単語かを知らなくても大丈夫です。";
+"This address has history, so this looks like the right account." = "このアドレスには履歴があるため、正しいアカウントのようです。";
+"No funds or history on this address." = "このアドレスには資金も履歴もありません。";
+"We picked the most likely account. Tap another if that's not the one you use." = "最も可能性の高いアカウントを選びました。使っているものと違う場合は、別のアカウントをタップしてください。";
+"Your Account" = "あなたのアカウント";

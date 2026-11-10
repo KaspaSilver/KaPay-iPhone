@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "پیش‌فرض (توصیه‌شده)";
 "Delete That Screenshot" = "آن عکس صفحه را پاک کنید";
 "Delete saved address" = "حذف آدرس ذخیره‌شده";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "کیف پول‌های مختلف Kaspa شما را روی مسیرهای آدرس متفاوتی نگه می‌دارند. انتخاب کنید این کلمات از کجا آمده‌اند تا KaPay دارایی و دامنه‌های شما را پیدا کند.";
 "Disconnect" = "قطع اتصال";
 "Disconnect Nextcloud" = "قطع اتصال Nextcloud";
 "Do you already have a domain?" = "آیا از قبل دامنه دارید؟";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "آنچه در حافظه پنهان است";
 "When a spending address receives Kaspa from someone else." = "وقتی یک آدرس خرج کردن از کس دیگری Kaspa دریافت می‌کند.";
 "Where are you sending from?" = "از کجا می‌فرستید؟";
-"Where are your 12 or 24 words from?" = "۱۲ یا ۲۴ کلمه شما از کجا آمده است؟";
 "Where do you want to be paid?" = "می‌خواهید پرداخت به کجا برسد؟";
 "Which domain should this profile use?" = "این نمایه از کدام دامنه استفاده کند؟";
 "Who are you sending to?" = "برای چه کسی می‌فرستید؟";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "تأیید تنظیم دامنه اصلی شما";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "قیمت خودتان را بگذارید. KAS شما روی زنجیره می‌ماند تا فروشنده بپذیرد، شما پیشنهاد را پس بگیرید یا منقضی شود.";
 "Couldn't load this address's names. Pull down to try again." = "بارگیری نام‌های این آدرس ممکن نشد. برای تلاش دوباره به پایین بکشید.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "اولین آدرس دارای موجودی را انتخاب کردیم. اگر از این آدرس استفاده نمی‌کنید، آدرس دیگری را لمس کنید.";
 "This is the public half of this address. It cannot spend anything." = "این نیمه عمومی این آدرس است و نمی‌تواند چیزی خرج کند.";
+"Standard Kaspa Wallet" = "کیف پول استاندارد Kaspa";
+"Has history" = "دارای سابقه";
+"See Every Wallet Type" = "دیدن همهٔ انواع کیف پول";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay کلمات شما را با همهٔ انواع کیف پول Kaspa بررسی می‌کند، پس لازم نیست بدانید از کدام کیف پول آمده‌اند.";
+"This address has history, so this looks like the right account." = "این آدرس سابقه دارد، پس به نظر می‌رسد حساب درست همین است.";
+"No funds or history on this address." = "این آدرس موجودی یا سابقه‌ای ندارد.";
+"We picked the most likely account. Tap another if that's not the one you use." = "محتمل‌ترین حساب را انتخاب کردیم. اگر از این حساب استفاده نمی‌کنید، روی حساب دیگری بزنید.";
+"Your Account" = "حساب شما";

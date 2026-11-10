@@ -1,27 +1,47 @@
 import SwiftUI
 
-/// Import Account, after the source wallet (`ImportSourceWalletView`): the account's name, local
-/// to this device - the same screen as Create Account's first step. Then the seed length
-/// (`ImportLengthStep`), the words (`ImportWalletView`), and the optional passphrase.
+/// Import Account's first screen: the account's name, local to this device - the same screen as
+/// Create Account's first step. Then the seed length (`ImportLengthStep`), the words
+/// (`ImportWalletView`), and the passphrase step, which finds the wallet those words belong to.
 struct ImportNameStep: View {
-    var sourceFamily: WalletSourceFamily = .kaspaStandard
     /// Starts empty on purpose: the name is the user's choice.
     @State private var alias = ""
     @State private var showLengthStep = false
+    @State private var showNFCCardRestore = false
 
     var body: some View {
         AccountNameForm(alias: $alias) { showLengthStep = true }
+            .safeAreaInset(edge: .bottom, spacing: 0) { nfcRestoreButton }
             .navigationTitle("Import Account")
             .navigationBarTitleDisplayMode(.large)
             .navigationDestination(isPresented: $showLengthStep) {
-                ImportLengthStep(sourceFamily: sourceFamily, alias: alias.trimmingCharacters(in: .whitespacesAndNewlines))
+                ImportLengthStep(alias: alias.trimmingCharacters(in: .whitespacesAndNewlines))
             }
+            .navigationDestination(isPresented: $showNFCCardRestore) {
+                #if canImport(CoreNFC) && !targetEnvironment(macCatalyst)
+                NFCCardRestoreView()
+                #endif
+            }
+    }
+
+    @ViewBuilder
+    private var nfcRestoreButton: some View {
+        #if canImport(CoreNFC) && !targetEnvironment(macCatalyst)
+        if NFCCard.isAvailable {
+            Button {
+                showNFCCardRestore = true
+            } label: {
+                Label("Restore from NFC Card", systemImage: "wave.3.right")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .padding(.vertical, 12)
+        }
+        #endif
     }
 }
 
 /// Import Account: how many words the seed phrase being imported has.
 struct ImportLengthStep: View {
-    let sourceFamily: WalletSourceFamily
     let alias: String
     /// No length is selected until the user picks one.
     @State private var wordCount: Int?
@@ -48,7 +68,7 @@ struct ImportLengthStep: View {
         .navigationBarTitleDisplayMode(.large)
         .navigationDestination(isPresented: $showWords) {
             if let wordCount {
-                ImportWalletView(sourceFamily: sourceFamily, alias: alias, wordCount: wordCount)
+                ImportWalletView(alias: alias, wordCount: wordCount)
             }
         }
     }
@@ -58,10 +78,6 @@ struct ImportLengthStep: View {
 struct ImportWalletView: View {
     @EnvironmentObject var walletManager: WalletManager
 
-    /// Identity derivation-path family of the wallet this seed comes from, chosen on the
-    /// source-wallet screen (`ImportSourceWalletView`) BEFORE this seed-entry screen. Standard
-    /// (KaChat's own path) unless the user picked a wallet on another branch.
-    var sourceFamily: WalletSourceFamily = .kaspaStandard
     /// The account's name, from `ImportNameStep`.
     var alias: String = "Imported Account"
 
@@ -70,12 +86,11 @@ struct ImportWalletView: View {
     // Fixed-capacity backing store; only the first `seedWordCount` entries are used.
     @State private var words: [String] = Array(repeating: "", count: 24)
     @State private var showPassphraseStep = false
-    /// The address the passphrase step found or the user picked there.
-    @State private var chattingAddressIndex = 0
+    /// The wallet type and address the passphrase step found or the user picked there.
+    @State private var importChoice = ImportAccountChoice()
     @State private var error: String?
 
-    init(sourceFamily: WalletSourceFamily = .kaspaStandard, alias: String = "Imported Account", wordCount: Int = 24) {
-        self.sourceFamily = sourceFamily
+    init(alias: String = "Imported Account", wordCount: Int = 24) {
         self.alias = alias
         _seedWordCount = State(initialValue: wordCount == 12 ? 12 : 24)
     }
@@ -170,12 +185,10 @@ struct ImportWalletView: View {
         .navigationDestination(isPresented: $showPassphraseStep) {
             PassphraseOptionView(
                 mode: .importExisting,
-                // The live address preview needs the words and the derivation family, so what it
-                // shows is the address this import would actually produce.
+                // The search for this seed's wallet needs the words.
                 seedWords: slots.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
                     .filter { !$0.isEmpty },
-                family: sourceFamily,
-                chattingAddressIndex: $chattingAddressIndex
+                importChoice: $importChoice
             ) { passphrase in
                 try await commitImport(passphrase: passphrase)
             }
@@ -207,8 +220,8 @@ struct ImportWalletView: View {
             from: seedPhraseText,
             alias: alias,
             passphrase: passphrase,
-            chattingAddressIndex: passphrase.isEmpty ? 0 : chattingAddressIndex,
-            family: sourceFamily
+            chattingAddressIndex: importChoice.index,
+            family: importChoice.family
         )
     }
 }

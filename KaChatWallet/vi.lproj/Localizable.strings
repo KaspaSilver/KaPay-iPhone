@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "Mặc định (Khuyến nghị)";
 "Delete That Screenshot" = "Xóa ảnh chụp màn hình đó";
 "Delete saved address" = "Xóa địa chỉ đã lưu";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "Mỗi ví lưu Kaspa của bạn ở một đường dẫn địa chỉ khác nhau. Hãy chọn nơi các từ này đến từ để KaPay tìm thấy tiền và tên miền của bạn.";
 "Disconnect" = "Ngắt kết nối";
 "Disconnect Nextcloud" = "Ngắt kết nối Nextcloud";
 "Do you already have a domain?" = "Bạn đã có tên miền chưa?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "Những gì được lưu đệm";
 "When a spending address receives Kaspa from someone else." = "Khi một địa chỉ chi tiêu nhận Kaspa từ người khác.";
 "Where are you sending from?" = "Bạn gửi từ đâu?";
-"Where are your 12 or 24 words from?" = "12 hoặc 24 từ của bạn đến từ đâu?";
 "Where do you want to be paid?" = "Bạn muốn nhận tiền ở đâu?";
 "Which domain should this profile use?" = "Hồ sơ này nên dùng tên miền nào?";
 "Who are you sending to?" = "Bạn gửi cho ai?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "Xác nhận đặt tên miền chính của bạn";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "Tự đặt giá của bạn. KAS của bạn chờ trên chuỗi cho đến khi người bán chấp nhận, bạn rút đề nghị hoặc đề nghị hết hạn.";
 "Couldn't load this address's names. Pull down to try again." = "Không thể tải các tên của địa chỉ này. Kéo xuống để thử lại.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "Chúng tôi đã chọn địa chỉ đầu tiên có tiền. Chạm vào địa chỉ khác nếu đó không phải địa chỉ bạn dùng.";
 "This is the public half of this address. It cannot spend anything." = "Đây là phần công khai của địa chỉ này. Nó không thể chi tiêu gì.";
+"Standard Kaspa Wallet" = "Ví Kaspa tiêu chuẩn";
+"Has history" = "Có lịch sử";
+"See Every Wallet Type" = "Xem mọi loại ví";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay đối chiếu các từ của bạn với mọi loại ví Kaspa, nên bạn không cần biết chúng đến từ ví nào.";
+"This address has history, so this looks like the right account." = "Địa chỉ này có lịch sử, nên có vẻ đây là tài khoản đúng.";
+"No funds or history on this address." = "Địa chỉ này không có tiền hoặc lịch sử.";
+"We picked the most likely account. Tap another if that's not the one you use." = "Chúng tôi đã chọn tài khoản có khả năng nhất. Hãy chạm vào tài khoản khác nếu đây không phải tài khoản bạn dùng.";
+"Your Account" = "Tài khoản của bạn";

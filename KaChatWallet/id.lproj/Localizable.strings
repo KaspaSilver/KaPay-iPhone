@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "Default (Disarankan)";
 "Delete That Screenshot" = "Hapus Tangkapan Layar Itu";
 "Delete saved address" = "Hapus alamat tersimpan";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "Setiap dompet menyimpan Kaspa Anda di jalur alamat yang berbeda. Pilih asal kata-kata ini agar KaPay dapat menemukan dana dan domain Anda.";
 "Disconnect" = "Putuskan";
 "Disconnect Nextcloud" = "Putuskan Nextcloud";
 "Do you already have a domain?" = "Apakah Anda sudah punya domain?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "Yang Di-cache";
 "When a spending address receives Kaspa from someone else." = "Saat alamat pengeluaran menerima Kaspa dari orang lain.";
 "Where are you sending from?" = "Kamu mengirim dari mana?";
-"Where are your 12 or 24 words from?" = "Dari mana 12 atau 24 kata Anda berasal?";
 "Where do you want to be paid?" = "Kamu ingin dibayar ke mana?";
 "Which domain should this profile use?" = "Domain mana yang harus dipakai profil ini?";
 "Who are you sending to?" = "Kamu mengirim ke siapa?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "Konfirmasi penetapan domain utama Anda";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "Tentukan harga Anda sendiri. KAS Anda menunggu di chain sampai penjual menerima, Anda menarik penawaran, atau penawaran kedaluwarsa.";
 "Couldn't load this address's names. Pull down to try again." = "Tidak dapat memuat nama alamat ini. Tarik ke bawah untuk mencoba lagi.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "Kami memilih alamat pertama yang berisi dana. Ketuk yang lain jika itu bukan alamat yang Anda gunakan.";
 "This is the public half of this address. It cannot spend anything." = "Ini adalah bagian publik dari alamat ini. Tidak dapat membelanjakan apa pun.";
+"Standard Kaspa Wallet" = "Dompet Kaspa Standar";
+"Has history" = "Ada riwayat";
+"See Every Wallet Type" = "Lihat Semua Jenis Dompet";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay memeriksa kata-kata Anda pada setiap jenis dompet Kaspa, jadi Anda tidak perlu tahu asalnya dari dompet mana.";
+"This address has history, so this looks like the right account." = "Alamat ini punya riwayat, jadi sepertinya ini akun yang benar.";
+"No funds or history on this address." = "Tidak ada dana atau riwayat di alamat ini.";
+"We picked the most likely account. Tap another if that's not the one you use." = "Kami memilih akun yang paling mungkin. Ketuk yang lain jika bukan ini yang Anda gunakan.";
+"Your Account" = "Akun Anda";

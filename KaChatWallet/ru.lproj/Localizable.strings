@@ -1722,7 +1722,6 @@
 "Default (Recommended)" = "По умолчанию (рекомендуется)";
 "Delete That Screenshot" = "Удалите этот скриншот";
 "Delete saved address" = "Удалить сохранённый адрес";
-"Different wallets store your Kaspa on different address paths. Pick where these words come from so KaPay finds your funds and domains." = "Разные кошельки хранят ваши Kaspa по разным путям адресов. Выберите, откуда эти слова, чтобы KaPay нашёл ваши средства и домены.";
 "Disconnect" = "Отключить";
 "Disconnect Nextcloud" = "Отключить Nextcloud";
 "Do you already have a domain?" = "У вас уже есть домен?";
@@ -1895,7 +1894,6 @@
 "What's Cached" = "Что в кэше";
 "When a spending address receives Kaspa from someone else." = "Когда адрес для трат получает Kaspa от другого человека.";
 "Where are you sending from?" = "Откуда вы отправляете?";
-"Where are your 12 or 24 words from?" = "Откуда ваши 12 или 24 слова?";
 "Where do you want to be paid?" = "Куда вам заплатить?";
 "Which domain should this profile use?" = "Какой домен должен использовать этот профиль?";
 "Who are you sending to?" = "Кому вы отправляете?";
@@ -2050,5 +2048,12 @@
 "Confirm setting your primary domain" = "Подтвердите установку основного домена";
 "Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires." = "Назначьте свою цену. Ваши KAS ждут в блокчейне, пока продавец не примет предложение, вы его не отзовёте или не истечёт его срок.";
 "Couldn't load this address's names. Pull down to try again." = "Не удалось загрузить имена этого адреса. Потяните вниз, чтобы повторить.";
-"We picked the first address with funds. Tap another if that's not the one you use." = "Мы выбрали первый адрес со средствами. Нажмите другой, если вы используете не этот.";
 "This is the public half of this address. It cannot spend anything." = "Это открытая часть этого адреса. С её помощью ничего нельзя потратить.";
+"Standard Kaspa Wallet" = "Стандартный кошелёк Kaspa";
+"Has history" = "Есть история";
+"See Every Wallet Type" = "Показать все типы кошельков";
+"KaPay checks your words against every kind of Kaspa wallet, so you don't need to know which one they came from." = "KaPay проверяет ваши слова по всем типам кошельков Kaspa, поэтому вам не нужно знать, из какого они.";
+"This address has history, so this looks like the right account." = "У этого адреса есть история, похоже, это нужный аккаунт.";
+"No funds or history on this address." = "На этом адресе нет средств и истории.";
+"We picked the most likely account. Tap another if that's not the one you use." = "Мы выбрали наиболее вероятный аккаунт. Нажмите на другой, если вы используете не этот.";
+"Your Account" = "Ваш аккаунт";
