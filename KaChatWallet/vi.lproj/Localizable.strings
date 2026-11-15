@@ -606,7 +606,6 @@
 "Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Doesn't affect the indexers, domains or explorer on the other tabs. Add custom addresses to the IP Address Book below to select them here." = "Quét tự động tìm và kết nối với các node tốt nhất. Chọn một node cụ thể chỉ kết nối với node đó, không chuyển sang node khác. Không ảnh hưởng đến trình lập chỉ mục, tên miền hay trình khám phá ở các tab khác. Thêm địa chỉ của bạn vào Sổ địa chỉ IP bên dưới để chọn ở đây.";
 
 /* 5.2: Kaspa Hub > .kachat marketplace */
-"Find a name" = "Tìm tên";
 "Registration isn't open yet." = "Chưa mở đăng ký.";
 "Claim" = "Nhận";
 "Marketplace" = "Chợ";
@@ -2083,6 +2082,6 @@
 "Passcode Required" = "Cần mật mã";
 "Set a passcode on this iPhone (Settings > Face ID & Passcode) to delete an account or view secret keys in KaPay." = "Hãy đặt mật mã trên iPhone này (Cài đặt > Face ID & Mật mã) để xóa tài khoản hoặc xem khóa bí mật trong KaPay.";
 "Claim your name on Kaspa" = "Nhận tên của bạn trên Kaspa";
-"Type the name you want. If it's free, tap Claim." = "Nhập tên bạn muốn. Nếu còn trống, chạm Nhận.";
+"Type the name you want" = "Nhập tên bạn muốn";
 "See All" = "Xem tất cả";
 "Your Names" = "Tên của bạn";

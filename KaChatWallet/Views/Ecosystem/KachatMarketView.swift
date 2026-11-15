@@ -1263,7 +1263,7 @@ struct KachatAddressLiveNamesList: View {
 }
 
 /// The .kachat screen's search, first under the logo: type a name, and whether it's free (Claim)
-/// or taken (it opens). With nothing typed, a line says what to do.
+/// or taken (it opens).
 private struct KachatNameSearchCard: View {
     @ObservedObject var live: KachatHubModel
     let onClaim: (KachatClaimTarget) -> Void
@@ -1275,7 +1275,7 @@ private struct KachatNameSearchCard: View {
                 Image(systemName: "magnifyingglass")
                     .font(.body.weight(.semibold))
                     .foregroundColor(.accentColor)
-                TextField("Find a name", text: $searchText)
+                TextField("Type the name you want", text: $searchText)
                     .font(.title3)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -1301,10 +1301,7 @@ private struct KachatNameSearchCard: View {
 
             let typed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if typed.isEmpty {
-                Text("Type the name you want. If it's free, tap Claim.")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 4)
+                EmptyView()
             } else if live.isLive {
                 KachatLiveSearchResult(model: live, typed: typed) { onClaim($0) }
             } else {

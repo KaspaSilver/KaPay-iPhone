@@ -604,7 +604,6 @@
 "Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Doesn't affect the indexers, domains or explorer on the other tabs. Add custom addresses to the IP Address Book below to select them here." = "סריקה אוטומטית מוצאת את הצמתים הטובים ביותר ומתחברת אליהם. בחירת צומת מסוים מתחברת רק אליו, בלי מעבר לאחרים. לא משפיע על האינדקסרים, הדומיינים או הסייר בלשוניות האחרות. הוסיפו כתובות משלכם לפנקס כתובות ה-IP למטה כדי לבחור אותן כאן.";
 
 /* 5.2: Kaspa Hub > .kachat marketplace */
-"Find a name" = "חיפוש שם";
 "Registration isn't open yet." = "ההרשמה עדיין לא נפתחה.";
 "Claim" = "קבלה";
 "Marketplace" = "שוק";
@@ -2083,6 +2082,6 @@
 "Passcode Required" = "נדרש קוד גישה";
 "Set a passcode on this iPhone (Settings > Face ID & Passcode) to delete an account or view secret keys in KaPay." = "הגדירו קוד גישה ב-iPhone הזה (הגדרות > Face ID וקוד גישה) כדי למחוק חשבון או לראות מפתחות סודיים ב-KaPay.";
 "Claim your name on Kaspa" = "קבלו את השם שלכם ב-Kaspa";
-"Type the name you want. If it's free, tap Claim." = "הקלידו את השם שאתם רוצים. אם הוא פנוי, הקישו על קבלה.";
+"Type the name you want" = "הקלידו את השם שאתם רוצים";
 "See All" = "הצג הכול";
 "Your Names" = "השמות שלך";

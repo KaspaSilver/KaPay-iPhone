@@ -606,7 +606,6 @@
 "Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Doesn't affect the indexers, domains or explorer on the other tabs. Add custom addresses to the IP Address Book below to select them here." = "स्वचालित स्कैन सबसे अच्छे उपलब्ध नोड खोजकर उनसे जुड़ता है। कोई विशेष नोड चुनने पर केवल उसी से जुड़ता है, दूसरों पर नहीं जाता। अन्य टैब के इंडेक्सर, डोमेन या एक्सप्लोरर पर असर नहीं पड़ता। यहाँ चुनने के लिए नीचे IP पता पुस्तिका में अपने पते जोड़ें।";
 
 /* 5.2: Kaspa Hub > .kachat marketplace */
-"Find a name" = "नाम खोजें";
 "Registration isn't open yet." = "पंजीकरण अभी खुला नहीं है।";
 "Claim" = "लें";
 "Marketplace" = "मार्केटप्लेस";
@@ -2083,6 +2082,6 @@
 "Passcode Required" = "पासकोड आवश्यक";
 "Set a passcode on this iPhone (Settings > Face ID & Passcode) to delete an account or view secret keys in KaPay." = "KaPay में खाता हटाने या गुप्त कुंजियाँ देखने के लिए इस iPhone पर पासकोड सेट करें (सेटिंग्स > Face ID और पासकोड)।";
 "Claim your name on Kaspa" = "Kaspa पर अपना नाम लें";
-"Type the name you want. If it's free, tap Claim." = "जो नाम चाहिए वह लिखें। अगर खाली है, तो लें पर टैप करें।";
+"Type the name you want" = "जो नाम चाहिए वह लिखें";
 "See All" = "सभी देखें";
 "Your Names" = "आपके नाम";

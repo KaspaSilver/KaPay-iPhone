@@ -606,7 +606,6 @@
 "Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Doesn't affect the indexers, domains or explorer on the other tabs. Add custom addresses to the IP Address Book below to select them here." = "자동 검색은 사용 가능한 최적의 노드를 찾아 연결합니다. 특정 노드를 선택하면 다른 노드로 전환하지 않고 그 노드에만 연결합니다. 다른 탭의 인덱서, 도메인, 탐색기에는 영향이 없습니다. 여기서 선택하려면 아래 IP 주소록에 주소를 추가하세요.";
 
 /* 5.2: Kaspa Hub > .kachat marketplace */
-"Find a name" = "이름 찾기";
 "Registration isn't open yet." = "아직 등록이 열리지 않았습니다.";
 "Claim" = "받기";
 "Marketplace" = "마켓";
@@ -2083,6 +2082,6 @@
 "Passcode Required" = "암호 필요";
 "Set a passcode on this iPhone (Settings > Face ID & Passcode) to delete an account or view secret keys in KaPay." = "KaPay에서 계정을 삭제하거나 비밀 키를 보려면 이 iPhone에 암호를 설정하세요(설정 > Face ID 및 암호).";
 "Claim your name on Kaspa" = "Kaspa에서 내 이름 받기";
-"Type the name you want. If it's free, tap Claim." = "원하는 이름을 입력하세요. 비어 있으면 받기를 탭하세요.";
+"Type the name you want" = "원하는 이름을 입력하세요";
 "See All" = "모두 보기";
 "Your Names" = "내 이름";

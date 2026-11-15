@@ -606,7 +606,6 @@
 "Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Doesn't affect the indexers, domains or explorer on the other tabs. Add custom addresses to the IP Address Book below to select them here." = "Pemindaian Otomatis menemukan dan terhubung ke node terbaik yang tersedia. Memilih node tertentu hanya terhubung ke node itu, tanpa beralih ke yang lain. Tidak memengaruhi pengindeks, domain, atau penjelajah di tab lain. Tambahkan alamatmu ke Buku Alamat IP di bawah untuk memilihnya di sini.";
 
 /* 5.2: Kaspa Hub > .kachat marketplace */
-"Find a name" = "Cari nama";
 "Registration isn't open yet." = "Pendaftaran belum dibuka.";
 "Claim" = "Klaim";
 "Marketplace" = "Pasar";
@@ -2083,6 +2082,6 @@
 "Passcode Required" = "Kode Sandi Diperlukan";
 "Set a passcode on this iPhone (Settings > Face ID & Passcode) to delete an account or view secret keys in KaPay." = "Atur kode sandi di iPhone ini (Pengaturan > Face ID & Kode Sandi) untuk menghapus akun atau melihat kunci rahasia di KaPay.";
 "Claim your name on Kaspa" = "Klaim namamu di Kaspa";
-"Type the name you want. If it's free, tap Claim." = "Ketik nama yang kamu inginkan. Jika tersedia, ketuk Klaim.";
+"Type the name you want" = "Ketik nama yang kamu inginkan";
 "See All" = "Lihat Semua";
 "Your Names" = "Nama Kamu";

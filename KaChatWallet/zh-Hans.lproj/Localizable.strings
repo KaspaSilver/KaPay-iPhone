@@ -605,7 +605,6 @@
 "Automatic Scan discovers and connects to the best available nodes. Choosing a specific node connects only to it, without falling back to others. Doesn't affect the indexers, domains or explorer on the other tabs. Add custom addresses to the IP Address Book below to select them here." = "自动扫描会找到并连接最佳可用节点。选择特定节点只会连接该节点，不会切换到其他节点。不影响其他标签页中的索引器、域名或浏览器。将你的地址添加到下方的 IP 地址簿后即可在此选择。";
 
 /* 5.2: Kaspa Hub > .kachat marketplace */
-"Find a name" = "查找名称";
 "Registration isn't open yet." = "注册尚未开放。";
 "Claim" = "领取";
 "Marketplace" = "市场";
@@ -2082,6 +2081,6 @@
 "Passcode Required" = "需要密码";
 "Set a passcode on this iPhone (Settings > Face ID & Passcode) to delete an account or view secret keys in KaPay." = "请在此 iPhone 上设置密码（设置 > 面容 ID 与密码），才能在 KaPay 中删除账户或查看私钥。";
 "Claim your name on Kaspa" = "在 Kaspa 上领取你的名字";
-"Type the name you want. If it's free, tap Claim." = "输入你想要的名字。如果可用，点按“领取”。";
+"Type the name you want" = "输入你想要的名字";
 "See All" = "查看全部";
 "Your Names" = "你的名字";
