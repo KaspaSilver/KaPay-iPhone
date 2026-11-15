@@ -306,6 +306,9 @@ actor NodeProfiler {
     private func runMaintenanceCycle() async {
         // Prune nodes not seen in 7 days (except seeds and user-added)
         await registry.pruneOldNodes(olderThan: 7 * 24 * 3600)
+        // Nodes gone from the registry (pruned, cleared, the other network) keep no sockets.
+        let knownKeys = Set(await registry.allEndpoints().map(\.key))
+        await connectionPool.dropConnections(notIn: knownKeys)
 
         // Cleanup idle/disconnected connections (less aggressive on macCatalyst).
 #if targetEnvironment(macCatalyst)
@@ -890,8 +893,11 @@ actor NodeProfiler {
     /// several seconds on a fresh session) run SERIALLY before the actual dial, and both are
     /// redundant there - the race is about to do a real connect with its own 3s timeout anyway.
     /// Background probe-loop probing keeps them.
+    ///
+    /// The connection is closed afterwards unless the node is one the app keeps (active, the
+    /// subscription's) or `keepConnection` (a second probe follows at once).
     @discardableResult
-    private func probeNode(_ endpoint: Endpoint, skipCandidateScreening: Bool = false) async -> Bool {
+    private func probeNode(_ endpoint: Endpoint, skipCandidateScreening: Bool = false, keepConnection: Bool = false) async -> Bool {
         if !skipCandidateScreening, let record = await registry.get(endpoint) {
             if await shouldProbeCandidate(record) == false {
                 return false
@@ -901,7 +907,17 @@ actor NodeProfiler {
             }
         }
 
-        let conn = await connectionPool.connection(for: endpoint)
+        let conn = await connectionPool.lease(endpoint)
+        let answered = await probe(endpoint, on: conn)
+        await connectionPool.endLease(endpoint, keepOpen: keepConnection && answered)
+        // dropped from the registry meanwhile (the other network): its socket goes too
+        if await registry.get(endpoint) == nil {
+            await connectionPool.removeConnection(for: endpoint)
+        }
+        return answered
+    }
+
+    private func probe(_ endpoint: Endpoint, on conn: GRPCStreamConnection) async -> Bool {
         let startTime = Date()
 
         do {
@@ -954,23 +970,26 @@ actor NodeProfiler {
                       endpoint.key, error.localizedDescription)
             }
 
-            // Update profile with basic info
+            // Update profile with basic info. A failed GetBlockDagInfo leaves the network name
+            // it reported before: nil would make an unknown node of a known one.
             await registry.updateProfile(endpoint) { profile in
                 profile.isSynced = info.isSynced
                 profile.isUtxoIndexed = info.isUtxoIndexed
                 profile.serverVersion = info.serverVersion
                 profile.mempoolSize = info.mempoolSize
                 profile.virtualDaaScore = virtualDaaScore
-                profile.networkName = networkName
+                if let networkName, !networkName.isEmpty {
+                    profile.networkName = networkName
+                }
             }
 
             // A node on the other network (a mainnet peer gossiped into a testnet pool, or the
             // reverse) would answer this network's addresses with that chain's coins - drop it.
-            if let networkName, !networkName.isEmpty,
-               let record = await registry.get(endpoint),
+            // Checked on the name it reported now or earlier (or its port, before any).
+            if let record = await registry.get(endpoint),
                !NodeRegistry.belongs(record, to: networkType) {
                 AppLog.log("[NodeProfiler] Dropping %@: it is on %@, not %@",
-                      endpoint.key, networkName, networkType.displayName)
+                      endpoint.key, record.profile.networkName ?? "the other network", networkType.displayName)
                 await registry.remove(endpoint)
                 return false
             }
@@ -1091,11 +1110,12 @@ actor NodeProfiler {
             var inFlight = 0
             while inFlight < parallelism, let next = iterator.next() {
                 group.addTask {
-                    guard await self.probeNode(next, skipCandidateScreening: true) else { return false }
+                    guard await self.probeNode(next, skipCandidateScreening: true, keepConnection: true) else { return false }
                     // Second probe pipelines immediately on the live connection (getInfo +
                     // dagInfo only; the peer-info check already ran this epoch): promotes a
-                    // fresh responder to .active right now.
-                    _ = await self.probeNode(next, skipCandidateScreening: true)
+                    // fresh responder to .active right now. Left open: a later rebalance closes it
+                    // if the node isn't promoted.
+                    _ = await self.probeNode(next, skipCandidateScreening: true, keepConnection: true)
                     return true
                 }
                 inFlight += 1
@@ -1120,8 +1140,8 @@ actor NodeProfiler {
                 }
                 if let next = iterator.next() {
                     group.addTask {
-                        guard await self.probeNode(next, skipCandidateScreening: true) else { return false }
-                        _ = await self.probeNode(next, skipCandidateScreening: true)
+                        guard await self.probeNode(next, skipCandidateScreening: true, keepConnection: true) else { return false }
+                        _ = await self.probeNode(next, skipCandidateScreening: true, keepConnection: true)
                         return true
                     }
                     inFlight += 1
@@ -1225,6 +1245,9 @@ actor NodeProfiler {
         }
     }
 
+    /// Rebalances, then tells the connection pool which nodes are active: those keep their
+    /// connections; another node's connection idle for 30 s is closed (probes close their own
+    /// at once; this catches the boot race's and one-off requests').
     private func rebalanceActivePool(reason: String) async {
         let result = await registry.rebalanceActivePool(
             minActive: minActiveNodes,
@@ -1232,6 +1255,9 @@ actor NodeProfiler {
             maxReplacementsPerCycle: maxReplacementsPerCycle,
             minImprovementRatio: minReplacementImprovementRatio
         )
+        let activeKeys = Set(await registry.records(inState: .active).map(\.endpoint.key))
+        await connectionPool.setActiveKeys(activeKeys)
+        await connectionPool.releaseIdleConnections(idleFor: 30)
 
         if result.promoted > 0 || result.demoted > 0 {
             AppLog.log(
@@ -1247,8 +1273,13 @@ actor NodeProfiler {
 
     /// Discover peers from a specific node (returns true on success)
     private func discoverFromNode(_ endpoint: Endpoint) async -> Bool {
-        let conn = await connectionPool.connection(for: endpoint)
+        let conn = await connectionPool.lease(endpoint)
+        let discovered = await discover(from: endpoint, on: conn)
+        await connectionPool.endLease(endpoint)
+        return discovered
+    }
 
+    private func discover(from endpoint: Endpoint, on conn: GRPCStreamConnection) async -> Bool {
         do {
             if await !conn.isConnected {
                 try await conn.connect()

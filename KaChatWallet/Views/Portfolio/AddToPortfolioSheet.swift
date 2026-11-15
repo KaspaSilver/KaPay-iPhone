@@ -56,6 +56,8 @@ struct AddToPortfolioSheet: View {
     @State private var notes = ""
     @State private var isLookingUpPrice = false
     @State private var alreadyInPortfolio = false
+    // Set on the first Add tap, so a second tap before the sheet closes adds nothing.
+    @State private var isSaving = false
 
     private var currency: AppCurrency { settingsViewModel.settings.currency }
 
@@ -88,7 +90,8 @@ struct AddToPortfolioSheet: View {
                     if step == .editDetails {
                         Button("Confirm") { confirm() }
                             .fontWeight(.semibold)
-                            .disabled(amount == nil || amount == 0)
+                            .disabled(amount == nil || amount == 0 || isSaving
+                                      || amount.flatMap(PortfolioViewModel.sompi(fromKas:)) == nil)
                     }
                 }
             }
@@ -270,7 +273,8 @@ struct AddToPortfolioSheet: View {
     }
 
     private func confirm() {
-        guard let selected, let amount, amount > 0 else { return }
+        guard !isSaving, let selected, let amount, amount > 0 else { return }
+        isSaving = true
         Haptics.impact(.medium)
         viewModel.addTransaction(
             type: type,

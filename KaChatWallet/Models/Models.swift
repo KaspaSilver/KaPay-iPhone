@@ -623,8 +623,8 @@ enum NotificationMode: String, Codable, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .disabled: return String(localized: "Disabled")
-        case .remotePush: return String(localized: "Remote push")
+        case .disabled: return AppLocalization.string("Disabled")
+        case .remotePush: return AppLocalization.string("Remote push")
         }
     }
 }

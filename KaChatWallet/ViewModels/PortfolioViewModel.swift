@@ -450,6 +450,8 @@ final class PortfolioViewModel: ObservableObject {
 
     /// Records a fetched price: the published figure, the persisted copy, the retry cleared.
     private func applyPrice(_ result: (price: Double, change24hPercent: Double?), currency: AppCurrency) {
+        // A fetch started before a currency switch answers in the old currency.
+        guard currency == currentCurrency else { return }
         currentPriceUsd = result.price
         priceChange24h = result.change24hPercent
         lastPriceFetchAt = Date()
@@ -554,7 +556,7 @@ final class PortfolioViewModel: ObservableObject {
             } else {
                 self.ensurePriceLoaded()
             }
-            if let stats = await self.coinGecko.getMarketStats(currency: currency) {
+            if let stats = await self.coinGecko.getMarketStats(currency: currency), currency == self.currentCurrency {
                 self.marketCap = stats.marketCap
                 self.marketCapRank = stats.rank
             }
@@ -650,7 +652,7 @@ final class PortfolioViewModel: ObservableObject {
         async let stats = coinGecko.getMarketStats(currency: currency)
         let base = Self.baseDays(for: days)
         async let history = coinGecko.getPriceHistory(days: base, currency: currency, spotHint: currentPriceUsd)
-        if let result = await stats {
+        if let result = await stats, currency == currentCurrency {
             marketCap = result.marketCap
             marketCapRank = result.rank
         }
@@ -931,6 +933,8 @@ final class PortfolioViewModel: ObservableObject {
     /// A base series arrived: cache it, persist it, repaint the chart if its range is a cut of
     /// this base, and refresh the cards' seven-day window when the 90-day base is what came.
     private func applyBaseHistory(_ result: [PricePoint], base: Int, currency: AppCurrency) {
+        // A fetch started before a currency switch answers in the old currency.
+        guard currency == currentCurrency else { return }
         persistHistory(result, days: base, currency: currency)
         priceHistoryCache[base] = result
         if Self.baseDays(for: priceRangeDays) == base {
@@ -1024,11 +1028,26 @@ final class PortfolioViewModel: ObservableObject {
 
     /// KAS to sompi, or nil for an amount no wallet can hold. `Int64(Double)` traps on NaN,
     /// infinity or anything past ~92 billion KAS, and both a pasted figure and a CSV cell
-    /// (`Double("inf")`, `"1e20"`) reach here.
-    static func sompi(fromKas kas: Double) -> Int64? {
+    /// (`Double("inf")`, `"1e20"`) reach here. Capped at `KaspaUnit.maxTypedSompi` (a little
+    /// above the supply), so no number of rows can overflow a sum.
+    nonisolated static func sompi(fromKas kas: Double) -> Int64? {
         let sompi = (kas * 100_000_000).rounded()
-        guard sompi.isFinite, abs(sompi) < 9.2e18 else { return nil }
+        guard sompi.isFinite, abs(sompi) <= Double(KaspaUnit.maxTypedSompi) else { return nil }
         return Int64(sompi)
+    }
+
+    /// `a + b` pinned at Int64's ends instead of trapping: rows saved before the cap can be huge.
+    private static func saturatingAdd(_ a: Int64, _ b: Int64) -> Int64 {
+        let (sum, overflow) = a.addingReportingOverflow(b)
+        guard overflow else { return sum }
+        return b > 0 ? .max : .min
+    }
+
+    /// `a - b`, pinned the same way.
+    private static func saturatingSubtract(_ a: Int64, _ b: Int64) -> Int64 {
+        let (difference, overflow) = a.subtractingReportingOverflow(b)
+        guard overflow else { return difference }
+        return b < 0 ? .max : .min
     }
 
     /// Preserves the existing row's `portfolioId` (a transaction being edited never moves to a
@@ -1624,7 +1643,7 @@ final class PortfolioViewModel: ObservableObject {
                 result.proceeds += tx.fiatValue
                 result.costBasis += cost
                 result.sellCount += 1
-                uncoveredSompi += max(remaining, 0)
+                uncoveredSompi = saturatingAdd(uncoveredSompi, max(remaining, 0))
                 if PortfolioAddressImporter.isPricePending(tx.notes) { result.pendingPriceCount += 1 }
             case .transfer:
                 // Your own KAS changing address: not a sale, and its cost stays with it.
@@ -1643,11 +1662,11 @@ final class PortfolioViewModel: ObservableObject {
         for tx in transactions {
             switch tx.type {
             case .buy:
-                holdingsSompi += tx.amountSompi
+                holdingsSompi = saturatingAdd(holdingsSompi, tx.amountSompi)
                 totalInvested += tx.fiatValue
-                totalBoughtSompi += tx.amountSompi
+                totalBoughtSompi = saturatingAdd(totalBoughtSompi, tx.amountSompi)
             case .sell:
-                holdingsSompi -= tx.amountSompi
+                holdingsSompi = saturatingSubtract(holdingsSompi, tx.amountSompi)
                 totalProceeds += tx.fiatValue
             case .transfer:
                 break
@@ -1678,11 +1697,11 @@ final class PortfolioViewModel: ObservableObject {
     static func computeValueHistory(transactions: [PortfolioTransaction], priceHistory: [PricePoint]) -> [PricePoint] {
         guard !priceHistory.isEmpty else { return [] }
         let sortedTx = transactions.sorted { $0.timestamp < $1.timestamp }
-        func delta(_ tx: PortfolioTransaction) -> Int64 {
+        func apply(_ tx: PortfolioTransaction, to holdings: Int64) -> Int64 {
             switch tx.type {
-            case .buy: return tx.amountSompi
-            case .sell: return -tx.amountSompi
-            case .transfer: return 0
+            case .buy: return saturatingAdd(holdings, tx.amountSompi)
+            case .sell: return saturatingSubtract(holdings, tx.amountSompi)
+            case .transfer: return holdings
             }
         }
         // Price points in time order (the usual case): one running pass over the ledger instead
@@ -1693,7 +1712,7 @@ final class PortfolioViewModel: ObservableObject {
                 var holdingsSompi: Int64 = 0
                 for tx in sortedTx {
                     if tx.timestamp > point.timestamp { break }
-                    holdingsSompi += delta(tx)
+                    holdingsSompi = apply(tx, to: holdingsSompi)
                 }
                 return PricePoint(timestamp: point.timestamp, value: Double(holdingsSompi) / 100_000_000.0 * point.value)
             }
@@ -1702,7 +1721,7 @@ final class PortfolioViewModel: ObservableObject {
         var next = 0
         return priceHistory.map { point in
             while next < sortedTx.count, sortedTx[next].timestamp <= point.timestamp {
-                holdingsSompi += delta(sortedTx[next])
+                holdingsSompi = apply(sortedTx[next], to: holdingsSompi)
                 next += 1
             }
             let holdingsKas = Double(holdingsSompi) / 100_000_000.0

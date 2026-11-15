@@ -184,7 +184,7 @@ struct RenameSheet: View {
     var body: some View {
         VStack(spacing: 12) {
             VStack(spacing: 4) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.headline)
                 if let subtitle {
                     Text(subtitle)
@@ -197,7 +197,7 @@ struct RenameSheet: View {
             .padding(.top, 20)
             .padding(.bottom, 4)
 
-            TextField(fieldLabel, text: $text)
+            TextField(LocalizedStringKey(fieldLabel), text: $text)
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
                 .submitLabel(.done)
@@ -232,7 +232,7 @@ struct RenameSheet: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .presentationDetents([.height(260)])
+        .fittedSheetDetents(260)
         .presentationDragIndicator(.visible)
         // A turn later: the field does not exist yet on the tap that presented this.
         .onAppear { DispatchQueue.main.async { focused = true } }
@@ -315,14 +315,18 @@ struct TransactionActionsSheet: View {
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 24)
-        .presentationDetents([.height(candidate == nil ? 250 : 320)])
+        .fittedSheetDetents(candidate == nil ? 250 : 320)
         .presentationDragIndicator(.visible)
     }
 
     private func summary(_ candidate: PortfolioCandidateTransaction) -> String {
-        let direction = candidate.isOutgoing ? "Sent" : "Received"
-        return "\(direction) \(PortfolioFormat.kas(candidate.amountKas)) on "
-            + candidate.timestamp.formatted(date: .abbreviated, time: .shortened)
+        let format = AppLocalization.string(candidate.isOutgoing ? "Sent %@ on %@" : "Received %@ on %@")
+        return String(
+            format: format,
+            locale: AppLocalization.locale,
+            PortfolioFormat.kas(candidate.amountKas),
+            candidate.timestamp.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(AppLocalization.locale))
+        )
     }
 }
 
@@ -346,7 +350,9 @@ struct ConfirmActionSheet: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(title)
+            // Looked up like `ActionSheetRow`'s title; a call site's formatted title has no key
+            // and shows as passed.
+            Text(LocalizedStringKey(title))
                 .font(.headline)
                 .multilineTextAlignment(.center)
                 .padding(.top, 20)
@@ -369,7 +375,7 @@ struct ConfirmActionSheet: View {
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 20)
-        .presentationDetents([.height(280)])
+        .fittedSheetDetents(280)
         .presentationDragIndicator(.visible)
     }
 }
@@ -629,6 +635,47 @@ extension Font {
     }
 }
 
+// MARK: - Half sheets that follow the user's text size
+
+extension View {
+    /// A fixed-height half sheet that grows with larger text, and at the accessibility sizes
+    /// becomes a full, scrolling sheet, so its rows are never cut off. `scrolls: false` for content
+    /// that scrolls itself (a Form or List has no height inside a ScrollView).
+    func fittedSheetDetents(_ height: CGFloat, scrolls: Bool = true) -> some View {
+        modifier(FittedSheetDetents(height: height, scrolls: scrolls))
+    }
+}
+
+private struct FittedSheetDetents: ViewModifier {
+    let height: CGFloat
+    let scrolls: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// Roughly how much taller the rows get above the default size.
+    private var scale: CGFloat {
+        switch typeSize {
+        case .xLarge: return 1.1
+        case .xxLarge: return 1.2
+        case .xxxLarge: return 1.3
+        default: return 1
+        }
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if typeSize.isAccessibilitySize, scrolls {
+            ScrollView { content }
+                .presentationDetents([.large])
+        } else if typeSize.isAccessibilitySize {
+            content
+                .presentationDetents([.large])
+        } else {
+            content
+                .presentationDetents([.height(height * scale)])
+        }
+    }
+}
+
 // MARK: - Underline tab bar
 
 /// The app's tab bar for switching pages inside a screen: bold teal labels (dimmed when not
@@ -700,7 +747,8 @@ struct AddressActionsSheet: View {
     let onViewPublicKey: () -> Void
     let onViewInExplorer: (URL) -> Void
 
-    /// Fits however many rows are showing.
+    /// Fits however many rows are showing. Present with `fittedSheetDetents(height)`, so the
+    /// rows aren't cut off at large text sizes.
     var height: CGFloat {
         let rows = (onViewPrivateKey == nil ? 0 : 1) + (showsPublicKey ? 1 : 0) + (explorerURL == nil ? 0 : 1)
         return 90 + CGFloat(rows) * 80

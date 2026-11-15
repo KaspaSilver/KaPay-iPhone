@@ -202,6 +202,8 @@ final class WalletManager: ObservableObject {
     private let savedAccountsKey = "kachat_saved_accounts"
     /// Set on the first launch of an install: UserDefaults is deleted with the app, the Keychain isn't.
     private let installSeenKey = "kapay_install_seen"
+    /// A reinstall's leftover keys still to be listed (the Keychain couldn't be read yet).
+    private let leftoverKeysPendingKey = "kapay_leftover_keys_pending"
 
     private init() {
         LaunchTrace.startWatchdog()
@@ -534,6 +536,9 @@ final class WalletManager: ObservableObject {
         // the wallet being deleted: the active one, or the one stuck on the recovery screen
         let walletAddressToDelete = (currentWallet ?? walletNeedingKeyRecovery)?.publicAddress
         walletNeedingKeyRecovery = nil
+        // off this account before anything waits (see removeSavedAccount)
+        NextcloudService.shared.setCurrentWallet(nil)
+        AddressBookManager.shared.setActiveWalletAddress(nil)
 
         // Unregister from push notifications before clearing wallet
         await unregisterPushBriefly()
@@ -549,8 +554,9 @@ final class WalletManager: ObservableObject {
         let isOther = { (address: String) in
             walletAddressToDelete.map { !Self.isSameAccount(address, $0) } ?? true
         }
+        // a snapshot list that can't be read counts as others remaining: the shared key stays
         let otherAccountsRemain = savedAccounts.contains { isOther($0.publicAddress) }
-            || keychainService.accountSnapshotAddresses().contains(where: isOther)
+            || ((try? keychainService.accountSnapshotAddresses())?.contains(where: isOther) ?? true)
         if otherAccountsRemain {
             for address in walletAddressToDelete.map(Self.accountAddressVariants) ?? [] {
                 try? keychainService.deleteAccountSnapshot(publicAddress: address)
@@ -714,6 +720,7 @@ final class WalletManager: ObservableObject {
                     cachedPrivateKey = nil
                 }
                 removeSavedAccountFromStorage(account)
+                clearDeviceKeysIfNoAccountsRemain()
                 return
             }
         } catch {
@@ -721,6 +728,11 @@ final class WalletManager: ObservableObject {
             await loadWallet(force: false)
             return
         }
+
+        // Off this account before anything waits: a contacts sync or edit mid-removal would
+        // otherwise write its data back after it's cleared.
+        NextcloudService.shared.setCurrentWallet(nil)
+        AddressBookManager.shared.setActiveWalletAddress(nil)
 
         await unregisterPushBriefly()
         WalletService.shared.stopPolling()
@@ -754,6 +766,28 @@ final class WalletManager: ObservableObject {
         WalletService.shared.resetForNewWallet()
         AddressBookManager.shared.setActiveWalletAddress(nil)
         NotificationCenter.default.post(name: .settingsDidChange, object: nil)
+        clearDeviceKeysIfNoAccountsRemain()
+    }
+
+    /// The last account's removal takes the device-wide keys too, as the recovery screen's
+    /// Remove does: the Secure Enclave key wraps every snapshot, so it goes only when no saved
+    /// account, no stored record and no snapshot remain. A Keychain read that fails keeps it.
+    private func clearDeviceKeysIfNoAccountsRemain() {
+        guard savedAccounts.isEmpty else { return }
+        let storedWallet: Wallet?
+        let snapshots: [String]
+        do {
+            storedWallet = try keychainService.loadWallet()
+            snapshots = try keychainService.accountSnapshotAddresses()
+        } catch {
+            return
+        }
+        guard storedWallet == nil, snapshots.isEmpty else { return }
+        do {
+            try keychainService.clearAll()
+        } catch {
+            AppLog.log("[WalletManager] Failed to remove the device keys: %@", error.localizedDescription)
+        }
     }
 
     /// A locked launch couldn't read the keys' saved copy, so the recovery screen came up: the app
@@ -794,16 +828,19 @@ final class WalletManager: ObservableObject {
     /// The app password the user connected Nextcloud with is revoked first, while its login still
     /// exists to authenticate with. Leaves Cold Storage and the Portfolio on no wallet.
     private func removeLocalData(forAccount publicAddress: String) async {
+        // Cleared by address, never by switching the managers onto it: that runs their one-time
+        // migrations, which would hand the pre-per-wallet data to an account on its way out.
+        // Off whoever they hold first, so nothing in flight writes the account back.
+        ColdStorageManager.shared.setCurrentWallet(nil)
+        PortfolioManager.shared.setCurrentWallet(nil)
+        PortfolioViewModel.shared.setCurrentWallet(nil)
         for address in Self.accountAddressVariants(publicAddress) {
             await NextcloudService.shared.revokeStoredAppPassword(forWalletAddress: address)
             // its .kachat reminders would keep firing for names this phone no longer holds
             await KachatNameReminders.removeAll(forWallet: address)
-            ColdStorageManager.shared.setCurrentWallet(address)
-            ColdStorageManager.shared.clearAllLocalData()
-            PortfolioManager.shared.setCurrentWallet(address)
-            PortfolioManager.shared.clearAllLocalData()
-            PortfolioViewModel.shared.setCurrentWallet(address)
-            PortfolioViewModel.shared.clearAllLocalData()
+            ColdStorageManager.shared.removeAllData(forWalletAddress: address)
+            // the managers' key form: trimmed and lowercased
+            PortfolioLedgerStore.clearAllLocalData(walletAddress: address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
             NextcloudService.shared.purgeStoredState(forWalletAddress: address)
             AddressBookManager.shared.removeAllData(forWalletAddress: address)
             GlobalNotificationCenter.removeAllData(forWalletAddress: address)
@@ -845,6 +882,8 @@ final class WalletManager: ObservableObject {
 
     /// Get the private key data for the current wallet (used for decryption)
     func getPrivateKey() -> Data? {
+        // signed out: no key, though the Keychain and seed still hold it
+        guard currentWallet != nil, !isLoggedOut else { return nil }
         if let cached = cachedPrivateKey, cached.address == currentWallet?.publicAddress {
             return cached.key
         }
@@ -1050,15 +1089,28 @@ final class WalletManager: ObservableObject {
     /// accounts list, which a reinstall doesn't.
     private func noteKeysLeftByEarlierInstallIfNeeded() {
         let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: installSeenKey) else { return }
-        defaults.set(true, forKey: installSeenKey)
-        guard defaults.data(forKey: savedAccountsKey) == nil else { return }
-        if (try? keychainService.loadWallet()) != nil {
-            defaults.set(true, forKey: logoutFlagKey)
+        if !defaults.bool(forKey: installSeenKey) {
+            defaults.set(true, forKey: installSeenKey)
+            guard defaults.data(forKey: savedAccountsKey) == nil else { return }
+            if (try? keychainService.loadWallet()) != nil {
+                defaults.set(true, forKey: logoutFlagKey)
+            }
+            defaults.set(true, forKey: leftoverKeysPendingKey)
         }
+        guard defaults.bool(forKey: leftoverKeysPendingKey) else { return }
+        // Done only once the Keychain answered: a locked or failing read is tried again next
+        // launch, not taken for "no leftover accounts".
+        let snapshotAddresses: [String]
+        do {
+            snapshotAddresses = try keychainService.accountSnapshotAddresses()
+        } catch {
+            AppLog.log("[WalletManager] Couldn't list keys left by an earlier install: %@", error.localizedDescription)
+            return
+        }
+        defaults.removeObject(forKey: leftoverKeysPendingKey)
         // one row per account: a snapshot under each network's encoding is still one account
         var leftover: [String] = []
-        for address in keychainService.accountSnapshotAddresses()
+        for address in snapshotAddresses
         where !savedAccounts.contains(where: { Self.isSameAccount($0.publicAddress, address) })
             && !leftover.contains(where: { Self.isSameAccount($0, address) }) {
             leftover.append(address)
@@ -1683,6 +1735,30 @@ final class WalletManager: ObservableObject {
         }
     }
 
+    /// The wallet type and index `seedPhrase` derives `address` from. The saved ones first; when
+    /// they don't derive it (a reinstall wipes UserDefaults) every type import searches is tried,
+    /// and a match is saved again. Nil when nothing derives it.
+    func identityParameters(for address: String, seedPhrase: SeedPhrase) -> (family: WalletSourceFamily, index: Int)? {
+        let savedFamily = walletSourceFamily(for: address)
+        let savedIndex = chattingAddressIndex(for: address)
+        if let index = UInt32(exactly: savedIndex),
+           let derived = try? deriveKeysFromSeed(seedPhrase, chattingIndex: index, family: savedFamily).publicAddress,
+           Self.isSameAccount(derived, address) {
+            return (savedFamily, savedIndex)
+        }
+        guard var seed = bip39.mnemonicToSeed(seedPhrase.phrase, passphrase: seedPhrase.passphrase ?? "") else { return nil }
+        defer { seed.zeroOut() }
+        for family in WalletSourceFamily.allCases {
+            for candidate in importCandidates(seed: seed, family: family, indices: family.importSearchDepth)
+            where Self.isSameAccount(candidate.address, address) {
+                persistChattingAddressIndex(candidate.index, for: address)
+                persistWalletSourceFamily(family, for: address)
+                return (family, candidate.index)
+            }
+        }
+        return nil
+    }
+
     private func chattingAddress(at index: Int, baseNode: (key: Data, chainCode: Data), family: WalletSourceFamily) -> String? {
         guard index >= 0, let privateKey = identityPrivateKey(at: UInt32(index), baseNode: baseNode, family: family) else { return nil }
         guard let publicKeyData = try? deriveSchnorrPublicKey(from: privateKey) else { return nil }
@@ -1715,17 +1791,19 @@ final class WalletManager: ObservableObject {
     /// address #0 with transaction history (a chat identity or an emptied wallet holds no coins).
     /// The wallet type holding the most comes first and each type's addresses are in index order,
     /// so the first entry is the likeliest account. Empty when nothing has any activity; nil when
-    /// the words are invalid or the balances couldn't be checked.
-    func findImportAccounts(words: [String], passphrase: String) async -> [ImportAccountCandidate]? {
+    /// the words are invalid or the balances couldn't be checked. `changeSompi` is what the
+    /// standard wallet's change addresses hold: no import opens one, so the screen says so.
+    func findImportAccounts(words: [String], passphrase: String) async -> (accounts: [ImportAccountCandidate], changeSompi: UInt64)? {
         let seedPhrase = SeedPhrase(words: words, passphrase: passphrase.isEmpty ? nil : passphrase)
         guard var seed = bip39.mnemonicToSeed(seedPhrase.phrase, passphrase: seedPhrase.passphrase ?? "") else { return nil }
         let candidates = WalletSourceFamily.allCases.flatMap {
             importCandidates(seed: seed, family: $0, indices: $0.importSearchDepth)
         }
+        let changeAddresses = standardChangeAddresses(seed: seed, indices: 0..<20)
         seed.zeroOut()
         guard !candidates.isEmpty else { return nil }
 
-        async let balances = try? NodePoolService.shared.getUtxosByAddresses(candidates.map(\.address))
+        async let balances = try? NodePoolService.shared.getUtxosByAddresses(candidates.map(\.address) + changeAddresses)
         async let used = addressesWithHistory(candidates.filter { $0.index == 0 }.map(\.address))
         guard let utxos = await balances else { return nil }
         let withHistory = await used
@@ -1744,12 +1822,30 @@ final class WalletManager: ObservableObject {
             active.append(candidate)
         }
         let familyOrder = WalletSourceFamily.allCases
-        return active.sorted { lhs, rhs in
+        let accounts = active.sorted { lhs, rhs in
             guard lhs.family != rhs.family else { return lhs.index < rhs.index }
             let (left, right) = (totals[lhs.family] ?? 0, totals[rhs.family] ?? 0)
             if left != right { return left > right }
             // Ties go to the earlier type, so the standard wallet wins when nothing tells them apart.
             return (familyOrder.firstIndex(of: lhs.family) ?? 0) < (familyOrder.firstIndex(of: rhs.family) ?? 0)
+        }
+        let changeSet = Set(changeAddresses)
+        let changeSompi = utxos.filter { changeSet.contains($0.address) }.reduce(UInt64(0)) { $0 + $1.amount }
+        return (accounts, changeSompi)
+    }
+
+    /// The standard wallet's change addresses, m/44'/111111'/0'/1/{i}: other wallets send change
+    /// there, and import only ever opens a receive address.
+    private func standardChangeAddresses(seed: Data, indices: Range<Int>) -> [String] {
+        let masterKey = deriveMasterKey(from: seed)
+        let purpose = deriveChildKey(from: masterKey, index: 44 | 0x80000000)               // 44'
+        let coinType = deriveChildKey(from: purpose, index: 111111 | 0x80000000)            // 111111'
+        let account = deriveChildKey(from: coinType, index: 0 | 0x80000000)                 // 0'
+        let change = deriveChildKey(from: account, index: 1)                                // 1 (change)
+        let network = SettingsViewModel.loadSettings().networkType
+        return indices.compactMap { index -> String? in
+            guard let publicKey = try? deriveSchnorrPublicKey(from: deriveChildKey(from: change, index: UInt32(index)).key) else { return nil }
+            return KaspaAddress.fromPublicKey(publicKey, network: network).address
         }
     }
 

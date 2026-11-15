@@ -83,8 +83,9 @@ enum KachatTabIcon {
 /// the pages read the registry (`KachatNamesRegistry`), and registrations in flight show their
 /// progress.
 ///
-/// The screen is the logo and a numbered card per page: Marketplace, Available, Expired, Activity.
-/// A card opens its page; only the Marketplace has the name search.
+/// The screen leads with what most people come for: the name search, right under the logo, with
+/// Claim on a free name. Under it, any claims in progress, your names, then a short row of each page - Available, For sale, Expired - and the
+/// latest activity, each with See All for the full page.
 struct KachatMarketView: View {
     /// Names for sale, names in their grace period (counting down to release), expired names
     /// anyone may claim, and everything that happens in the registry.
@@ -120,14 +121,19 @@ struct KachatMarketView: View {
     @State private var nameRoute: KachatNameRoute?
     /// The Marketplace page, opened by `kapay://market`.
     @State private var showMarketplace = false
+    /// An Available tile tapped outside its Claim button: the name opens.
+    @State private var openName: KachatNames.NameInfo?
+    @ObservedObject private var actions = KachatNamesActions.shared
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 18) {
+                VStack(spacing: 24) {
                     hero
-                    // Registrations in flight: the claims button in the toolbar (KachatClaimsButton).
-                    pageCards
+                    KachatNameSearchCard(live: live) { claimTarget = $0 }
+                    if live.isLive {
+                        liveSections
+                    }
                 }
                 .padding(.bottom, 28)
             }
@@ -141,6 +147,9 @@ struct KachatMarketView: View {
             }
             .modifier(KachatNameRouteDestination(route: $nameRoute))
             .navigationDestination(isPresented: $showMarketplace) { pageScreen(.market) }
+            .navigationDestination(isPresented: Binding(get: { openName != nil }, set: { if !$0 { openName = nil } })) {
+                if let openName { KachatListingDetailView(info: openName) }
+            }
             // A notification that opened this screen fresh (a cold start, or .kachat not the open
             // tab) leaves its name pending: open it once the screen is up. Pushing in
             // the same update as the stack's first appearance came up as a blank screen.
@@ -164,17 +173,14 @@ struct KachatMarketView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) { ConnectionStatusIndicator() }
                 ToolbarItem(placement: .principal) { BalanceToolbarLabel() }
+                // names being claimed show on the screen itself (`claimsInFlight`)
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 14) {
-                        // names being claimed: shown only while there are some
-                        KachatClaimsButton()
-                        Button {
-                            showHowItWorks = true
-                        } label: {
-                            Image(systemName: "questionmark.circle")
-                        }
-                        .accessibilityLabel(Text("How it works"))
+                    Button {
+                        showHowItWorks = true
+                    } label: {
+                        Image(systemName: "questionmark.circle")
                     }
+                    .accessibilityLabel(Text("How it works"))
                 }
             }
             .sheet(isPresented: $showHowItWorks) { howItWorksSheet }
@@ -185,39 +191,137 @@ struct KachatMarketView: View {
         }
     }
 
-    // MARK: - Cards and pages
+    // MARK: - The screen's sections
 
-    private var pageCards: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-            ForEach(Page.allCases) { page in
-                NavigationLink {
-                    pageScreen(page)
-                } label: {
-                    KachatHubCard(title: page.title, icon: page.icon, count: count(of: page))
+    /// Your names, without any that lapsed (they're no longer yours).
+    private var ownNames: [KachatNames.NameInfo] {
+        let grace = KachatNamesRegistry.shared.graceMs
+        return live.mine.filter { $0.status(graceMs: grace) != .lapsed }
+    }
+
+    @ViewBuilder
+    private var liveSections: some View {
+        if !actions.openRegistrations.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                hubHeader("Claiming")
+                ForEach(actions.openRegistrations) { KachatRegistrationCard(registration: $0) }
+            }
+        }
+        if !ownNames.isEmpty {
+            yourNames
+        }
+        if !live.loaded {
+            ProgressView().padding(.vertical, 12)
+        } else if let error = live.loadError {
+            Text(verbatim: error)
+                .font(.footnote)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        } else {
+            if !live.lapsed.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    hubHeader("Available", seeAll: .available)
+                    carousel {
+                        ForEach(live.lapsed.prefix(12)) { n in
+                            KachatLapsedTile(info: n, onOpen: { openName = n }, onClaim: { claimTarget = $0 })
+                                .frame(width: Self.tileWidth)
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                hubHeader("For sale", seeAll: live.listings.isEmpty ? nil : .market)
+                if live.listings.isEmpty {
+                    KachatLiveEmpty(text: "No names are listed right now.")
+                } else {
+                    carousel {
+                        ForEach(live.listings.prefix(12)) { KachatListingTile(info: $0).frame(width: Self.tileWidth) }
+                    }
+                }
+            }
+            if !live.grace.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    hubHeader("Expired", seeAll: .expired)
+                    carousel {
+                        ForEach(live.grace.prefix(12)) { KachatGraceTile(info: $0, model: live).frame(width: Self.tileWidth) }
+                    }
+                }
+            }
+            if !live.activity.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    hubHeader("Recent activity", seeAll: .activity)
+                    let latest = Array(live.activity.prefix(4))
+                    VStack(spacing: 0) {
+                        ForEach(Array(latest.enumerated()), id: \.element.id) { index, e in
+                            KachatEventRow(event: e, showName: true)
+                            if index < latest.count - 1 { Divider().padding(.leading, 56) }
+                        }
+                    }
+                    .kachatGlass()
+                    .padding(.horizontal, 16)
+                }
+            }
+        }
+    }
+
+    private static let tileWidth: CGFloat = 158
+
+    /// Your names in a row; each opens its page (renew, list, transfer, the profile).
+    private var yourNames: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            hubHeader("Your Names")
+            carousel {
+                ForEach(ownNames) { n in
+                    NavigationLink { KachatListingDetailView(info: n) } label: {
+                        KachatNameTile(name: n.name) {
+                            if let badge = KachatLiveDomainsTab.badge(for: n, graceMs: KachatNamesRegistry.shared.graceMs) {
+                                Text(verbatim: badge)
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundColor(.orange)
+                            }
+                            if let line = KachatLiveDomainsTab.expiryLine(for: n, graceMs: KachatNamesRegistry.shared.graceMs) {
+                                Text(verbatim: line)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                        }
+                        .frame(width: Self.tileWidth)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// A section's title, with See All when it has a full page.
+    private func hubHeader(_ title: LocalizedStringKey, seeAll page: Page? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(.title3.weight(.bold))
+            Spacer()
+            if let page {
+                NavigationLink { pageScreen(page) } label: {
+                    Text("See All")
+                        .font(.subheadline.weight(.semibold))
+                }
             }
         }
         .padding(.horizontal, 16)
     }
 
-    /// How many live on a page; nil until the registry has answered.
-    private func count(of page: Page) -> Int? {
-        guard live.isLive, live.loaded, live.loadError == nil else { return nil }
-        switch page {
-        case .market: return live.listings.count
-        case .available: return live.lapsed.count
-        case .expired: return live.grace.count
-        case .activity: return live.activity.count
+    private func carousel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 12) { content() }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 4)
         }
     }
 
     private func pageScreen(_ page: Page) -> some View {
         ScrollView {
             VStack(spacing: 18) {
-                if page == .market {
-                    KachatNameSearchCard(live: live) { claimTarget = $0 }
-                }
                 pageContent(page)
             }
             .padding(.top, 8)
@@ -280,6 +384,9 @@ struct KachatMarketView: View {
     private var hero: some View {
         VStack(spacing: 8) {
             KachatTabIcon.view(side: 56)
+            Text("Claim your name on Kaspa")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
             if live.isLive {
                 KachatTestnetBadge()
             } else if KachatLive.isEnabled, live.upgrading {
@@ -1155,43 +1262,8 @@ struct KachatAddressLiveNamesList: View {
     }
 }
 
-/// One page's card on the .kachat screen: what it is and how many live there.
-private struct KachatHubCard: View {
-    let title: String
-    let icon: String
-    /// nil until the registry has answered.
-    let count: Int?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.title3.weight(.medium))
-                    .foregroundColor(.accentColor)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundColor(.secondary)
-            }
-            Text(count.map { "\($0)" } ?? "-")
-                .font(.title.weight(.bold).monospacedDigit())
-                .foregroundColor(.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(LocalizedStringKey(title))
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .kachatGlass()
-        .contentShape(Rectangle())
-    }
-}
-
-/// The Marketplace's search: "Find a name", and whether it's free or taken.
+/// The .kachat screen's search, first under the logo: type a name, and whether it's free (Claim)
+/// or taken (it opens). With nothing typed, a line says what to do.
 private struct KachatNameSearchCard: View {
     @ObservedObject var live: KachatHubModel
     let onClaim: (KachatClaimTarget) -> Void
@@ -1201,21 +1273,41 @@ private struct KachatNameSearchCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
+                    .font(.body.weight(.semibold))
+                    .foregroundColor(.accentColor)
                 TextField("Find a name", text: $searchText)
+                    .font(.title3)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .submitLabel(.search)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("Clear"))
+                }
                 Text(".kachat")
-                    .font(.body.weight(.semibold))
-                    .foregroundColor(.secondary)
+                    .font(.title3.weight(.semibold))
+                    .foregroundColor(.accentColor)
             }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 14)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemGroupedBackground)))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.accentColor.opacity(0.6), lineWidth: 1.2))
 
             let typed = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if !typed.isEmpty && live.isLive {
+            if typed.isEmpty {
+                Text("Type the name you want. If it's free, tap Claim.")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 4)
+            } else if live.isLive {
                 KachatLiveSearchResult(model: live, typed: typed) { onClaim($0) }
-            } else if !typed.isEmpty {
+            } else {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(typed).kachat")

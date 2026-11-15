@@ -105,7 +105,9 @@ struct KasiaTransactionBuilder {
         virtualDaaScore: UInt64? = nil,
         /// KIP-22 (quantum-safe) sender: its redeem script, pushed after each signature and
         /// priced into the fee.
-        senderRedeemScript: Data? = nil
+        senderRedeemScript: Data? = nil,
+        /// "txid:index" of a coin automatic selection must spend first (`WalletService.conflictingOutpoint`).
+        leadingOutpoint: String? = nil
     ) throws -> KaspaRpcTransaction {
         let signatureScriptSize = senderRedeemScript.map { 66 + canonicalPushDataSize($0.count) } ?? 66
         guard amount > 0 else {
@@ -152,7 +154,8 @@ struct KasiaTransactionBuilder {
                 senderScriptPubKey: changeScriptPubKey,
                 extraFeeSompi: extraFeeSompi,
                 virtualDaaScore: virtualDaaScore,
-                signatureScriptSize: signatureScriptSize
+                signatureScriptSize: signatureScriptSize,
+                leadingOutpoint: leadingOutpoint
             )
         }
 
@@ -204,6 +207,8 @@ struct KasiaTransactionBuilder {
     /// rewards must supply the current virtual DAA score.
     static func spendableForBuild(_ utxos: [UTXO], virtualDaaScore: UInt64?) -> [UTXO] {
         utxos.filter { utxo in
+            // a covenant-bound coin can't be spent by these version-0 builds
+            guard utxo.covenantId == nil else { return false }
             guard utxo.isCoinbase else { return true }
             guard let vds = virtualDaaScore else { return false }
             // overflow (a nonsense DAA score from a node) counts as not yet mature
@@ -220,7 +225,8 @@ struct KasiaTransactionBuilder {
         manualUtxos: [UTXO]? = nil,
         extraFeeSompi: UInt64 = 0,
         virtualDaaScore: UInt64? = nil,
-        signatureScriptSize: Int = 66
+        signatureScriptSize: Int = 66,
+        leadingOutpoint: String? = nil
     ) throws -> SendFeeEstimate {
         let selection: PaymentSelection
         if let manualUtxos, !manualUtxos.isEmpty {
@@ -243,7 +249,8 @@ struct KasiaTransactionBuilder {
                 senderScriptPubKey: senderScriptPubKey,
                 extraFeeSompi: extraFeeSompi,
                 virtualDaaScore: virtualDaaScore,
-                signatureScriptSize: signatureScriptSize
+                signatureScriptSize: signatureScriptSize,
+                leadingOutpoint: leadingOutpoint
             )
         }
         var outputs: [KaspaRpcTransactionOutput] = [
@@ -624,11 +631,17 @@ struct KasiaTransactionBuilder {
         senderScriptPubKey: Data,
         extraFeeSompi: UInt64 = 0,
         virtualDaaScore: UInt64? = nil,
-        signatureScriptSize: Int = 66
+        signatureScriptSize: Int = 66,
+        leadingOutpoint: String? = nil
     ) throws -> PaymentSelection {
         // Sort largest first to reduce input count (lower mass). Immature coinbase is excluded up
         // front (mature coinbase is kept only when a virtual DAA score is supplied).
-        let sorted = spendableForBuild(utxos, virtualDaaScore: virtualDaaScore).sorted { $0.amount > $1.amount }
+        var sorted = spendableForBuild(utxos, virtualDaaScore: virtualDaaScore).sorted { $0.amount > $1.amount }
+        // A coin a "Not confirmed" send spent goes first, so this send and that one can't both land.
+        if let leadingOutpoint,
+           let index = sorted.firstIndex(where: { "\($0.outpoint.transactionId):\($0.outpoint.index)" == leadingOutpoint }) {
+            sorted.insert(sorted.remove(at: index), at: 0)
+        }
         var selected: [UTXO] = []
         var total: UInt64 = 0
         // Funds were enough but no shape fit without giving away real change - see below.

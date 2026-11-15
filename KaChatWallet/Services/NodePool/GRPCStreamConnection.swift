@@ -252,11 +252,33 @@ actor GRPCStreamConnection {
     /// The stream ended while its connect was still waiting for the connection to be ready.
     private var streamClosedWhileConnecting = false
 
+    /// Whether a dropped stream reconnects by itself: only for the nodes the app keeps using (the
+    /// active pool, the subscription's primary and standby - see `GRPCConnectionPool`). A probe's
+    /// or a one-off's connection used to redial every ~30 s forever.
+    private(set) var keepAlive: Bool
+
     // MARK: - Initialization
 
-    init(endpoint: Endpoint, eventLoopGroup: EventLoopGroup) {
+    init(endpoint: Endpoint, eventLoopGroup: EventLoopGroup, keepAlive: Bool = false) {
         self.endpoint = endpoint
         self.sharedGroup = eventLoopGroup
+        self.keepAlive = keepAlive
+    }
+
+    func setKeepAlive(_ on: Bool) {
+        keepAlive = on
+        if !on {
+            autoReconnectTask?.cancel()
+            autoReconnectTask = nil
+        }
+    }
+
+    /// A connect, a request or a caller waiting to send one is under way.
+    var isBusy: Bool {
+        state == .connecting
+            || pendingRequests.values.contains { $0.continuation != nil }
+            || !reservedTypes.isEmpty
+            || typeSlotWaiters.values.contains { !$0.isEmpty }
     }
 
     // Note: No deinit cleanup needed - EventLoopGroup is owned by GRPCConnectionPool
@@ -492,7 +514,7 @@ actor GRPCStreamConnection {
             forgetTimedOutRequest(pending)
         }
 
-        scheduleAutoReconnect()
+        if keepAlive { scheduleAutoReconnect() }
     }
 
     /// Self-heal from an unexpected drop (e.g. the OS killing sockets on sleep/wake, or a brief
@@ -507,6 +529,8 @@ actor GRPCStreamConnection {
     /// `.disconnected` itself first, so `handleStreamClosed`'s guard fails and this never fires
     /// for intentional disconnects (pool teardown, wallet switch, etc).
     private func scheduleAutoReconnect() {
+        // no longer a node the app keeps (setKeepAlive): stays down until something uses it
+        guard keepAlive else { return }
         reconnectAttempts += 1
         let attempt = reconnectAttempts
         autoReconnectTask?.cancel()
@@ -996,6 +1020,14 @@ actor GRPCConnectionPool {
     /// Maximum total connections to prevent memory exhaustion
     private let maxTotalConnections = 50
 
+    /// The nodes whose connections stay open and reconnect by themselves: the active pool (set by
+    /// the profiler after each rebalance) and the UTXO subscription's primary and standby. Any
+    /// other connection is closed once it is done with (`endLease`, `releaseIdleConnections`).
+    private var activeKeys: Set<String> = []
+    private var subscriptionKeys: Set<String> = []
+    /// Connections a probe or discovery call is using right now, by endpoint key.
+    private var leases: [String: Int] = [:]
+
     /// Shared EventLoopGroup for all connections
     /// Using a shared group is much more efficient than one per connection
     private let sharedEventLoopGroup: EventLoopGroup
@@ -1016,29 +1048,113 @@ actor GRPCConnectionPool {
         }
     }
 
+    private func isEssential(_ key: String) -> Bool {
+        activeKeys.contains(key) || subscriptionKeys.contains(key)
+    }
+
+    /// The registry's active nodes, after a rebalance.
+    func setActiveKeys(_ keys: Set<String>) async {
+        guard keys != activeKeys else { return }
+        activeKeys = keys
+        await applyKeepAlive()
+    }
+
+    /// The UTXO subscription's primary and standby.
+    func setSubscriptionKeys(_ keys: Set<String>) async {
+        guard keys != subscriptionKeys else { return }
+        subscriptionKeys = keys
+        await applyKeepAlive()
+    }
+
+    private func applyKeepAlive() async {
+        for (key, conn) in connections {
+            await conn.setKeepAlive(isEssential(key))
+        }
+    }
+
     /// Get or create a connection for an endpoint
     func connection(for endpoint: Endpoint) async -> GRPCStreamConnection {
         if let existing = connections[endpoint.key] {
             return existing
         }
 
-        // Evict oldest disconnected connections if at capacity
-        if connections.count >= maxTotalConnections {
-            await evictOldestDisconnected()
+        // At capacity: close the least recently used connection nobody needs
+        var evictions = 0
+        while connections.count >= maxTotalConnections, evictions < 5 {
+            guard await evictLeastRecentlyUsedIdle() else { break }
+            evictions += 1
+        }
+        // another caller made it during the awaits above
+        if let existing = connections[endpoint.key] {
+            return existing
         }
 
-        let conn = GRPCStreamConnection(endpoint: endpoint, eventLoopGroup: sharedEventLoopGroup)
+        let conn = GRPCStreamConnection(
+            endpoint: endpoint,
+            eventLoopGroup: sharedEventLoopGroup,
+            keepAlive: isEssential(endpoint.key)
+        )
         connections[endpoint.key] = conn
         return conn
     }
 
-    /// Evict the oldest disconnected connection to make room
-    private func evictOldestDisconnected() async {
+    /// A connection for a probe or discovery call; hand it back with `endLease`.
+    func lease(_ endpoint: Endpoint) async -> GRPCStreamConnection {
+        leases[endpoint.key, default: 0] += 1
+        return await connection(for: endpoint)
+    }
+
+    /// Done with a leased connection: it is closed unless the node is one the app keeps, or
+    /// `keepOpen` (a second probe follows right away).
+    func endLease(_ endpoint: Endpoint, keepOpen: Bool = false) async {
+        let key = endpoint.key
+        let remaining = (leases[key] ?? 1) - 1
+        leases[key] = remaining > 0 ? remaining : nil
+        guard !keepOpen, remaining <= 0, !isEssential(key), let conn = connections[key] else { return }
+        guard await !conn.isBusy else { return }
+        guard leases[key] == nil, !isEssential(key) else { return }
+        await conn.disconnect()
+    }
+
+    /// Closes the open connections nobody needs: not essential, not leased, idle for `idleFor`.
+    func releaseIdleConnections(idleFor: TimeInterval = 0) async {
+        let now = Date()
+        var released = 0
+        for (key, conn) in connections where !isEssential(key) && leases[key] == nil {
+            guard await conn.isConnected, await !conn.isBusy else { continue }
+            let lastActivity = await conn.lastActivityAt
+            guard now.timeIntervalSince(lastActivity) >= idleFor else { continue }
+            guard leases[key] == nil, !isEssential(key) else { continue }
+            await conn.disconnect()
+            released += 1
+        }
+        if released > 0 {
+            AppLog.log("[GRPCPool] Closed %d idle connections to inactive nodes", released)
+        }
+    }
+
+    /// Closes and forgets the connections of nodes the registry no longer holds (wrong network,
+    /// pruned, cleared). The subscription's own nodes stay until it moves off them.
+    func dropConnections(notIn knownKeys: Set<String>) async {
+        var dropped = 0
+        for (key, conn) in connections
+        where !knownKeys.contains(key) && !subscriptionKeys.contains(key) && leases[key] == nil {
+            connections.removeValue(forKey: key)
+            await conn.disconnect()
+            dropped += 1
+        }
+        if dropped > 0 {
+            AppLog.log("[GRPCPool] Dropped %d connections to nodes no longer in the registry", dropped)
+        }
+    }
+
+    /// Evict the least recently used connection that is not essential, leased or busy - open or
+    /// not. False when there is none.
+    private func evictLeastRecentlyUsedIdle() async -> Bool {
         var oldest: (key: String, lastActivity: Date)? = nil
 
-        for (key, conn) in connections {
-            // Skip connected connections
-            if await conn.isConnected { continue }
+        for (key, conn) in connections where !isEssential(key) && leases[key] == nil {
+            if await conn.isBusy { continue }
 
             let lastActivity = await conn.lastActivityAt
             if oldest == nil || lastActivity < oldest!.lastActivity {
@@ -1046,12 +1162,11 @@ actor GRPCConnectionPool {
             }
         }
 
-        if let key = oldest?.key {
-            if let conn = connections.removeValue(forKey: key) {
-                await conn.disconnect()
-                AppLog.log("[GRPCPool] Evicted oldest disconnected connection: %@", key)
-            }
-        }
+        guard let key = oldest?.key, !isEssential(key), leases[key] == nil,
+              let conn = connections.removeValue(forKey: key) else { return false }
+        await conn.disconnect()
+        AppLog.log("[GRPCPool] Evicted least recently used connection: %@", key)
+        return true
     }
 
     /// Remove a connection
@@ -1100,11 +1215,11 @@ actor GRPCConnectionPool {
     /// in parallel - meant to be called when the app returns to the foreground, since backgrounding
     /// can suspend a connection's own stream-completion callback (`GRPCStreamConnection`'s
     /// self-reconnect in `handleStreamClosed`) from running promptly, leaving connections dead
-    /// until something happens to pick that exact endpoint for a request. Only touches connections
-    /// already in the pool (bounded, cheap) - not a full node discovery/probe cycle.
+    /// until something happens to pick that exact endpoint for a request. Only the nodes the app
+    /// keeps (active, subscription): the rest reconnect when something uses them.
     func reconnectDisconnected() async {
         await withTaskGroup(of: Void.self) { group in
-            for conn in connections.values {
+            for (key, conn) in connections where isEssential(key) {
                 group.addTask {
                     guard await !conn.isConnected else { return }
                     try? await conn.connect()
@@ -1113,25 +1228,25 @@ actor GRPCConnectionPool {
         }
     }
 
-    /// Prune idle/disconnected connections to free memory
-    /// Keeps connections that are still connected or were recently used
+    /// Prune idle connections to free memory and sockets: a disconnected one idle for `maxAge`
+    /// is forgotten, an open one to a node the app doesn't keep is closed. Essential and leased
+    /// connections stay.
     func pruneIdleConnections(maxAge: TimeInterval) async {
         var pruned = 0
         let now = Date()
 
-        for (key, conn) in connections {
-            // Keep connected connections
-            if await conn.isConnected {
-                continue
-            }
+        for (key, conn) in connections where !isEssential(key) && leases[key] == nil {
+            if await conn.isBusy { continue }
 
-            // Keep recently active connections (might reconnect soon)
+            // Keep recently active connections (might be used again soon)
             let lastActivity = await conn.lastActivityAt
             if now.timeIntervalSince(lastActivity) < maxAge {
                 continue
             }
 
             // Disconnect and remove idle connections
+            // the awaits above let a lease or the subscription take it meanwhile
+            guard leases[key] == nil, !isEssential(key) else { continue }
             await conn.disconnect()
             connections.removeValue(forKey: key)
             pruned += 1

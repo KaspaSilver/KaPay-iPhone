@@ -223,8 +223,8 @@ struct OtherDomainsDropdown: View {
     }
 
     static func missingText(_ r: NameResolution) -> String {
-        if r.notLive { return String(localized: "Coming soon") }
-        return r.failed ? String(localized: "Couldn't check") : String(localized: "Not registered")
+        if r.notLive { return AppLocalization.string("Coming soon") }
+        return r.failed ? AppLocalization.string("Couldn't check") : AppLocalization.string("Not registered")
     }
 }
 
@@ -474,6 +474,7 @@ struct SendFeeControls: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.accentColor)
+                    .accessibilityLabel(Text("Use This Fee"))
                 } else if isEstimatingFee {
                     ProgressView().scaleEffect(0.75)
                 } else if let feeText {
@@ -1318,7 +1319,8 @@ struct SwipeUpToSendScrollView<Content: View>: View {
     /// The screen's error for a send that failed, shown under "Failed".
     var failureMessage: String?
     var labels: SwipeUpLabels = .send
-    /// What the Face ID prompt says, when this screen does something other than send Kaspa.
+    /// Set: Face ID (or the passcode) before the action, with this prompt - .kachat name
+    /// transactions. Nil, as for a plain Kaspa send: the swipe sends straight away.
     var authReason: String? = nil
     /// For an action that ends without a `SentTransaction` (a .kachat claim): true once it
     /// worked, and `outcome` shows under the title in place of the transaction.
@@ -1347,7 +1349,7 @@ struct SwipeUpToSendScrollView<Content: View>: View {
     @State private var confirmed = false
     /// The send ended without a transaction: the sending screen shows "Failed".
     @State private var failed = false
-    /// Face ID is up for this swipe: nothing else starts until it answers.
+    /// Face ID is up for this swipe (a .kachat transaction): nothing else starts until it answers.
     @State private var authPending = false
 
     private static var barHeight: CGFloat { 64 }
@@ -1484,13 +1486,18 @@ struct SwipeUpToSendScrollView<Content: View>: View {
         }
     }
 
-    /// Kaspa never leaves on the swipe alone: Face ID first, on every screen that swipes up.
-    /// Declined, the screen settles back with everything still filled in.
+    /// A Kaspa send goes on the swipe alone: `startSending` switching to `.sending` at once is
+    /// what stops a second swipe. A .kachat name transaction (`authReason` set) asks Face ID
+    /// first; declined, the screen settles back with everything still filled in.
     private func authenticateThenSend() {
         guard !authPending, phase == .form else { return }
+        guard let authReason else {
+            startSending()
+            return
+        }
         authPending = true
         DeviceAuth.authenticate(
-            reason: authReason ?? AppLocalization.string("Confirm sending Kaspa"),
+            reason: authReason,
             onSuccess: {
                 startSending()
                 authPending = false

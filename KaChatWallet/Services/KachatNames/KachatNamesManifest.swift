@@ -82,15 +82,17 @@ extension KachatNames {
         /// The most periods `extend` can add now: a name (from `periodStart`) holds at most
         /// `maxYears` periods (ops.rs `extendable_years`).
         func extendableYears(periodStart: Int64, expiresAt: Int64) -> Int64 {
-            let room = periodStart + maxYears * periodMs - expiresAt
-            return room < 0 ? 0 : min(room / periodMs, maxYears)
+            // overflow-safe: the times can come from a server
+            let (end, o1) = periodStart.addingReportingOverflow(maxYears * periodMs)
+            let (room, o2) = end.subtractingReportingOverflow(expiresAt)
+            return o1 || o2 || room < 0 ? 0 : min(room / periodMs, maxYears)
         }
 
         func extendableYears(_ f: NameFields) -> Int64 { extendableYears(periodStart: f.periodStart, expiresAt: f.expiresAt) }
 
         /// When `renew` becomes valid: `expiresAt - renewWindowMs` (unix ms). The transaction is
         /// final once the network's past median time passes its lock time, which is at least this.
-        func renewOpens(expiresAt: Int64) -> Int64 { expiresAt - renewWindowMs }
+        func renewOpens(expiresAt: Int64) -> Int64 { KachatNames.clampedSum(expiresAt, -renewWindowMs) }
 
         /// How close to expiry a name counts as "expires soon" (a buyer would have to renew it):
         /// 30 days on a yearly clock, the renewal window on a short one (testnet's 2 hours),

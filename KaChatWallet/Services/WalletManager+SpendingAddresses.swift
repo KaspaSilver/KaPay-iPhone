@@ -136,7 +136,12 @@ extension WalletManager {
             persistedMaxSpendingAddressIndex = maxIndex
         }
         try? await saveWalletOnly(wallet)
-        currentWallet = wallet
+        // Only these fields onto the wallet as it is now: a balance update during the save
+        // would otherwise be written over with the copy taken before it.
+        guard var latest = currentWallet, latest.publicAddress == wallet.publicAddress else { return }
+        if let index { latest.spendingAddressIndex = index }
+        if let maxIndex { latest.maxSpendingAddressIndex = maxIndex }
+        currentWallet = latest
     }
 
     // MARK: - Hidden-set / labels (UserDefaults, scoped per wallet - not part of Wallet itself)

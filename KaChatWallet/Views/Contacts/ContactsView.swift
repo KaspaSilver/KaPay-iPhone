@@ -282,7 +282,9 @@ struct ProfileView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)
-                        Text(localizedFormat("%d profile update(s) failed", failedKNSUpdates.count))
+                        Text(failedKNSUpdates.count == 1
+                             ? localized("1 profile update failed")
+                             : localizedFormat("%lld profile updates failed", failedKNSUpdates.count))
                             .font(.footnote.weight(.semibold))
                         Button {
                             retryAllFailedKNSUpdates()
@@ -2012,7 +2014,9 @@ private struct KNSProfileEditorSheet: View {
                             Text("Confirm Changes")
                                 .font(.headline)
                                 .fontWeight(.bold)
-                            Text("\(pendingChanges.count) change\(pendingChanges.count == 1 ? "" : "s"). Each is submitted as its own on-chain transaction from your chatting address:")
+                            Text(pendingChanges.count == 1
+                                 ? LocalizedStringKey("1 change. Each is submitted as its own on-chain transaction from your chatting address:")
+                                 : LocalizedStringKey("\(pendingChanges.count) changes. Each is submitted as its own on-chain transaction from your chatting address:"))
                                 .font(.subheadline)
                             VStack(alignment: .leading, spacing: 4) {
                                 ForEach(pendingChanges, id: \.self) { change in
@@ -2119,12 +2123,12 @@ private struct KNSProfileEditorSheet: View {
 
         do {
             guard let rawData = try await item.loadTransferable(type: Data.self) else {
-                throw KasiaError.apiError(String(localized: "Could not load selected image"))
+                throw KasiaError.apiError(AppLocalization.string("Could not load selected image"))
             }
 
             let prepared = try prepareImageForUpload(rawData)
             guard !prepared.data.isEmpty else {
-                throw KasiaError.apiError(String(localized: "Could not encode selected image"))
+                throw KasiaError.apiError(AppLocalization.string("Could not encode selected image"))
             }
             await MainActor.run {
                 switch kind {
@@ -2158,7 +2162,7 @@ private struct KNSProfileEditorSheet: View {
     private func prepareImageForUpload(_ rawData: Data) throws -> (image: UIImage, data: Data, mimeType: String) {
         let maxDimension: CGFloat = 1400
         guard let source = CGImageSourceCreateWithData(rawData as CFData, nil) else {
-            throw KasiaError.apiError(String(localized: "Selected data is not a valid image"))
+            throw KasiaError.apiError(AppLocalization.string("Selected data is not a valid image"))
         }
 
         let thumbnailOptions: [CFString: Any] = [
@@ -2172,7 +2176,7 @@ private struct KNSProfileEditorSheet: View {
             0,
             thumbnailOptions as CFDictionary
         ) else {
-            throw KasiaError.apiError(String(localized: "Could not process selected image"))
+            throw KasiaError.apiError(AppLocalization.string("Could not process selected image"))
         }
 
         let previewImage = UIImage(cgImage: cgImage)
@@ -2183,12 +2187,12 @@ private struct KNSProfileEditorSheet: View {
             1,
             nil
         ) else {
-            throw KasiaError.apiError(String(localized: "Could not initialize image encoder"))
+            throw KasiaError.apiError(AppLocalization.string("Could not initialize image encoder"))
         }
 
         CGImageDestinationAddImage(destination, cgImage, nil)
         guard CGImageDestinationFinalize(destination) else {
-            throw KasiaError.apiError(String(localized: "Could not encode selected image"))
+            throw KasiaError.apiError(AppLocalization.string("Could not encode selected image"))
         }
 
         return (previewImage, outputData as Data, "image/png")
@@ -2430,7 +2434,7 @@ private struct KNSDomainsListView: View {
                     ForEach(names) { owned in
                         DomainNameCardView(
                             title: owned.display,
-                            badge: owned.isProvisional ? String(localized: "Settling") : nil
+                            badge: owned.isProvisional ? AppLocalization.string("Settling") : nil
                         )
                     }
                 }
@@ -2491,7 +2495,7 @@ struct KNSDomainCard: View {
     var isPrimary: Bool = false
 
     var body: some View {
-        DomainNameCardView(title: domain.fullName, badge: isPrimary ? String(localized: "Primary") : nil)
+        DomainNameCardView(title: domain.fullName, badge: isPrimary ? AppLocalization.string("Primary") : nil)
     }
 }
 
@@ -2705,6 +2709,17 @@ struct KNSDomainDetailView: View {
     }
 }
 
+/// A bare `kaspa:` / `kaspatest:` address in upper case ("KASPA:QR…", what a compact QR code
+/// carries) in lower case: bech32 is case-insensitive, but only in one case, so mixed case stays
+/// as typed and fails the check. Anything else (a name, a link with a query) is returned as is.
+func lowercasedKaspaAddress(_ text: String) -> String {
+    let lower = text.lowercased()
+    guard lower.hasPrefix("kaspa:") || lower.hasPrefix("kaspatest:"), !text.contains("?"),
+          let colon = text.firstIndex(of: ":") else { return text }
+    let payload = text[text.index(after: colon)...]
+    return payload == payload.uppercased() || payload == payload.lowercased() ? lower : text
+}
+
 /// Sends (transfers) a single KNS domain inscription to a recipient address or KNS domain -
 /// same UX conventions as the app's KAS send flows (KNS-domain-aware recipient, editable
 /// network fee) but with no amount field or coin control, since a domain transfer moves the
@@ -2712,6 +2727,7 @@ struct KNSDomainDetailView: View {
 /// per-spending-address "KNS Domains" tab reuses this exact sheet, passing
 /// `spendingAddressIndex` so the transfer is owned/funded/signed by that spending address's
 /// derived key instead of the identity/chatting address.
+
 struct KNSDomainSendView: View {
     let domain: KNSDomain
     /// When non-nil, the domain lives on this spending-chain address index and the transfer
@@ -2755,7 +2771,7 @@ struct KNSDomainSendView: View {
     }
 
     private var hasValidRecipient: Bool {
-        if resolvedAddress != nil { return true }
+        if let resolvedAddress { return KaspaAddress.isValidOnActiveNetwork(resolvedAddress) }
         return isValidAddress && !isResolvingKNS
     }
 
@@ -2966,6 +2982,12 @@ struct KNSDomainSendView: View {
 
     private func handleInputChange(_ input: String) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An upper-case address goes into the field in lower case; that change comes back here.
+        let lowered = lowercasedKaspaAddress(trimmed)
+        if lowered != trimmed {
+            addressInput = lowered
+            return
+        }
 
         resolvedAddress = nil
         resolvedDomain = nil
@@ -2979,7 +3001,7 @@ struct KNSDomainSendView: View {
             return
         }
 
-        if trimmed.hasPrefix("kaspa:") || trimmed.hasPrefix("kaspatest:") {
+        if trimmed.lowercased().hasPrefix("kaspa:") || trimmed.lowercased().hasPrefix("kaspatest:") {
             isValidAddress = KaspaAddress.isValidOnActiveNetwork(trimmed)
             return
         }
@@ -2995,6 +3017,14 @@ struct KNSDomainSendView: View {
     /// Use one service's answer (the priority one, or a pick from "Other domains").
     private func selectResolution(_ resolution: NameResolution) {
         guard let address = resolution.address else { return }
+        // Only an address of this network is an answer; anything else reads as not found.
+        guard KaspaAddress.isValidOnActiveNetwork(address) else {
+            resolvedAddress = nil
+            resolvedDomain = nil
+            selectedTLD = nil
+            knsError = NameServicesClient.notFoundMessage(typed: resolution.display, results: [])
+            return
+        }
         resolvedAddress = address
         resolvedDomain = resolution.display
         selectedTLD = resolution.tld
@@ -3041,6 +3071,7 @@ struct KNSDomainSendView: View {
             if let queryIndex = address.firstIndex(of: "?") {
                 address = String(address[..<queryIndex])
             }
+            address = lowercasedKaspaAddress(address)
         }
         addressInput = address
         handleInputChange(address)
@@ -3247,7 +3278,7 @@ struct ChattingAddressManageView: View {
                 }
             )
             sheet
-                .presentationDetents([.height(sheet.height)])
+                .fittedSheetDetents(sheet.height)
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showPublicKeySheet) {
@@ -3344,7 +3375,7 @@ struct ChattingAddressManageView: View {
         switch choice {
         case .privateKey:
             if settingsViewModel.settings.biometricSeedPhraseEnabled {
-                DeviceAuth.authenticate(reason: "Unlock to view this address's private key") {
+                DeviceAuth.authenticate(reason: AppLocalization.string("Unlock to view this address's private key")) {
                     showPrivateKeySheet = true
                 }
             } else {
@@ -4060,7 +4091,7 @@ struct WithdrawKaspaView: View {
     /// True once we have a usable recipient — either a resolved KNS domain or a directly
     /// valid Kaspa address (mirrors AddContactView.canAdd's precedence).
     private var hasValidRecipient: Bool {
-        if resolvedAddress != nil { return true }
+        if let resolvedAddress { return KaspaAddress.isValidOnActiveNetwork(resolvedAddress) }
         return isValidAddress && !isResolvingKNS
     }
 
@@ -4650,6 +4681,12 @@ struct WithdrawKaspaView: View {
 
     private func handleInputChange(_ input: String) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An upper-case address goes into the field in lower case; that change comes back here.
+        let lowered = lowercasedKaspaAddress(trimmed)
+        if lowered != trimmed {
+            addressInput = lowered
+            return
+        }
 
         resolvedAddress = nil
         resolvedDomain = nil
@@ -4673,7 +4710,7 @@ struct WithdrawKaspaView: View {
             return
         }
 
-        if trimmed.hasPrefix("kaspa:") || trimmed.hasPrefix("kaspatest:") {
+        if trimmed.lowercased().hasPrefix("kaspa:") || trimmed.lowercased().hasPrefix("kaspatest:") {
             // the other network's address is the same key on another chain: refused
             isValidAddress = KaspaAddress.isValidOnActiveNetwork(trimmed)
             return
@@ -4703,6 +4740,14 @@ struct WithdrawKaspaView: View {
     /// Use one service's answer (the priority one, or a pick from "Other domains").
     private func selectResolution(_ resolution: NameResolution) {
         guard let address = resolution.address else { return }
+        // Only an address of this network is an answer; anything else reads as not found.
+        guard KaspaAddress.isValidOnActiveNetwork(address) else {
+            resolvedAddress = nil
+            resolvedDomain = nil
+            selectedTLD = nil
+            knsError = NameServicesClient.notFoundMessage(typed: resolution.display, results: [])
+            return
+        }
         resolvedAddress = address
         resolvedDomain = resolution.display
         selectedTLD = resolution.tld
@@ -4749,6 +4794,7 @@ struct WithdrawKaspaView: View {
             if let queryIndex = address.firstIndex(of: "?") {
                 address = String(address[..<queryIndex])
             }
+            address = lowercasedKaspaAddress(address)
         }
         addressInput = address
         handleInputChange(address)

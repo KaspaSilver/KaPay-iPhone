@@ -376,6 +376,8 @@ final class KeychainService {
         try? deleteLegacyPrivateKey(includeAccessGroup: true)
         try? deleteLegacyPrivateKey(includeAccessGroup: false)
         try deleteSecureEnclaveKey()
+        // the stand-in id where there's no Secure Enclave goes with it
+        try? delete(forKey: .deviceIdFallback)
         clearDeviceIdCache()
     }
 
@@ -543,9 +545,10 @@ final class KeychainService {
     }
 
     /// The accounts with saved keys on this device, read from the Keychain itself: after an app
-    /// reinstall, the list of saved accounts is gone and these are not.
-    func accountSnapshotAddresses() -> [String] {
-        guard let deviceId = try? deviceIdentifier() else { return [] }
+    /// reinstall, the list of saved accounts is gone and these are not. Throws when the Keychain
+    /// couldn't be read, which says nothing about whether there are any.
+    func accountSnapshotAddresses() throws -> [String] {
+        let deviceId = try deviceIdentifier()
         let prefix = "\(KeychainKey.seedPhrase.rawValue).\(deviceId)."
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -555,8 +558,11 @@ final class KeychainService {
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let items = result as? [[String: Any]] else { return [] }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else {
+            throw KasiaError.keychainError("Failed to list saved accounts: \(status)")
+        }
         return items.compactMap { item in
             guard let account = item[kSecAttrAccount as String] as? String, account.hasPrefix(prefix) else { return nil }
             // accountScopedKeyName stores "kaspa:" as "kaspa_"
@@ -589,25 +595,12 @@ final class KeychainService {
     }
 
     /// Low-level save for device-specific data (no sync, device-only access)
+    /// Updated in place, added only when missing: a delete then a failed add lost the only copy.
     private func saveSensitiveDataRaw(_ data: Data, keyName: String, accessible: CFString = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly) throws {
-        var query = genericPasswordQueryForKey(keyName, includeAccessGroup: true)
-
-        SecItemDelete(query as CFDictionary)
-
-        query[kSecValueData as String] = data
-        query[kSecAttrAccessible as String] = accessible
-        query[kSecAttrSynchronizable as String] = kCFBooleanFalse
-
-        let status = SecItemAdd(query as CFDictionary, nil)
+        let status = upsertSensitiveDataRaw(data, keyName: keyName, accessible: accessible, includeAccessGroup: true)
         if status == errSecMissingEntitlement {
             // Fallback without access group
-            var fallbackQuery = genericPasswordQueryForKey(keyName, includeAccessGroup: false)
-            SecItemDelete(fallbackQuery as CFDictionary)
-            fallbackQuery[kSecValueData as String] = data
-            fallbackQuery[kSecAttrAccessible as String] = accessible
-            fallbackQuery[kSecAttrSynchronizable as String] = kCFBooleanFalse
-
-            let fallbackStatus = SecItemAdd(fallbackQuery as CFDictionary, nil)
+            let fallbackStatus = upsertSensitiveDataRaw(data, keyName: keyName, accessible: accessible, includeAccessGroup: false)
             guard fallbackStatus == errSecSuccess else {
                 throw KasiaError.keychainError("Failed to save sensitive data: \(fallbackStatus)")
             }
@@ -616,6 +609,21 @@ final class KeychainService {
         guard status == errSecSuccess else {
             throw KasiaError.keychainError("Failed to save sensitive data: \(status)")
         }
+    }
+
+    private func upsertSensitiveDataRaw(_ data: Data, keyName: String, accessible: CFString, includeAccessGroup: Bool) -> OSStatus {
+        let query = genericPasswordQueryForKey(keyName, includeAccessGroup: includeAccessGroup)
+        let update: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: accessible,
+        ]
+        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        guard status == errSecItemNotFound else { return status }
+        var add = query
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = accessible
+        add[kSecAttrSynchronizable as String] = kCFBooleanFalse
+        return SecItemAdd(add as CFDictionary, nil)
     }
 
     /// Low-level load for device-specific data

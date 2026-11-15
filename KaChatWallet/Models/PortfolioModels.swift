@@ -87,7 +87,8 @@ struct PortfolioTransaction: Identifiable, Codable, Equatable {
 /// to add.
 enum PortfolioNumber {
     static func parse(_ text: String) -> Double? {
-        var cleaned = text.filter { $0.isNumber || $0 == "," || $0 == "." || $0 == "-" }
+        var cleaned = String(text.map(asciiCharacter))
+            .filter { ($0.isASCII && $0.isNumber) || $0 == "," || $0 == "." || $0 == "-" }
         guard !cleaned.isEmpty else { return nil }
         let commas = cleaned.filter { $0 == "," }.count
         let dots = cleaned.filter { $0 == "." }.count
@@ -114,6 +115,18 @@ enum PortfolioNumber {
             cleaned = cleaned.replacingOccurrences(of: ".", with: "")
         }
         return Double(cleaned)
+    }
+
+    /// Digits of any script ("٣", "۳", "३") as ASCII, and the Arabic decimal and thousands marks
+    /// ("٫", "٬") as "." and ",", so the rules above see one alphabet. `KaspaUnit`'s amount
+    /// mapping turns every comma into a decimal point, which would break grouping here.
+    private static func asciiCharacter(_ c: Character) -> Character {
+        if c == "\u{066B}" { return "." }
+        if c == "\u{066C}" { return "," }
+        guard !c.isASCII, c.unicodeScalars.count == 1,
+              c.unicodeScalars.first?.properties.numericType == .decimal,
+              let value = c.wholeNumberValue else { return c }
+        return Character(String(value))
     }
 }
 

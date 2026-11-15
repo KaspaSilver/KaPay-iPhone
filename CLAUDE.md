@@ -31,7 +31,7 @@ Five fixed tabs (`AppTab` in `KaChatWallet/Models/Models.swift`, rendered by
 | Portfolio | `PortfolioView` (`Views/Portfolio/`) |
 | Cold Storage | `ColdStorageListView` (`Views/ColdStorage/`) |
 | Wallet | `ProfileView` (`Views/Contacts/ContactsView.swift`, `AppTab.profile`) - the home tab, where the app opens after logging in; as on KaChat's Wallet tab (`WalletView` there), the total balance split into chatting and spending (`WalletBalanceCard`), Send, Receive and Request (`CreatePaymentRequestView`), Backup Hygiene when due, and the Manage Addresses and Chatting Address squares; then Your Domains, Contacts (`AddressBookView`, its own pushed screen) and help. No profile card: those belong to KaChat and KaPost. About is in Settings |
-| .kachat | `KachatMarketView` (`Views/Ecosystem/`); dock icon `KachatTabIcon.domainsImage` (name tag with an @) - the full .kachat names marketplace: the logo and four numbered cards (Marketplace, Available, Expired, Activity), each opening its page; only the Marketplace has the name search. Search, buy, claim, sell, offers, activity |
+| .kachat | `KachatMarketView` (`Views/Ecosystem/`); dock icon `KachatTabIcon.domainsImage` (name tag with an @) - the full .kachat names marketplace. The name search sits first under the logo (Claim on a free name); then claims in progress, Your Names (when there are any), and a row each of Available, For sale and Expired plus the latest activity, each with See All for its full page. Your Domains > .kachat's button is "Claim a Name" and opens this screen. Search, buy, claim, sell, offers, activity |
 | Settings | `SettingsView(isDockTab: true)` (`Views/Settings/SettingsView.swift`, `AppTab.settings`) - no Done button as a tab; alphabetical rows with no descriptive text, as in KaChat: Account Name, Back Up Account (Complete Your Backup, View 12 or 24 Words, Back Up to NFC Card), Connection, Customization, Diagnostics, Notifications, Security, Storage; then Delete Account (`DeleteAccountSheet`, the warning the sign-in screen's Delete also shows; `WalletManager.deleteCurrentAccount`) and Log Out |
 
 Account setup: `ContentView` -> `OnboardingView` (create / import a seed) -> `MainTabView`. Create
@@ -127,10 +127,13 @@ Where each screen uses them:
 **A send with no answer**: a node that took a transaction and never answered gets a longer look-up,
 then `SendOutcomeUnknownError`: the screen says "Not confirmed" and offers only Done, since Try Again
 could pay twice. A node's answer only counts if its id is the one computed here, and a transaction the
-network can't see 5 s later is sent again (same transaction, so it can't pay twice). Only a verdict
-rejection (`isVerdict`: not orphan, not "already") cancels another node's lost answer, and the mempool
-look-up asks the primary too. After a rejection, a REST `is_accepted` counts only from the built-in
-REST server, never one typed into Settings.
+network can't see 5 s later is sent again (same transaction, so it can't pay twice); that look-up skips
+the node that took the submit. A mempool entry counts only if its transaction's recomputed id matches
+and it isn't an orphan. Only a verdict rejection (`isVerdict`: not orphan, not "already") cancels
+another node's lost answer, and after one the transaction counts as out only if two nodes' mempools
+have it or the built-in REST server says `is_accepted` (never a REST server typed into Settings).
+Every recipient must pass `KaspaAddress.isValidOnActiveNetwork` (prefix and payload length too),
+names from other services included.
 
 **Security**: the words and passphrase are `WhenUnlocked` in the Keychain; other keys stay
 `AfterFirstUnlock`, since push sign-in uses the private key while the phone is locked. So anything that
@@ -138,19 +141,24 @@ may run locked gets addresses from `DerivedAddressStore`, never the seed. `Priva
 the app, sheets included, whenever it isn't active. Third-party keyboards are refused app-wide. After a
 reinstall (`noteKeysLeftByEarlierInstallIfNeeded`) leftover keys become saved accounts to open or delete,
 and are never erased automatically. Biometrics for Account Login is off by default, and switched off once
-on existing installs, so a phone with no passcode can still see its account; the words, private keys and
-sends still need the phone's lock. A `.kachat` name resolves only if the chain holds its record
+on existing installs, so a phone with no passcode can still see its account; the words and private keys
+still need the phone's lock. A `.kachat` name resolves only if the chain holds its record
 (`confirmOnChain`), and Accept Offer checks the on-chain amount against what was shown.
 A .kas commit is filed before it's sent (`KNSRevealRecovery`), and if its reveal never went out it
-is retried when the app becomes active, for an hour. Every way of removing an account (Delete Account, the sign-in list's Delete, the recovery screen's
+is retried when the app becomes active, signed in to that account, for an hour (later it could undo
+a newer choice). The record holds the only copy of the redeem script, so it's kept until the commit
+is seen spent (a commit never seen on chain is dropped after 30 days and two empty checks). Every way of removing an account (Delete Account, the sign-in list's Delete, the recovery screen's
 Remove) goes through `WalletManager.removeLocalData`: Cold Storage, Portfolio, contacts, bell history,
 .kachat reminders, spending-address files and keys, and the Nextcloud login, whose app password is
 revoked first. The Secure Enclave key goes only when no saved account and no Keychain snapshot remain.
 
-**Face ID**: `SwipeUpToSendScrollView` asks `DeviceAuth` before every swipe, whether Send Kaspa,
-Cold Storage's broadcast or a .kachat transaction (its `authReason`). Declined, the screen settles
-back with everything filled in. Both Delete Account sheets ask too. A device with no passcode can't
-do either (`DeviceAuth` refuses and says why).
+**Face ID**: Kaspa sends never ask (owner's choice, 2026-11-13, same in every iPhone app): Send Kaspa,
+Compound, Send from an address and Cold Storage's broadcast go on the swipe, and `startSending`
+switching to `.sending` at once stops a second swipe. `DeviceAuth` still guards Delete Account (both
+sheets and the recovery screen's Remove), Send Domain, .kas profile and primary-domain changes,
+.kachat transactions (`SwipeUpToSendScrollView` asks only when `authReason` is set; declined, the
+screen settles back filled in), the Settings biometric toggles, saved-account sign-in, and showing the
+words or a private key. A device with no passcode can't do those (`DeviceAuth` refuses and says why).
 
 **Fees**: change too small to keep goes to the fee, and the review counts it (`SendFeeEstimate`).
 The swipe waits until Max, the fee and a higher tier's own estimate are in, and stays off after a
@@ -165,10 +173,14 @@ rotates there; another quantum source just lists the slot. The Receive QR's slot
 change, and a slot that has held change or spent isn't shown again.
 
 **Coins**: whatever `NodePoolService.submitTransaction` or `submitRpcTransaction(_:expectedTxId:)`
-sends (every send, .kas and .kachat names, combines, Cold Storage) stays out of the next send, Max
-and fee for two minutes (`WalletService.reserveOutpoints`, `unreservedUtxos`), and the UTXO cache is
-dropped; name sends pick only unreserved coins. Not after "Not confirmed": a resend then picks the
-same coins, so at most one of the two can land. A `.kachat` commit resend likewise ignores the hold. Available,
+sends (every send, .kas and .kachat names, combines, Cold Storage) is held from before the submit
+and stays out of the next send, Max and fee for ten minutes (`WalletService.reserveOutpoints`,
+`unreservedUtxos`), and the UTXO cache is dropped; name sends pick only unreserved coins. A definite
+failure releases the hold (unless the node said the coins are spent). Not after "Not confirmed": the
+hold is released and the next automatic send from that address leads with one of that send's coins
+(`unknownOutcomeOutpoints`, ten minutes), so at most one of the two can land. Coins carrying a
+`covenantId` are never spent by a plain send or Cold Storage ("Locked by a covenant" in Coin
+Control), and Cold Storage follows the hold and mining-reward maturity too. A `.kachat` commit resend likewise ignores the hold. Available,
 Compound and Coin Control count the coins a send can spend (`withdrawalSpendable` for the chatting
 address); Coin Control greys out the rest, and a selection whose coins are all gone is an error, not
 automatic. An address with more than `maxInputsPerTransaction` coins gets a Max (and a Compound) of

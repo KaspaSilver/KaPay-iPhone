@@ -509,6 +509,7 @@ struct KachatLiveSearchResult: View {
                     if let gap { onClaim(KachatClaimTarget(name: free, gap: gap)) }
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(gap == nil)
             }
         case .invalid:
@@ -1003,35 +1004,43 @@ struct KachatLiveMarketPage: View {
                 KachatLiveEmpty(text: model.loaded ? "No names are listed right now." : nil)
             } else {
                 KachatNameGrid {
-                    ForEach(model.listings) { n in
-                        NavigationLink { KachatListingDetailView(info: n) } label: {
-                            KachatNameTile(name: n.name) {
-                                Text(verbatim: KaspaUnit.amount(n.price))
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                                // what a buyer gets: the paid time left, flagged when it's short
-                                Text(String(format: AppLocalization.string("Expires %@"), KachatNamesActions.dayString(n.expiresAt)))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                    .multilineTextAlignment(.center)
-                                if n.expiresAt - (KachatLive.params?.expiresSoonMs ?? 30 * 86_400_000) < KachatNames.nowMs() {
-                                    Text("Expires soon")
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundColor(.orange)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 2)
-                                        .background(Capsule().fill(Color.orange.opacity(0.15)))
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    ForEach(model.listings) { KachatListingTile(info: $0) }
                 }
             }
         }
         .padding(.top, 4)
+    }
+}
+
+/// A name for sale: its price and when its paid time runs out (flagged when that's soon).
+/// Opens the name. The Marketplace page's grid and the .kachat screen's row.
+struct KachatListingTile: View {
+    let info: KachatNames.NameInfo
+
+    var body: some View {
+        NavigationLink { KachatListingDetailView(info: info) } label: {
+            KachatNameTile(name: info.name) {
+                Text(verbatim: KaspaUnit.amount(info.price))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                // what a buyer gets: the paid time left, flagged when it's short
+                Text(String(format: AppLocalization.string("Expires %@"), KachatNamesActions.dayString(info.expiresAt)))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                if info.expiresAt - (KachatLive.params?.expiresSoonMs ?? 30 * 86_400_000) < KachatNames.nowMs() {
+                    Text("Expires soon")
+                        .font(.caption2.weight(.bold))
+                        .foregroundColor(.orange)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.orange.opacity(0.15)))
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -1040,8 +1049,6 @@ struct KachatLiveMarketPage: View {
 /// name they want.
 struct KachatLiveExpiredPage: View {
     @ObservedObject var model: KachatHubModel
-    @State private var openName: KachatNames.NameInfo?
-    @State private var reloadedFor: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1050,43 +1057,53 @@ struct KachatLiveExpiredPage: View {
                 KachatLiveEmpty(text: model.loaded ? "No names are in their grace period right now." : nil)
             } else {
                 KachatNameGrid {
-                    ForEach(model.grace) { n in
-                        NavigationLink { KachatListingDetailView(info: n) } label: {
-                            KachatNameTile(name: n.name) {
-                                TimelineView(.periodic(from: .now, by: 1)) { context in
-                                    let releaseAt = n.expiresAt + (KachatLive.params?.graceMs ?? 0)
-                                    let left = releaseAt - Int64(context.date.timeIntervalSince1970 * 1000)
-                                    VStack(spacing: 2) {
-                                        Text("Released in")
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                        Text(verbatim: KachatLive.countdown(left))
-                                            .font(.subheadline.weight(.bold).monospacedDigit())
-                                            .foregroundColor(.orange)
-                                    }
-                                    .onChange(of: left <= 0) { released in
-                                        // released: it moves to Available
-                                        if released, !reloadedFor.contains(n.id) {
-                                            reloadedFor.insert(n.id)
-                                            Task { await model.reload() }
-                                        }
-                                    }
-                                }
-                                if let price = KachatLive.price(n.name) {
-                                    Text(verbatim: KaspaUnit.amount(price))
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.7)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
+                    ForEach(model.grace) { KachatGraceTile(info: $0, model: model) }
                 }
             }
         }
         .padding(.top, 4)
+    }
+}
+
+/// A name in its grace period, counting down to its release (then the hub reloads, and it
+/// moves to Available). Opens the name.
+struct KachatGraceTile: View {
+    let info: KachatNames.NameInfo
+    @ObservedObject var model: KachatHubModel
+    @State private var reloaded = false
+
+    var body: some View {
+        NavigationLink { KachatListingDetailView(info: info) } label: {
+            KachatNameTile(name: info.name) {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let releaseAt = KachatNames.clampedSum(info.expiresAt, KachatLive.params?.graceMs ?? 0)
+                    let left = releaseAt - Int64(context.date.timeIntervalSince1970 * 1000)
+                    VStack(spacing: 2) {
+                        Text("Released in")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(verbatim: KachatLive.countdown(left))
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundColor(.orange)
+                    }
+                    .onChange(of: left <= 0) { released in
+                        // released: it moves to Available
+                        if released, !reloaded {
+                            reloaded = true
+                            Task { await model.reload() }
+                        }
+                    }
+                }
+                if let price = KachatLive.price(info.name) {
+                    Text(verbatim: KaspaUnit.amount(price))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -1104,24 +1121,9 @@ struct KachatLiveAvailablePage: View {
             if model.lapsed.isEmpty {
                 KachatLiveEmpty(text: model.loaded ? "No expired names right now." : nil)
             } else {
-                // a tap gesture, not a NavigationLink, so the Claim button inside keeps its tap
                 KachatNameGrid {
                     ForEach(model.lapsed) { n in
-                        KachatNameTile(name: n.name) {
-                            // what claiming it costs: the price for its length
-                            if let price = KachatLive.price(n.name) {
-                                Text(verbatim: KaspaUnit.amount(price))
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundColor(.primary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                            }
-                            Button("Claim") { claim(n) }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                        }
-                        .onTapGesture { openName = n }
-                        .accessibilityAddTraits(.isButton)
+                        KachatLapsedTile(info: n, onOpen: { openName = n }, onClaim: { claimTarget = $0 })
                     }
                 }
             }
@@ -1132,12 +1134,36 @@ struct KachatLiveAvailablePage: View {
             if let openName { KachatListingDetailView(info: openName) }
         }
     }
+}
 
-    private func claim(_ n: KachatNames.NameInfo) {
-        Task { @MainActor in
-            guard let gap = try? await KachatNamesRegistry.shared.claimGap(for: n) else { return }
-            claimTarget = KachatClaimTarget(name: n.name, gap: gap)
+/// An expired name back on the market: its price and a Claim button. A tap gesture, not a
+/// NavigationLink, so the Claim button inside keeps its own tap; the tile itself calls `onOpen`.
+struct KachatLapsedTile: View {
+    let info: KachatNames.NameInfo
+    let onOpen: () -> Void
+    let onClaim: (KachatClaimTarget) -> Void
+
+    var body: some View {
+        KachatNameTile(name: info.name) {
+            // what claiming it costs: the price for its length
+            if let price = KachatLive.price(info.name) {
+                Text(verbatim: KaspaUnit.amount(price))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Button("Claim") {
+                Task { @MainActor in
+                    guard let gap = try? await KachatNamesRegistry.shared.claimGap(for: info) else { return }
+                    onClaim(KachatClaimTarget(name: info.name, gap: gap))
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
         }
+        .onTapGesture { onOpen() }
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -2660,7 +2686,7 @@ struct KachatLiveNameDetail: View {
             }
             if status == .grace {
                 // when the grace period ends: then anyone can claim it (Available)
-                let ends = info.expiresAt + registry.graceMs
+                let ends = KachatNames.clampedSum(info.expiresAt, registry.graceMs)
                 Label {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Grace period ends \(KachatLive.day(ends))")
@@ -3557,7 +3583,7 @@ struct KachatLiveDomainsTab: View {
         Button {
             showMarketplace = true
         } label: {
-            Text("Inscribe")
+            Text("Claim a Name")
                 .font(.subheadline)
                 .fontWeight(.bold)
                 .foregroundColor(.accentColor)
@@ -3579,7 +3605,7 @@ struct KachatLiveDomainsTab: View {
     static func expiryLine(for n: KachatNames.NameInfo, graceMs: Int64) -> String? {
         switch n.status(graceMs: graceMs) {
         case .active: return String(format: AppLocalization.string("Expires %@"), KachatLive.day(n.expiresAt))
-        case .grace: return String(format: AppLocalization.string("Grace ends %@"), KachatLive.day(n.expiresAt + graceMs))
+        case .grace: return String(format: AppLocalization.string("Grace ends %@"), KachatLive.day(KachatNames.clampedSum(n.expiresAt, graceMs)))
         case .lapsed: return nil
         }
     }
@@ -4060,7 +4086,7 @@ struct KachatExpiredNamesBanner: View {
                         .font(.subheadline.weight(.semibold))
                     Text(visible.count == 1
                          ? String(format: AppLocalization.string("Renew %@ before its grace period ends on %@ to keep it."),
-                                  "\(n.name).kachat", KachatNamesActions.dayString(n.expiresAt + registry.graceMs))
+                                  "\(n.name).kachat", KachatNamesActions.dayString(KachatNames.clampedSum(n.expiresAt, registry.graceMs)))
                          : AppLocalization.string("Renew them before their grace periods end to keep them."))
                         .font(.caption)
                         .foregroundColor(.secondary)

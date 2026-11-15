@@ -160,6 +160,8 @@ struct KaChatApp: App {
             // Bring the live subscription to the wallet's own addresses back if it dropped while
             // away (no-op while it is up).
             WalletService.shared.startPolling()
+            // an unregister that failed earlier (Log Out while offline, say)
+            pushManager.retryPendingUnregisterIfNeeded()
             if settingsViewModel.settings.notificationMode == .remotePush {
                 Task {
                     await WalletService.shared.resumeUtxoSubscriptionForRemotePush()

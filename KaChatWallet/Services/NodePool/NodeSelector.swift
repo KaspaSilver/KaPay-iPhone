@@ -90,15 +90,17 @@ actor NodeSelector {
     ) async -> [Endpoint] {
         let nodes = await registry.allRecords()
         refreshReferenceDaaScore(from: nodes)
+        let network = await registry.network
 
         // Filter by capability and exclusions
-        let eligible = nodes.filter { record in
+        let capable = nodes.filter { record in
             // Not excluded
             guard !excluding.contains(record.endpoint.key) else { return false }
 
             // Can handle this operation
             return record.canHandle(op, relaxation: relaxation)
         }
+        let eligible = withoutStaleNodes(capable, for: op, network: network)
 
         // Score and sort
         let scored: [(Endpoint, Double)] = eligible.map { record in
@@ -117,10 +119,12 @@ actor NodeSelector {
         excluding: Set<String> = []
     ) async -> [Endpoint] {
         let nodes = await registry.allRecords()
+        refreshReferenceDaaScore(from: nodes)
+        let network = await registry.network
 
         // Filter and score all nodes equally (no special treatment for seeds)
-        let scored: [(Endpoint, Double)] = nodes
-            .filter { !excluding.contains($0.endpoint.key) && $0.canHandle(op) }
+        let capable = nodes.filter { !excluding.contains($0.endpoint.key) && $0.canHandle(op) }
+        let scored: [(Endpoint, Double)] = withoutStaleNodes(capable, for: op, network: network)
             .map { record in
                 (record.endpoint, score(record, for: op))
             }
@@ -211,6 +215,24 @@ actor NodeSelector {
         return score
     }
 
+    /// For balances, subscriptions and sends: no node that reported another network, and none
+    /// trailing the active nodes' median by more than `NodeRecord.maxActiveDaaLag` - the latter
+    /// only while some node is left. The score's lag penalty alone let a fast lagging node win.
+    private func withoutStaleNodes(_ records: [NodeRecord], for op: OperationClass, network: NetworkType) -> [NodeRecord] {
+        guard op.requiresSynced else { return records }
+        let sameNetwork = records.filter { record in
+            guard let name = record.profile.networkName, !name.isEmpty else { return true }
+            return NodeRegistry.belongs(record, to: network)
+        }
+        guard let reference = referenceDaaScore else { return sameNetwork }
+        let now = Date()
+        let current = sameNetwork.filter { record in
+            guard let daa = projectedDaaScore(record, now: now), daa < reference else { return true }
+            return reference - daa <= NodeRecord.maxActiveDaaLag
+        }
+        return current.isEmpty ? sameNetwork : current
+    }
+
     /// The median across active nodes, so a few lagging or lying nodes can't move it.
     private func refreshReferenceDaaScore(from nodes: [NodeRecord]) {
         let now = Date()
@@ -238,7 +260,8 @@ actor NodeSelector {
     func eligibleNodes(for op: OperationClass) async -> [NodeRecord] {
         let nodes = await registry.allRecords()
         refreshReferenceDaaScore(from: nodes)
-        return nodes.filter { $0.canHandle(op) }
+        let network = await registry.network
+        return withoutStaleNodes(nodes.filter { $0.canHandle(op) }, for: op, network: network)
             .sorted { score($0, for: op) > score($1, for: op) }
     }
 

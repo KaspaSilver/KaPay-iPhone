@@ -496,6 +496,19 @@ actor NodeRegistry {
             records[key] = record
         }
 
+        // A node on another network, or lagging the others, serves no balances: out of active.
+        let network = self.network
+        let now = Date()
+        let lagReference = Self.daaReference(Array(records.values), network: network, now: now)
+        let eligibleNow: (NodeRecord) -> Bool = { record in
+            Self.isActiveEligible(record, network: network, reference: lagReference, now: now)
+        }
+        for (key, record) in records
+        where record.state == .active && record.origin != .userAdded && !eligibleNow(record) {
+            records[key]?.state = .verified
+            demoted += 1
+        }
+
         let compareBetter: (NodeRecord, NodeRecord) -> Bool = { lhs, rhs in
             if lhs.effectiveLatencyMs != rhs.effectiveLatencyMs {
                 return lhs.effectiveLatencyMs < rhs.effectiveLatencyMs
@@ -520,7 +533,7 @@ actor NodeRegistry {
         }
 
         let eligible = records.values
-            .filter { $0.isActiveEligible }
+            .filter(eligibleNow)
             .sorted(by: compareBetter)
 
         let eligibleCount = eligible.count
@@ -533,7 +546,7 @@ actor NodeRegistry {
 
         // Hard cap active nodes to maxActive by demoting worst active nodes first.
         var activeEligible = records.values
-            .filter { $0.state == .active && $0.isActiveEligible }
+            .filter { $0.state == .active && eligibleNow($0) }
             .sorted(by: compareBetter)
 
         if activeEligible.count > maxActive {
@@ -546,7 +559,7 @@ actor NodeRegistry {
             }
 
             activeEligible = records.values
-                .filter { $0.state == .active && $0.isActiveEligible }
+                .filter { $0.state == .active && eligibleNow($0) }
                 .sorted(by: compareBetter)
         }
 
@@ -563,7 +576,7 @@ actor NodeRegistry {
 
         // Keep active count at desiredCount if we still have excess.
         activeEligible = records.values
-            .filter { $0.state == .active && $0.isActiveEligible }
+            .filter { $0.state == .active && eligibleNow($0) }
             .sorted(by: compareBetter)
 
         if activeEligible.count > desiredCount {
@@ -580,7 +593,7 @@ actor NodeRegistry {
         var replacements = 0
         while replacements < maxReplacementsPerCycle {
             let activeNow = records.values
-                .filter { $0.state == .active && $0.isActiveEligible }
+                .filter { $0.state == .active && eligibleNow($0) }
                 .sorted(by: compareBetter)
 
             guard activeNow.count >= minActive else { break }
@@ -632,6 +645,25 @@ actor NodeRegistry {
             activeCount: finalActiveCount,
             eligibleCount: eligibleCount
         )
+    }
+
+    /// Active eligibility in full: `NodeRecord.isActiveEligible`, a reported network name that is
+    /// `network`'s, and a DAA score no more than `NodeRecord.maxActiveDaaLag` behind `reference`
+    /// (an unknown score isn't counted as lag).
+    static func isActiveEligible(_ record: NodeRecord, network: NetworkType, reference: UInt64?, now: Date) -> Bool {
+        guard record.isActiveEligible, belongs(record, to: network) else { return false }
+        guard let reference, let daa = record.projectedDaaScore(at: now), daa < reference else { return true }
+        return reference - daa <= NodeRecord.maxActiveDaaLag
+    }
+
+    /// The median projected DAA score of the nodes otherwise fit to be active: at least half of
+    /// them are never behind it, so the lag rule can't leave the pool empty.
+    static func daaReference(_ records: [NodeRecord], network: NetworkType, now: Date) -> UInt64? {
+        let scores = records
+            .filter { $0.isActiveEligible && belongs($0, to: network) }
+            .compactMap { $0.projectedDaaScore(at: now) }
+            .sorted()
+        return scores.isEmpty ? nil : scores[scores.count / 2]
     }
 
     // MARK: - Statistics

@@ -41,6 +41,11 @@ struct Bech32 {
 
     /// Decode Kaspa bech32 address
     static func decode(_ address: String) -> (hrp: String, version: UInt8, data: Data)? {
+        // bech32 is one case only: a mixed-case address is refused, even with a good checksum
+        if let colon = address.firstIndex(of: ":") {
+            let body = address[address.index(after: colon)...]
+            guard body == body.lowercased() || body == body.uppercased() else { return nil }
+        }
         // Split by ":"
         let parts = address.lowercased().split(separator: ":")
         guard parts.count == 2 else { return nil }
@@ -194,8 +199,11 @@ struct KaspaAddress {
         return encoded
     }
 
+    /// Known prefixes only, and each type's own payload length (32-byte Schnorr key, 33-byte
+    /// ECDSA key, 32-byte script hash): anything else would build a script no key can spend.
     init?(address: String) {
-        guard let decoded = Bech32.decode(address) else {
+        guard let decoded = Bech32.decode(address),
+              ["kaspa", "kaspatest", "kaspasim", "kaspadev"].contains(decoded.hrp) else {
             return nil
         }
 
@@ -204,9 +212,11 @@ struct KaspaAddress {
 
         // Determine type from version
         switch decoded.version {
-        case 0, 1:
-            self.type = decoded.version == 0 ? .pubKey : .pubKeyECDSA
-        case 8:
+        case 0 where decoded.data.count == 32:
+            self.type = .pubKey
+        case 1 where decoded.data.count == 33:
+            self.type = .pubKeyECDSA
+        case 8 where decoded.data.count == 32:
             self.type = .scriptHash
         default:
             return nil
@@ -287,7 +297,8 @@ struct KaspaAddress {
     }
 
     /// Generate the script public key for an address
-    /// This creates the locking script that funds are sent to
+    /// This creates the locking script that funds are sent to. nil unless the address parses
+    /// with a known prefix and its type's payload length (`init?(address:)`).
     static func scriptPublicKey(from address: String) -> Data? {
         guard let kaspaAddr = KaspaAddress(address: address) else {
             return nil

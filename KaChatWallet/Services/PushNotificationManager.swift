@@ -46,6 +46,19 @@ final class PushNotificationManager: ObservableObject {
     private let registeredBuildDefaultsKey = "push_registered_build"
     private let legacyKasiaUnregisterDoneKey = "push_legacy_kasia_unregister_done"
     private let deviceAuthCounterDefaultsKey = "push_device_auth_counter"
+    /// An unregister that never reached the service (offline at Log Out, say): retried later.
+    private let pendingUnregisterDefaultsKey = "push_pending_unregister"
+    private let registeredWatchOnlyDefaultsKey = "push_registered_watch_only"
+
+    /// The `watch_only_addresses` the service last accepted: a receive to any other address is
+    /// the app's own to announce.
+    private(set) var registeredWatchOnlyAddresses: Set<String> = []
+    /// Bumped by every accepted register, so an unregister started before it can't mark the newer
+    /// registration gone.
+    private var registrationGeneration = 0
+    /// The unregister on its way. A register waits for it: its DELETE landing after the register
+    /// (WalletManager stops waiting after 4 s) would remove the next account's registration.
+    private var unregisterTask: Task<Void, Never>?
 
     private var deviceToken: String?
     private var pendingRegistration = false
@@ -305,6 +318,9 @@ final class PushNotificationManager: ObservableObject {
         guard let token = deviceToken else {
             throw PushError.noDeviceToken
         }
+        if let pendingUnregister = unregisterTask {
+            await pendingUnregister.value
+        }
         guard !registrationInFlight else {
             return
         }
@@ -394,8 +410,12 @@ final class PushNotificationManager: ObservableObject {
 
     private func applySuccessfulRegistration(primaryAddress: String?, watchOnlyAddresses: [String]) {
         isRegistered = true
+        registrationGeneration += 1
         lastError = nil
         persistRegistrationStatus(true)
+        setRegisteredWatchOnly(watchOnlyAddresses)
+        // the device's record is this registration now: an older failed unregister is moot
+        UserDefaults.standard.removeObject(forKey: pendingUnregisterDefaultsKey)
         UserDefaults.standard.set(AppSettings.load().pushIndexerURL, forKey: registeredBaseURLDefaultsKey)
         UserDefaults.standard.set(ApnsEnvironment.current.rawValue, forKey: registeredApnsEnvironmentDefaultsKey)
         UserDefaults.standard.set(Self.currentBuildIdentifier, forKey: registeredBuildDefaultsKey)
@@ -680,6 +700,7 @@ final class PushNotificationManager: ObservableObject {
 
             lastWatchedSignature = signature
             lastWatchedUpdateSuccessAt = Date()
+            setRegisteredWatchOnly(watchOnlyAddresses)
             // Success - reset the failure backoff.
             watchedUpdateRetryAttempt = 0
             watchedUpdateRetryTask?.cancel()
@@ -787,6 +808,41 @@ final class PushNotificationManager: ObservableObject {
     }
 
     func unregister() async {
+        await startUnregister().value
+    }
+
+    /// Starts the unregister, or joins the one under way. Synchronous, so a register started
+    /// right after already sees it in `unregisterTask` and waits.
+    @discardableResult
+    private func startUnregister() -> Task<Void, Never> {
+        if let running = unregisterTask { return running }
+        let generation = registrationGeneration
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performUnregister(generation: generation)
+            self.unregisterTask = nil
+        }
+        unregisterTask = task
+        return task
+    }
+
+    /// A failed unregister is tried again (app active), only while this device is to have no
+    /// registration: a register replaces the device's record anyway.
+    func retryPendingUnregisterIfNeeded() {
+        guard UserDefaults.standard.bool(forKey: pendingUnregisterDefaultsKey) else { return }
+        guard !isRegistered, !registrationInFlight, unregisterTask == nil else { return }
+        let wantsPush = AppSettings.load().notificationMode == .remotePush && hasPushSubscriptions()
+        guard !wantsPush else { return }
+        AppLog.log("[Push] Retrying an unregister that failed earlier")
+        startUnregister()
+    }
+
+    private func setRegisteredWatchOnly(_ addresses: [String]) {
+        registeredWatchOnlyAddresses = Set(addresses)
+        UserDefaults.standard.set(addresses, forKey: registeredWatchOnlyDefaultsKey)
+    }
+
+    private func performUnregister(generation: Int) async {
         guard let token = deviceToken else { return }
         guard hasPushService else {
             await leavePushServiceOfOtherNetworkIfNeeded()
@@ -799,6 +855,9 @@ final class PushNotificationManager: ObservableObject {
             AppLog.log("[Push] Invalid push service URL: %@", settings.pushIndexerURL)
             return
         }
+        // A register accepted meanwhile owns the device's record: this answer can't undo it.
+        var superseded: Bool { self.registrationGeneration != generation }
+        let defaults = UserDefaults.standard
 
         do {
             let auth: PushAuthRequest?
@@ -826,11 +885,15 @@ final class PushNotificationManager: ObservableObject {
             let (responseData, response) = try await URLSession.shared.data(for: urlRequest)
             guard let httpResponse = response as? HTTPURLResponse else {
                 AppLog.log("[Push] Error unregistering: invalid response")
+                if !superseded { defaults.set(true, forKey: pendingUnregisterDefaultsKey) }
                 return
             }
             if httpResponse.statusCode == 200 {
+                defaults.removeObject(forKey: pendingUnregisterDefaultsKey)
+                guard !superseded else { return }
                 isRegistered = false
                 persistRegistrationStatus(false)
+                setRegisteredWatchOnly([])
                 lastError = nil
                 clearWalletBindingConflictCooldown()
                 AppLog.log("[Push] Unregistered from indexer")
@@ -838,6 +901,14 @@ final class PushNotificationManager: ObservableObject {
             }
 
             let reason = parseIndexerError(from: responseData) ?? "unknown"
+            if (400...499).contains(httpResponse.statusCode) {
+                // refused for good: retrying the same request can't help
+                defaults.removeObject(forKey: pendingUnregisterDefaultsKey)
+            } else if !superseded {
+                defaults.set(true, forKey: pendingUnregisterDefaultsKey)
+            }
+            AppLog.log("[Push] Failed to unregister: status=%d reason=%@", httpResponse.statusCode, reason)
+            guard !superseded else { return }
             if isWalletBindingConflict(statusCode: httpResponse.statusCode, reason: reason) {
                 activateWalletBindingConflictCooldown(reason: reason)
             }
@@ -846,9 +917,9 @@ final class PushNotificationManager: ObservableObject {
                 isRegistered = false
                 persistRegistrationStatus(false)
             }
-            AppLog.log("[Push] Failed to unregister: status=%d reason=%@", httpResponse.statusCode, reason)
         } catch {
             AppLog.log("[Push] Error unregistering: %@", error.localizedDescription)
+            if !superseded { defaults.set(true, forKey: pendingUnregisterDefaultsKey) }
         }
     }
 
@@ -869,6 +940,7 @@ final class PushNotificationManager: ObservableObject {
         }
         let storedRegistered = UserDefaults.standard.bool(forKey: registeredDefaultsKey)
         isRegistered = storedRegistered && deviceToken != nil
+        registeredWatchOnlyAddresses = Set(UserDefaults.standard.stringArray(forKey: registeredWatchOnlyDefaultsKey) ?? [])
 
         // A device that crossed APNs environments (developer installs a TestFlight build over an
         // Xcode build, or vice versa) holds a server record pinned to the OLD environment and a

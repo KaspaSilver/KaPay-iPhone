@@ -517,6 +517,14 @@ struct PassphraseAddressPreview: View {
     @State private var searchTimeoutTask: Task<Void, Never>?
     /// The funds search failed or ran out of time: Import goes to #0, and the screen says so.
     @State private var searchIncomplete = false
+    /// What the standard wallet's change addresses hold (no import opens one).
+    @State private var changeBalanceSompi: UInt64 = 0
+
+    /// Funds on these words' addresses other than the one picked: only that one is imported.
+    private var otherFundsSompi: UInt64 {
+        foundAddresses.filter { $0.choice != selection?.wrappedValue }
+            .reduce(changeBalanceSompi) { $0 + $1.balanceSompi }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -536,6 +544,14 @@ struct PassphraseAddressPreview: View {
             previewBalanceRow
             if foundAddresses.count > 1 || showsEveryWalletType {
                 foundAddressRows
+            }
+            if selection != nil, isSearching?.wrappedValue != true, otherFundsSompi > 0 {
+                Text(verbatim: String(format: AppLocalization.string("Other addresses of these words hold %@ more. KaPay tracks only the address picked here."),
+                                      KaspaUnit.amount(otherFundsSompi)))
+                    .font(.caption)
+                    .foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
             }
             if selection != nil, isSearching?.wrappedValue != true, !everyWalletType.isEmpty, !showsEveryWalletType {
                 Button("See Every Wallet Type") { showsEveryWalletType = true }
@@ -692,6 +708,7 @@ struct PassphraseAddressPreview: View {
         previewBalanceFailed = false
         previewHasHistory = false
         foundAddresses = []
+        changeBalanceSompi = 0
         everyWalletType = []
         showsEveryWalletType = false
         selection?.wrappedValue = ImportAccountChoice()
@@ -743,8 +760,9 @@ struct PassphraseAddressPreview: View {
                     previewBalanceFailed = true
                     return
                 }
-                foundAddresses = found
-                if let first = found.first {
+                foundAddresses = found.accounts
+                changeBalanceSompi = found.changeSompi
+                if let first = found.accounts.first {
                     select(first)
                 } else {
                     previewBalanceSompi = 0

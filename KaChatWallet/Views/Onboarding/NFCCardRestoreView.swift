@@ -92,7 +92,7 @@ struct NFCCardRestoreView: View {
                 if !current.pinSet { throw NFCCardError.noPIN }
                 if !current.hasBackup { throw NFCCardError.noBackup }
                 try await connection.verifyPIN(enteredPIN)
-                return try await connection.readBackup()
+                return try await connection.readBackup(maxLength: current.maxBackup)
             }
             payload = try await Task.detached(priority: .userInitiated) {
                 try NFCCardBackupFormat.open(backup, pin: enteredPIN)

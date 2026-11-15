@@ -2,8 +2,8 @@ import Foundation
 import LocalAuthentication
 import UIKit
 
-/// Gates sensitive actions (viewing the seed phrase, unlocking a saved account, sending Kaspa,
-/// deleting an account) behind whatever
+/// Gates sensitive actions (viewing the seed phrase or a private key, unlocking a saved account,
+/// deleting an account, sending a domain, .kas and .kachat name transactions) behind whatever
 /// the device's own lock screen is set to — Face ID/Touch ID, falling back to the device passcode
 /// — mirroring Android's `authenticateWithDeviceCredential`.
 ///
@@ -57,11 +57,11 @@ enum DeviceAuth {
         passcodeAlertWindow = window
 
         let alert = UIAlertController(
-            title: "Passcode Required",
-            message: "Set a passcode on this iPhone (Settings > Face ID & Passcode) to send Kaspa, delete an account, or view secret keys in KaPay.",
+            title: AppLocalization.string("Passcode Required"),
+            message: AppLocalization.string("Set a passcode on this iPhone (Settings > Face ID & Passcode) to delete an account or view secret keys in KaPay."),
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+        alert.addAction(UIAlertAction(title: AppLocalization.string("OK"), style: .default) { _ in
             passcodeAlertWindow?.isHidden = true
             passcodeAlertWindow = nil
         })

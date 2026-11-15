@@ -650,7 +650,7 @@ private struct PortfolioValueChartScreen: View {
         .background(portfolioGlassBackground(cornerRadius: 18))
     }
 
-    private func statRow(_ label: String, _ value: String, color: Color = .primary) -> some View {
+    private func statRow(_ label: LocalizedStringKey, _ value: String, color: Color = .primary) -> some View {
         HStack {
             Text(label).font(.subheadline).foregroundColor(.secondary)
             Spacer()
@@ -726,7 +726,7 @@ private struct ChartPairSettingsSheet: View {
             .padding(.horizontal, 16)
             Spacer(minLength: 0)
         }
-        .presentationDetents([.height(440)])
+        .fittedSheetDetents(440)
         .presentationDragIndicator(.visible)
     }
 
@@ -794,7 +794,7 @@ private struct PortfolioRangePicker: View {
                     onChange()
                     viewModel.setPriceRangeDays(range.days)
                 } label: {
-                    Text(range.label)
+                    Text(LocalizedStringKey(range.label))
                         .font(.subheadline).fontWeight(.semibold)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -832,19 +832,36 @@ enum PortfolioFormat {
 
     private static var symbols: [String: String] = [:]
 
-    private static let twoDecimals: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        formatter.usesGroupingSeparator = true
-        return formatter
-    }()
+    /// Every price, bitcoin, pair and currency figure goes through here, so they all use the
+    /// in-app language's decimal and grouping marks (with Latin digits, as KAS amounts have).
+    /// One formatter per locale and digit count: rows ask on every redraw.
+    private static func decimal(_ value: Double, digits: Int) -> String {
+        var identifier = AppLocalization.locale.identifier
+        if !identifier.contains("numbers=") {
+            identifier += identifier.contains("@") ? ";numbers=latn" : "@numbers=latn"
+        }
+        let key = "\(identifier)|\(digits)"
+        let formatter: NumberFormatter
+        if let cached = decimalFormatters[key] {
+            formatter = cached
+        } else {
+            formatter = NumberFormatter()
+            formatter.locale = Locale(identifier: identifier)
+            formatter.numberStyle = .decimal
+            formatter.minimumFractionDigits = digits
+            formatter.maximumFractionDigits = digits
+            formatter.usesGroupingSeparator = true
+            decimalFormatters[key] = formatter
+        }
+        return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.\(digits)f", value)
+    }
+
+    private static var decimalFormatters: [String: NumberFormatter] = [:]
 
     static func price(_ value: Double, currency: AppCurrency) -> String {
         if currency == .bitcoin { return bitcoin(value) }
         let decimals = value < 1 ? 5 : 2
-        return currencySymbol(for: currency) + String(format: "%.\(decimals)f", value)
+        return currencySymbol(for: currency) + decimal(value, digits: decimals)
     }
 
     /// A bitcoin amount in full: eight decimals at the least (a satoshi is the smallest unit),
@@ -857,7 +874,7 @@ enum PortfolioFormat {
         if magnitude > 0, magnitude < 0.0001 {
             decimals = min(12, max(8, Int(ceil(-log10(magnitude))) + 3))
         }
-        return sign + "₿" + String(format: "%.\(decimals)f", magnitude)
+        return sign + "₿" + decimal(magnitude, digits: decimals)
     }
 
     /// A per-KAS price in whatever a chart counts in.
@@ -886,14 +903,13 @@ enum PortfolioFormat {
         if magnitude > 0, magnitude < 0.001 {
             decimals = min(12, max(4, Int(ceil(-log10(magnitude))) + 3))
         }
-        return sign + String(format: "%.\(decimals)f", magnitude) + pair.unitSuffix
+        return sign + decimal(magnitude, digits: decimals) + pair.unitSuffix
     }
 
     static func currency(_ value: Double, _ currency: AppCurrency) -> String {
         if currency == .bitcoin { return bitcoin(value) }
         let sign = value < 0 ? "-" : ""
-        let magnitude = twoDecimals.string(from: NSNumber(value: abs(value))) ?? String(format: "%.2f", abs(value))
-        return sign + currencySymbol(for: currency) + magnitude
+        return sign + currencySymbol(for: currency) + decimal(abs(value), digits: 2)
     }
 
     private static let kasFormatter: NumberFormatter = {
@@ -1405,7 +1421,7 @@ private struct HashrateChartScreen: View {
                     scrubbed = nil
                     rangeDays = range.days
                 } label: {
-                    Text(range.label)
+                    Text(LocalizedStringKey(range.label))
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 7)
@@ -1449,7 +1465,7 @@ private struct HashrateChartScreen: View {
         .background(portfolioGlassBackground(cornerRadius: 18))
     }
 
-    private func rewardRow(_ label: String, _ value: String) -> some View {
+    private func rewardRow(_ label: LocalizedStringKey, _ value: String) -> some View {
         HStack {
             Text(label).font(.subheadline).foregroundColor(.secondary)
             Spacer()
@@ -1586,7 +1602,7 @@ private struct MiningEstimateCard: View {
         .background(portfolioGlassBackground(cornerRadius: 18))
     }
 
-    private func payoutRow(_ title: String, kas: Double) -> some View {
+    private func payoutRow(_ title: LocalizedStringKey, kas: Double) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
                 .font(.subheadline)
@@ -1607,9 +1623,12 @@ private struct MiningEstimateCard: View {
     /// Says what the number rests on, so nobody mistakes it for a promise.
     private var assumptionsLine: String {
         guard let networkHashratePHs, let blockRewardKas else { return "" }
-        return "At \(HashrateFormat.display(networkHashratePHs)) network hashrate and a "
-            + "\(String(format: "%.4f", blockRewardKas)) \(KaspaUnit.symbol) block reward. Before pool fees, "
-            + "power and luck, and both figures move."
+        let reward = "\(String(format: "%.4f", blockRewardKas)) \(KaspaUnit.symbol)"
+        return String(
+            format: AppLocalization.string("At %@ network hashrate and a %@ block reward. Before pool fees, power and luck, and both figures move."),
+            locale: AppLocalization.locale,
+            HashrateFormat.display(networkHashratePHs), reward
+        )
     }
 }
 

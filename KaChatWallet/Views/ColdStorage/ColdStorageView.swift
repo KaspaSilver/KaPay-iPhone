@@ -193,7 +193,7 @@ struct ColdStorageListView: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .presentationDetents([.height(360)])
+        .fittedSheetDetents(360)
         .presentationDragIndicator(.visible)
         // A turn later: the field does not exist yet on the tap that presented this.
         .onAppear { DispatchQueue.main.async { manualKpubFocused = true } }
@@ -249,7 +249,7 @@ struct ColdStorageListView: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .presentationDetents([.height(280)])
+        .fittedSheetDetents(280)
         .presentationDragIndicator(.visible)
         // A turn later: the field does not exist yet on the tap that presented this.
         .onAppear { DispatchQueue.main.async { importNameFocused = true } }
@@ -505,7 +505,7 @@ struct ColdStorageDetailView: View {
         }
         .sheet(item: $addressActionsTarget) { entry in
             addressRowActionsSheet(entry)
-                .presentationDetents([.height(entry.balanceSompi == 0 ? 380 : 300)])
+                .fittedSheetDetents(entry.balanceSompi == 0 ? 380 : 300)
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showAddressActions, onDismiss: {
@@ -516,7 +516,7 @@ struct ColdStorageDetailView: View {
         }) {
             addressActionsSheet
                 // Three rows now that Address Visibility lives here.
-                .presentationDetents([.height(400)])
+                .fittedSheetDetents(400)
                 .presentationDragIndicator(.visible)
         }
         .sheet(item: $qrTarget) { entry in
@@ -1358,7 +1358,9 @@ private struct ColdSendFlowView: View {
                 }
             }
             .sheet(isPresented: $showCoinControl) {
-                CoinControlView(fromAddress: fromAddress, initialSelection: manualUtxos) { selection in
+                // the build leaves out immature mining rewards and coins a send just spent
+                CoinControlView(fromAddress: fromAddress, initialSelection: manualUtxos,
+                                unavailableReason: CoinControlView.hotWalletReason(chatting: false)) { selection in
                     manualUtxos = selection
                     schedulePreview()
                 }
@@ -1616,7 +1618,7 @@ private struct ColdSendFlowView: View {
                         .font(.footnote)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
-                    summaryCard(feeSompi: unsignedTx.feeSompi)
+                    summaryCard(amountSompi: builtAmount(unsignedTx), feeSompi: unsignedTx.feeSompi)
                 }
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
@@ -1636,7 +1638,7 @@ private struct ColdSendFlowView: View {
             title: isCompoundMode ? "Swipe up to Consolidate" : "Swipe up to Send",
             isBusy: isBroadcasting,
             isEnabled: !isBroadcasting && sentTransaction == nil,
-            amountSompi: amountSompi,
+            amountSompi: builtAmount(unsignedTx),
             recipient: isCompoundMode ? nil : (resolvedDomain ?? effectiveAddress),
             sent: sentTransaction,
             failureMessage: broadcastError,
@@ -1658,7 +1660,7 @@ private struct ColdSendFlowView: View {
                     Text(isCompoundMode ? "Consolidating" : "You're sending")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
-                    if let amountSompi {
+                    if let amountSompi = builtAmount(unsignedTx) {
                         Text(verbatim: "\(KaspaUnit.plain(amountSompi)) \(KaspaUnit.symbol)")
                             .font(.system(size: 40, weight: .bold, design: .rounded))
                             .monospacedDigit()
@@ -1667,7 +1669,7 @@ private struct ColdSendFlowView: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                summaryCard(feeSompi: unsignedTx.feeSompi)
+                summaryCard(amountSompi: builtAmount(unsignedTx), feeSompi: unsignedTx.feeSompi)
                 Text("Nothing can change now: this is the transaction KasSigner signed.")
                     .font(.footnote)
                     .foregroundColor(.secondary)
@@ -1678,8 +1680,14 @@ private struct ColdSendFlowView: View {
         }
     }
 
+    /// What the built transaction pays the recipient: its first output, which a Max or a
+    /// near-Max amount may have trimmed below what was typed.
+    private func builtAmount(_ unsignedTx: ColdStorageSendEngine.UnsignedColdTx) -> UInt64? {
+        unsignedTx.transaction.outputs.first?.value ?? amountSompi
+    }
+
     /// To, From, the fee and the total, as built.
-    private func summaryCard(feeSompi: UInt64) -> some View {
+    private func summaryCard(amountSompi: UInt64?, feeSompi: UInt64) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             reviewRow("To") {
                 if isCompoundMode {
@@ -1842,11 +1850,13 @@ private struct ColdSendFlowView: View {
         previewSelection = nil
         guard manualUtxos == nil, let amountSompi else { return }
         let rate = feeRateOverride ?? baseFeeRateSompiPerGram
+        let recipient = effectiveAddress
         previewTask = Task {
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled else { return }
             let preview = await ColdStorageSendEngine.shared.previewAutomaticSelection(
                 fromAddress: fromAddress,
+                toAddress: recipient,
                 amountSompi: amountSompi,
                 feeRateSompiPerGram: rate
             )
@@ -1877,9 +1887,10 @@ private struct ColdSendFlowView: View {
         isEstimatingMax = true
         let overrideRate = feeRateOverride
         let utxos = manualUtxos
+        let recipient = effectiveAddress
         Task {
             do {
-                let maxSompi = try await ColdStorageSendEngine.shared.estimateMaxAmount(fromAddress: fromAddress, feeRateOverride: overrideRate, manualUtxos: utxos)
+                let maxSompi = try await ColdStorageSendEngine.shared.estimateMaxAmount(fromAddress: fromAddress, toAddress: recipient, feeRateOverride: overrideRate, manualUtxos: utxos)
                 await MainActor.run {
                     amountText = fiatAmountState.setMaxKas(Double(maxSompi) / 100_000_000.0, priceInCurrency: portfolioViewModel.currentPriceUsd)
                     isEstimatingMax = false
@@ -1904,6 +1915,7 @@ private struct ColdSendFlowView: View {
         // the real build produces are the same number, not just close. Re-resolved against a
         // fresh fetch inside buildUnsignedTransaction either way, so this is never stale-unsafe.
         let utxos = manualUtxos ?? previewSelection?.utxos
+        let previewed = manualUtxos == nil && previewSelection != nil
         Task {
             do {
                 let unsignedTx = try await ColdStorageSendEngine.shared.buildUnsignedTransaction(
@@ -1911,7 +1923,8 @@ private struct ColdSendFlowView: View {
                     toAddress: recipient,
                     amountSompi: amountSompi,
                     feeRateOverride: overrideRate,
-                    manualUtxos: utxos
+                    manualUtxos: utxos,
+                    previewed: previewed
                 )
                 let kspt = try ColdStorageSendEngine.shared.toKspt(unsignedTx)
                 let frames = try QrFrameChunker.chunk(kspt)
@@ -1952,7 +1965,7 @@ private struct ColdSendFlowView: View {
                     isBroadcasting = false
                     sentTransaction = SentTransaction(
                         txId: txId,
-                        amountSompi: isCompoundMode ? nil : amountSompi,
+                        amountSompi: isCompoundMode ? nil : builtAmount(unsignedTx),
                         recipient: isCompoundMode ? nil : (resolvedDomain ?? effectiveAddress)
                     )
                 }
@@ -1982,7 +1995,6 @@ struct CoinControlView: View {
     let initialSelection: [UTXO]?
     /// Why a send can't spend a coin, nil when it can: the same coins the send leaves out, listed
     /// greyed out and never picked, so a selection can't be made of coins the send would refuse.
-    /// Nil for Cold Storage, whose coins the app doesn't hold back.
     /// The second value is the network's virtual DAA score, when known, for mining-reward maturity.
     var unavailableReason: ((UTXO, UInt64?) -> LocalizedStringKey?)? = nil
     let onDone: ([UTXO]?) -> Void
@@ -1992,6 +2004,7 @@ struct CoinControlView: View {
     /// reward once it's mature).
     static func hotWalletReason(chatting: Bool) -> (UTXO, UInt64?) -> LocalizedStringKey? {
         { utxo, virtualDaaScore in
+            if utxo.covenantId != nil { return "Locked by a covenant" }
             if chatting, utxo.isCoinbase { return "Mining reward, not spendable here" }
             if chatting, utxo.blockDaaScore == 0 { return "Not confirmed yet" }
             if !chatting, WalletService.spendableUtxos([utxo], virtualDaaScore: virtualDaaScore).isEmpty {
@@ -2261,7 +2274,7 @@ struct ColdStorageAddressTransactionHistoryView: View {
                 }
             )
             sheet
-                .presentationDetents([.height(sheet.height)])
+                .fittedSheetDetents(sheet.height)
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showPublicKeySheet) {
@@ -2821,7 +2834,7 @@ private struct ColdStorageAccountActionsSheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // One fixed height for both states: a detent that changes while the sheet is up
         // resizes in a jump rather than animating, and the rename fields fit the options' height.
-        .presentationDetents([.height(300)])
+        .fittedSheetDetents(300)
         .presentationDragIndicator(.visible)
         .animation(.easeInOut(duration: 0.2), value: isRenaming)
     }

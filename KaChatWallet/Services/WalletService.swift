@@ -113,8 +113,14 @@ final class WalletService: ObservableObject {
     /// Coins a send from this app has just spent, by outpoint, and until when they stay out: the
     /// node goes on listing them until that spend is in a block, so the next send, Max or fee
     /// would otherwise pick them again and be refused.
+    /// Ten minutes: a send can wait in the mempool longer than two, and its coins offered again
+    /// made the next send a double spend.
     var reservedOutpoints: [String: Date] = [:]
-    let spentOutpointHold: TimeInterval = 120
+    let spentOutpointHold: TimeInterval = 600
+    /// Coins of a send that ended "Not confirmed", until when: the next automatic send from that
+    /// address spends one of them (`conflictingOutpoint`), so at most one of the two can land.
+    var unknownOutcomeOutpoints: [String: Date] = [:]
+    let unknownOutcomeHold: TimeInterval = 600
 
     private var pingLatencyCancellable: AnyCancellable?
     private var nodePoolSubscriptionStateCancellable: AnyCancellable?
@@ -218,6 +224,7 @@ final class WalletService: ObservableObject {
         cachedUtxos = []
         cachedUtxosTimestamp = nil
         reservedOutpoints = [:]
+        unknownOutcomeOutpoints = [:]
         queuedUtxoNotifications = []
     }
 

@@ -86,7 +86,7 @@ enum NextcloudError: LocalizedError {
         case .noActiveWallet:
             return "Sign in to an account before connecting Nextcloud."
         case .offOnTestnet:
-            return String(localized: "Nextcloud is off while Testnet is on.")
+            return AppLocalization.string("Nextcloud is off while Testnet is on.")
         case .httpError(let code):
             return "Nextcloud returned HTTP \(code)."
         case .malformedResponse:

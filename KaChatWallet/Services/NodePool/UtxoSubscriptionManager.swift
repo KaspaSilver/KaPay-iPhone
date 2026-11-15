@@ -17,8 +17,12 @@ final class UtxoSubscriptionManager: ObservableObject {
     // MARK: - Published Properties
 
     @Published private(set) var state: SubscriptionState = .disconnected
-    @Published private(set) var primaryEndpoint: Endpoint?
-    @Published private(set) var standbyEndpoint: Endpoint?
+    @Published private(set) var primaryEndpoint: Endpoint? {
+        didSet { if primaryEndpoint != oldValue { syncPoolKeepAlive() } }
+    }
+    @Published private(set) var standbyEndpoint: Endpoint? {
+        didSet { if standbyEndpoint != oldValue { syncPoolKeepAlive() } }
+    }
     /// Not `@Published`: every notification sets it - block-added ones about ten times a second
     /// on mainnet - and nothing observes it.
     private(set) var lastNotificationAt: Date?
@@ -73,6 +77,20 @@ final class UtxoSubscriptionManager: ObservableObject {
     /// Retries a subscribe that failed on every node. By then the health loop is gone (the
     /// subscribe's cleanup cancelled it), so nothing else would ever try again.
     private var resubscribeRetryTask: Task<Void, Never>?
+
+    /// Tells the connection pool which nodes the subscription is on (their connections stay open
+    /// and reconnect), in order.
+    private var keepAliveSync: Task<Void, Never>?
+
+    private func syncPoolKeepAlive() {
+        let keys = Set([primaryEndpoint?.key, standbyEndpoint?.key].compactMap { $0 })
+        let previous = keepAliveSync
+        let pool = connectionPool
+        keepAliveSync = Task {
+            await previous?.value
+            await pool.setSubscriptionKeys(keys)
+        }
+    }
 
     // MARK: - Configuration
 
@@ -139,8 +157,9 @@ final class UtxoSubscriptionManager: ObservableObject {
     /// paid a TLS reconnect and dropped utxosChanged for the gap. Only for a superset: dropping
     /// addresses goes the full way. False when it didn't apply or the node refused.
     private func widenLiveSubscription(to addresses: [String], excluding: Set<String>) async -> Bool {
+        // every list is a superset of none: with nothing subscribed it's a full subscribe
         guard state == .subscribed, let conn = primaryConnection, let endpoint = primaryEndpoint,
-              !excluding.contains(endpoint.key),
+              !excluding.contains(endpoint.key), !subscribedAddresses.isEmpty,
               Set(addresses).isSuperset(of: subscribedAddresses),
               await conn.isConnected else { return false }
         let previous = subscribedAddresses
@@ -173,6 +192,10 @@ final class UtxoSubscriptionManager: ObservableObject {
         // Get all capable nodes, sorted by score
         let allCapableNodes = await selector.eligibleNodes(for: .subscribeUtxosChanged)
         let availableNodes = allCapableNodes.filter { !excluding.contains($0.endpoint.key) }
+        if Task.isCancelled {
+            abandonCancelledSubscribe()
+            throw CancellationError()
+        }
 
         guard !availableNodes.isEmpty else {
             state = .failed
@@ -191,7 +214,7 @@ final class UtxoSubscriptionManager: ObservableObject {
         for (index, nodeRecord) in availableNodes.enumerated() {
             // unsubscribed meanwhile: stop here rather than subscribe again
             if Task.isCancelled {
-                state = .disconnected
+                abandonCancelledSubscribe()
                 throw CancellationError()
             }
             let endpoint = nodeRecord.endpoint
@@ -202,6 +225,11 @@ final class UtxoSubscriptionManager: ObservableObject {
                 primaryEndpoint = endpoint
 
                 try await subscribeOn(endpoint: endpoint, isPrimary: true)
+                // unsubscribed while the request was out: take back what the node just started
+                if Task.isCancelled {
+                    await takeBackCancelledSubscribe(addresses: addresses)
+                    throw CancellationError()
+                }
                 state = .subscribed
         lastHealthyAt = Date()
                 primaryFailures = 0
@@ -215,7 +243,7 @@ final class UtxoSubscriptionManager: ObservableObject {
                     count: 2,
                     excluding: Set([endpoint.key])
                 )
-                if standbyNodes.count > 1 {
+                if standbyNodes.count > 1, !Task.isCancelled {
                     standbyEndpoint = standbyNodes[1]
                     Task {
                         await warmupStandby(standbyNodes[1])
@@ -225,6 +253,9 @@ final class UtxoSubscriptionManager: ObservableObject {
                 AppLog.log("[UtxoSub] Subscribed successfully on %@", endpoint.key)
                 return  // Success!
 
+            } catch is CancellationError where Task.isCancelled {
+                abandonCancelledSubscribe()
+                throw CancellationError()
             } catch {
                 AppLog.log("[UtxoSub] Subscription failed on %@: %@", endpoint.key, error.localizedDescription)
                 lastError = error
@@ -297,19 +328,35 @@ final class UtxoSubscriptionManager: ObservableObject {
         isFailingOver = false
     }
 
-    /// Unsubscribe from UTXO changes
+    /// Unsubscribe from UTXO changes. The node is told to stop too: the stream outlives this
+    /// (it is the pooled connection), and a later subscribe on it only adds addresses, so the
+    /// previous account's would otherwise stay subscribed.
     func unsubscribe() {
         healthCheckTask?.cancel()
         healthCheckTask = nil
         // a subscribe still queued or running must not re-subscribe after this
-        subscribeInFlight?.cancel()
+        let previous = subscribeInFlight
+        previous?.cancel()
         resubscribeRetryTask?.cancel()
         resubscribeRetryTask = nil
 
-        // Remove notification handlers from connections
-        if let conn = primaryConnection, let handlerId = primaryHandlerId {
-            Task {
-                await conn.removeNotificationHandler(handlerId)
+        // Remove the handler and stop on the node, in line with subscribes: the next one waits
+        // for the stop, so it can't drop addresses the next list shares (cold storage).
+        let conn = primaryConnection
+        let handlerId = primaryHandlerId
+        let addresses = subscribedAddresses
+        let endpointKey = primaryEndpoint?.key ?? "unknown"
+        if conn != nil || previous != nil {
+            subscribeInFlight = Task<Void, Error> { @MainActor in
+                _ = try? await previous?.value
+                guard let conn else { return }
+                if let handlerId { await conn.removeNotificationHandler(handlerId) }
+                guard !addresses.isEmpty, await conn.isConnected else { return }
+                do {
+                    try await self.sendNotifyUtxosChanged(on: conn, addresses: addresses, command: .notifyStop)
+                } catch {
+                    AppLog.log("[UtxoSub] Stop on %@ failed: %@", endpointKey, error.localizedDescription)
+                }
             }
         }
 
@@ -422,6 +469,33 @@ final class UtxoSubscriptionManager: ObservableObject {
 
     // MARK: - Internal Subscription
 
+    /// A subscribe cancelled by `unsubscribe()` before the node accepted it: it set the addresses
+    /// and endpoint again on its way, and they would be resubscribed later (epoch change).
+    private func abandonCancelledSubscribe() {
+        subscribedAddresses = []
+        primaryEndpoint = nil
+        standbyEndpoint = nil
+        state = .disconnected
+    }
+
+    /// A subscribe or failover that went through after `unsubscribe()` cancelled it: stop it on
+    /// the node and leave nothing subscribed.
+    private func takeBackCancelledSubscribe(addresses: [String]) async {
+        let conn = primaryConnection
+        let handlerId = primaryHandlerId
+        primaryConnection = nil
+        primaryHandlerId = nil
+        primaryConnectionGeneration = nil
+        primaryEndpoint = nil
+        standbyEndpoint = nil
+        subscribedAddresses = []
+        state = .disconnected
+        guard let conn else { return }
+        if let handlerId { await conn.removeNotificationHandler(handlerId) }
+        try? await sendNotifyUtxosChanged(on: conn, addresses: addresses, command: .notifyStop)
+        AppLog.log("[UtxoSub] Took back a subscribe that finished after unsubscribe")
+    }
+
     private func subscribeOn(endpoint: Endpoint, isPrimary: Bool) async throws {
         let conn = await connectionPool.connection(for: endpoint)
 
@@ -477,13 +551,24 @@ final class UtxoSubscriptionManager: ObservableObject {
         }
     }
 
-    /// Send the notifyUtxosChanged request for `subscribedAddresses` on `conn` and validate
-    /// the response. Used both for the initial subscribe and for re-arming a subscription the
-    /// node silently dropped when the underlying stream reconnected.
-    private func sendNotifyUtxosChanged(on conn: GRPCStreamConnection) async throws {
+    /// Send the notifyUtxosChanged request for `addresses` (default `subscribedAddresses`) on
+    /// `conn` and validate the response. Used for the initial subscribe, for re-arming a
+    /// subscription the node silently dropped when the underlying stream reconnected, and (with
+    /// `.notifyStop`) for unsubscribing. Never with an empty list: to the node that means every
+    /// address on the network.
+    private func sendNotifyUtxosChanged(
+        on conn: GRPCStreamConnection,
+        addresses: [String]? = nil,
+        command: Protowire_RpcNotifyCommand = .notifyStart
+    ) async throws {
+        let list = addresses ?? subscribedAddresses
+        guard !list.isEmpty else {
+            throw KasiaError.networkError("No addresses to subscribe")
+        }
         var msg = Protowire_KaspadMessage()
         var req = Protowire_NotifyUtxosChangedRequestMessage()
-        req.addresses = subscribedAddresses
+        req.addresses = list
+        req.command = command
         msg.notifyUtxosChangedRequest = req
 
         let response = try await conn.sendRequest(
@@ -569,6 +654,12 @@ final class UtxoSubscriptionManager: ObservableObject {
             )
 
             AppLog.log("[UtxoSub] Ping OK on %@ (%.0fms)", endpoint.key, latencyMs)
+
+            // a failover that found nothing left it failed: the node answers again, so resubscribe
+            if state == .failed {
+                scheduleResubscribeRetry()
+                return
+            }
 
         } catch {
             AppLog.log("[UtxoSub] Ping failed on %@ - triggering immediate failover: %@", endpoint.key, error.localizedDescription)
@@ -665,10 +756,17 @@ final class UtxoSubscriptionManager: ObservableObject {
 
         AppLog.log("[UtxoSub] Starting failover from %@", primaryEndpoint?.key ?? "unknown")
 
+        let addresses = subscribedAddresses
+
         // Try standby first
         if let standby = standbyEndpoint {
             do {
                 try await subscribeOn(endpoint: standby, isPrimary: true)
+                if Task.isCancelled {
+                    isFailingOver = false
+                    await takeBackCancelledSubscribe(addresses: addresses)
+                    return
+                }
 
                 // Demote old primary, promote standby
                 let oldPrimary = primaryEndpoint
@@ -693,9 +791,14 @@ final class UtxoSubscriptionManager: ObservableObject {
         }
 
         // Standby failed or not available, pick new endpoints
-        if let selection = await selector.pickPrimaryAndStandby(for: .subscribeUtxosChanged) {
+        if !Task.isCancelled, let selection = await selector.pickPrimaryAndStandby(for: .subscribeUtxosChanged) {
             do {
                 try await subscribeOn(endpoint: selection.primary, isPrimary: true)
+                if Task.isCancelled {
+                    isFailingOver = false
+                    await takeBackCancelledSubscribe(addresses: addresses)
+                    return
+                }
                 primaryEndpoint = selection.primary
                 standbyEndpoint = selection.standby
 
@@ -715,10 +818,17 @@ final class UtxoSubscriptionManager: ObservableObject {
             }
         }
 
-        // Complete failure
-        state = .failed
         isFailingOver = false
+        // unsubscribed meanwhile: nothing to retry
+        if Task.isCancelled || subscribedAddresses.isEmpty {
+            state = .disconnected
+            return
+        }
+
+        // Complete failure: keep retrying, or it stays failed until something else resubscribes
+        state = .failed
         AppLog.log("[UtxoSub] Failover failed - no working endpoints")
+        scheduleResubscribeRetry()
     }
 
     // MARK: - State Resync

@@ -255,6 +255,15 @@ final class KachatNamesService: ObservableObject {
         return live
     }
 
+    /// Every live UTXO holding `script`, whatever transaction made it: a commit's salt makes its
+    /// script unique, so this finds a commit sent more than once by whichever send landed.
+    func liveUtxos(script: Data) async throws -> [KachatNames.Utxo] {
+        try requireLaunched()
+        guard let address = Self.p2shAddress(script: script) else { throw ServiceError.notOnChain("a non-P2SH script") }
+        let utxos = try await NodePoolService.shared.getUtxosByAddresses([address])
+        return utxos.compactMap { try? Self.convert($0) }.filter { $0.entry.script == script }
+    }
+
     /// `liveUtxo` for a gap or name, which must also carry the registry covenant id.
     func liveRegistryUtxo(script: Data, outpoint: KachatNames.Outpoint) async throws -> KachatNames.Utxo {
         let m = try await loadManifest()

@@ -62,9 +62,13 @@ final class AddressActivityNotifier: ObservableObject {
     private var cachedNetworkKey: String = ""
     private var cachedSpendingMaxIndex: Int = -1
     private var spendingAddressSet: Set<String> = []
+    /// The same spending addresses, newest slot first (the push list's order).
+    private var spendingAddressOrder: [String] = []
     private var coldFingerprint: String = ""
     /// Cold-storage address -> owning account label (for notification wording).
     private var coldLabelByAddress: [String: String] = [:]
+    /// Cold-storage addresses per account, newest index first (the push list's order).
+    private var coldAddressOrder: [String] = []
     /// Cold-storage addresses whose account has receive notifications switched off. Still
     /// "ours" for the self-send check; never notified.
     private var coldMutedAddresses: Set<String> = []
@@ -131,21 +135,31 @@ final class AddressActivityNotifier: ObservableObject {
     /// What the push service watches for this device's "Received" pushes (the register/update
     /// `watch_only_addresses`): the chatting address, the spending addresses while their switch is
     /// on, and every cold-storage address whose account notifies - the same choices the local
-    /// notifications follow. Empty while Address Activity is off. The service keeps 200 at most.
+    /// notifications follow. Empty while Address Activity is off. The service keeps 200 at most,
+    /// so the list stops there: the chatting address, then the newest spending slots, then cold
+    /// storage. One left out is the app's own to announce (`pushShowsReceive`).
+    /// Cold-storage addresses are sent too (default on): the push service learns them.
     func pushWatchOnlyAddresses() -> [String] {
         guard featureEnabled else { return [] }
         refreshCaches()
         reloadSpendingSwitchForCurrentWallet()
-        var addresses: Set<String> = []
+        var ordered: [String] = []
+        var seen: Set<String> = []
+        func add(_ address: String) {
+            if seen.insert(address).inserted { ordered.append(address) }
+        }
         if let wallet = WalletManager.shared.currentWallet?.publicAddress {
-            addresses.insert(wallet)
+            add(wallet)
         }
         if spendingReceiveNotificationsEnabled {
-            addresses.formUnion(spendingAddressSet)
+            spendingAddressOrder.forEach(add)
         }
-        addresses.formUnion(Set(coldLabelByAddress.keys).subtracting(coldMutedAddresses))
-        return addresses.sorted()
+        coldAddressOrder.filter { !coldMutedAddresses.contains($0) }.forEach(add)
+        return Array(ordered.prefix(Self.pushWatchLimit))
     }
+
+    /// The push service's cap on `watch_only_addresses`.
+    static let pushWatchLimit = 200
 
     /// UserInfo key carrying the involved own addresses on a `.ownAddressUtxoActivity` post.
     static let utxoActivityAddressesKey = "addresses"
@@ -217,6 +231,9 @@ final class AddressActivityNotifier: ObservableObject {
         for hits in hitsByTx.values {
             for hit in hits { recentLiveHitAt[hit.address] = now }
         }
+        // Whether the push for it lands while the app is open (and is hidden): decided now, as
+        // the resolve below takes seconds and the app may have left by then.
+        let appWasOpen = UIApplication.shared.applicationState == .active && activeSince != nil
 
         for (txId, hits) in hitsByTx {
             guard !handledTxIds.contains(txId), !inFlightTxIds.contains(txId) else { continue }
@@ -227,7 +244,8 @@ final class AddressActivityNotifier: ObservableObject {
                     hits: hits,
                     ownAddresses: ownAll,
                     batchSpentOwn: batchSpentOwn,
-                    walletAddress: wallet.publicAddress
+                    walletAddress: wallet.publicAddress,
+                    appWasOpen: appWasOpen
                 )
             }
         }
@@ -257,6 +275,8 @@ final class AddressActivityNotifier: ObservableObject {
         guard let utxos = try? await NodePoolService.shared.getUtxosByAddresses(Array(watched)) else {
             return
         }
+        // signed out or switched during a read: this account's catch-up is over
+        guard isSignedIn(wallet.publicAddress) else { return }
         var currentBalances: [String: UInt64] = [:]
         for address in watched { currentBalances[address] = 0 }
         for utxo in utxos where currentBalances[utxo.address] != nil {
@@ -282,6 +302,7 @@ final class AddressActivityNotifier: ObservableObject {
                     delta: balance - previous,
                     walletAddress: wallet.publicAddress
                 )
+                guard isSignedIn(wallet.publicAddress) else { return }
             }
             if balance != previous { updates[address] = balance }
         }
@@ -304,7 +325,8 @@ final class AddressActivityNotifier: ObservableObject {
         hits: [(address: String, amount: UInt64)],
         ownAddresses: Set<String>,
         batchSpentOwn: Bool,
-        walletAddress: String
+        walletAddress: String,
+        appWasOpen: Bool
     ) async {
         defer { inFlightTxIds.remove(txId) }
 
@@ -320,26 +342,56 @@ final class AddressActivityNotifier: ObservableObject {
         // Inputs we couldn't place (or no tx at all): an own spend in the same batch makes it
         // our own change far more likely than a receive - e.g. a KaPosts post from this seed.
         let isSelfSend = spendsOwn ?? batchSpentOwn
-        // An unreadable tx in a batch that spent nothing of ours still notifies: missing real
-        // funds is worse than a rare stray ping.
 
         guard !handledTxIds.contains(txId) else { return }
         // the lookup above can take a while: an answer for an account no longer signed in is dropped
-        guard WalletManager.shared.currentWallet?.publicAddress == walletAddress else { return }
+        guard isSignedIn(walletAddress) else { return }
+
+        // Unreadable tx: the amount would be one node's word alone. Nothing is announced and the
+        // baseline is left as it was, so the next catch-up finds the increase and attributes it
+        // from the REST history (the balance itself still updates).
+        guard let fullTx else {
+            if isSelfSend {
+                markHandled(txId: txId, wallet: walletAddress)
+                await refreshBaselines(for: Set(hits.map { $0.address }), wallet: walletAddress)
+            } else {
+                AppLog.log("[AddressActivity] Receive %@ unconfirmed by REST; left to the catch-up", String(txId.prefix(12)))
+                // the live mark would turn off the catch-up's own fallback, and the receive would be lost
+                for hit in hits { recentLiveHitAt.removeValue(forKey: hit.address) }
+            }
+            NotificationCenter.default.post(name: .ownAddressActivity, object: nil)
+            return
+        }
         markHandled(txId: txId, wallet: walletAddress)
 
-        if !isSelfSend, pushShowsReceive(blockTimeMs: nil) {
-            AppLog.log("[AddressActivity] Receive %@ left to the push (app not open)", String(txId.prefix(12)))
-        } else if !isSelfSend {
-            postReceiveNotification(hits: hits, dedupeKey: txId)
-            AppLog.log("[AddressActivity] Notified external receive %@ (%d output(s) to own addresses)",
-                  String(txId.prefix(12)), hits.count)
-        } else {
+        // The amounts come from the tx itself, not from the node's batch.
+        let notifiable = notifiableAddressSet(walletAddress: walletAddress)
+        var paid: [String: UInt64] = [:]
+        for output in fullTx.outputs {
+            guard let address = output.scriptPublicKeyAddress, notifiable.contains(address) else { continue }
+            paid[address, default: 0] += output.amount
+        }
+        let txHits = paid.map { (address: $0.key, amount: $0.value) }.filter { $0.amount > 0 }
+        let announced = txHits.filter { !pushShowsReceive(address: $0.address, blockTimeMs: nil, appWasOpen: appWasOpen) }
+
+        if isSelfSend {
             AppLog.log("[AddressActivity] Suppressed self-send %@ after input resolve", String(txId.prefix(12)))
+        } else if txHits.isEmpty {
+            AppLog.log("[AddressActivity] Receive %@ not in the tx's outputs; not announced", String(txId.prefix(12)))
+        } else if announced.isEmpty {
+            AppLog.log("[AddressActivity] Receive %@ left to the push (app not open)", String(txId.prefix(12)))
+        } else {
+            postReceiveNotification(hits: announced, dedupeKey: txId)
+            AppLog.log("[AddressActivity] Notified external receive %@ (%d output(s) to own addresses)",
+                  String(txId.prefix(12)), announced.count)
         }
 
         await refreshBaselines(for: Set(hits.map { $0.address }), wallet: walletAddress)
         NotificationCenter.default.post(name: .ownAddressActivity, object: nil)
+    }
+
+    private func isSignedIn(_ walletAddress: String) -> Bool {
+        WalletManager.shared.currentWallet?.publicAddress == walletAddress
     }
 
     // MARK: - Catch-up attribution
@@ -355,6 +407,7 @@ final class AddressActivityNotifier: ObservableObject {
             pageSize: 10,
             maxTransactions: 10
         )
+        guard isSignedIn(walletAddress) else { return }
         // Only receives newer than what an earlier catch-up already looked at (or than when the
         // address started being tracked). An address tracked before floors existed has none
         // yet: the increase alone bounds it below.
@@ -365,7 +418,7 @@ final class AddressActivityNotifier: ObservableObject {
         // The neutral fallback stays quiet when the receive is someone else's to announce: the
         // live path's (it just saw one here) or the push's (the app was away).
         let liveSawIt = recentLiveHitAt[address].map { Date().timeIntervalSince($0) < Self.liveHitTTL } ?? false
-        let mayFallBack = !liveSawIt && !pushShowsReceive(blockTimeMs: nil)
+        let mayFallBack = !liveSawIt && !pushShowsReceive(address: address, blockTimeMs: nil)
 
         guard !recentTxs.isEmpty else {
             // Resolution failed entirely - still surface the funds, neutral wording.
@@ -392,11 +445,12 @@ final class AddressActivityNotifier: ObservableObject {
                 continue
             }
             let isSelfSend = await spendsOwnFunds(tx, ownAddresses: ownAll) ?? false
+            guard isSignedIn(walletAddress) else { return }
             guard !handledTxIds.contains(tx.transactionId), !inFlightTxIds.contains(tx.transactionId) else { continue }
             markHandled(txId: tx.transactionId, wallet: walletAddress)
             if isSelfSend { continue }
             remaining -= min(remaining, toAddress)
-            if pushShowsReceive(blockTimeMs: tx.blockTime) { continue }
+            if pushShowsReceive(address: address, blockTimeMs: tx.blockTime) { continue }
             postReceiveNotification(hits: [(address, toAddress)], dedupeKey: tx.transactionId)
         }
 
@@ -410,10 +464,14 @@ final class AddressActivityNotifier: ObservableObject {
     /// Whether the push service already shows this receive, so the app must not: it pushes
     /// "Received" for the addresses this device registered, and the app hides that push only
     /// while it is open. A receive from before the app opened this time (or any receive while it
-    /// isn't open) is the push's. `blockTimeMs` nil means it is happening now.
-    private func pushShowsReceive(blockTimeMs: UInt64?) -> Bool {
+    /// isn't open) is the push's. `blockTimeMs` nil means it is happening now. Only for an address
+    /// the service really watches (the list stops at 200). `appWasOpen`: whether the app was open
+    /// when a live batch came, which is when the push landed.
+    private func pushShowsReceive(address: String, blockTimeMs: UInt64?, appWasOpen: Bool? = nil) -> Bool {
         guard AppSettings.load().notificationMode == .remotePush,
-              PushNotificationManager.shared.isRegistered else { return false }
+              PushNotificationManager.shared.isRegistered,
+              PushNotificationManager.shared.registeredWatchOnlyAddresses.contains(address) else { return false }
+        if let appWasOpen { return !appWasOpen }
         guard UIApplication.shared.applicationState == .active, let activeSince else { return true }
         guard let blockTimeMs else { return false }
         return Double(blockTimeMs) < activeSince.timeIntervalSince1970 * 1000
@@ -529,8 +587,10 @@ final class AddressActivityNotifier: ObservableObject {
             cachedWalletAddress = nil
             cachedSpendingMaxIndex = -1
             spendingAddressSet = []
+            spendingAddressOrder = []
             coldFingerprint = ""
             coldLabelByAddress = [:]
+            coldAddressOrder = []
             return
         }
         let network = AppSettings.load().networkType
@@ -542,7 +602,9 @@ final class AddressActivityNotifier: ObservableObject {
         let maxIndex = WalletManager.shared.maxSpendingAddressIndex
             + (WalletManager.shared.maxQuantumAddressIndex + 1) * 100_000
         if walletChanged || cachedSpendingMaxIndex != maxIndex {
-            spendingAddressSet = Set(WalletManager.shared.allSpendingAddresses())
+            let spending = WalletManager.shared.allSpendingAddresses()
+            spendingAddressSet = Set(spending)
+            spendingAddressOrder = spending.reversed()
             cachedSpendingMaxIndex = maxIndex
         }
 
@@ -553,16 +615,19 @@ final class AddressActivityNotifier: ObservableObject {
         if walletChanged || fingerprint != coldFingerprint {
             var labelByAddress: [String: String] = [:]
             var muted: Set<String> = []
+            var order: [String] = []
             for account in accounts {
                 guard let extendedKey = KaspaExtendedPublicKey(kpubString: account.kpubString) else { continue }
-                for index in 0...account.maxAddressIndex {
+                for index in (0...account.maxAddressIndex).reversed() {
                     if let address = try? extendedKey.receiveAddress(at: UInt32(index), network: network) {
                         labelByAddress[address] = account.label
+                        order.append(address)
                         if !account.notifyOnReceive { muted.insert(address) }
                     }
                 }
             }
             coldLabelByAddress = labelByAddress
+            coldAddressOrder = order
             coldMutedAddresses = muted
             coldFingerprint = fingerprint
         }

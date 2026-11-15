@@ -58,6 +58,7 @@ enum NFCCardError: LocalizedError {
     case unreadableBackup
     case saveNotConfirmed
     case seedUnavailable
+    case accountMismatch
     case cardFailed(String)
 
     var errorDescription: String? {
@@ -94,6 +95,8 @@ enum NFCCardError: LocalizedError {
             return "The save couldn't be confirmed, so don't rely on this card. Try again."
         case .seedUnavailable:
             return "This account's 12 or 24 words couldn't be read on this device."
+        case .accountMismatch:
+            return AppLocalization.string("These 12 or 24 words don't lead to this account's Chatting Address here, so nothing was saved to the card.")
         case .cardFailed(let detail):
             return "The card reported a problem (\(detail)). Try again."
         }
@@ -149,7 +152,10 @@ final class NFCCardConnection {
         switch reply.status {
         case 0x9000:
             return reply.data
-        case 0x63C0...0x63CF:
+        case 0x63C0:
+            // no tries left: the PIN is blocked, not worth another try
+            throw NFCCardError.pinBlocked
+        case 0x63C1...0x63CF:
             throw NFCCardError.wrongPIN(triesRemaining: Int(reply.status & 0x000F))
         case 0x6983:
             throw NFCCardError.pinBlocked
@@ -196,6 +202,8 @@ final class NFCCardConnection {
     /// The card checks the hash before the new copy replaces the old one, so an interrupted save
     /// leaves the previous backup in place.
     func writeBackup(_ backup: Data) async throws {
+        // lengths and offsets travel in P1P2
+        guard backup.count <= 0xFFFF else { throw NFCCardError.backupTooLarge }
         _ = try await command(0xD0, p1p2: backup.count)
         let chunkSize = 200
         var offset = 0
@@ -207,13 +215,18 @@ final class NFCCardConnection {
         _ = try await command(0xD2, data: Data(SHA256.hash(data: backup)))
     }
 
-    func readBackup() async throws -> Data {
+    /// Stops at `maxLength` (the card's `maxBackup`): a card that keeps answering can't grow the
+    /// read forever, and the offset never wraps past P1P2's 16 bits.
+    func readBackup(maxLength: Int = 0xFFFF) async throws -> Data {
+        let limit = maxLength > 0 ? min(maxLength, 0xFFFF) : 0xFFFF
         var backup = Data()
-        while true {
+        while backup.count < limit {
             let chunk = try await command(0xB0, p1p2: backup.count, responseLength: 256)
             if chunk.isEmpty { return backup }
             backup.append(chunk)
         }
+        guard backup.count == limit else { throw NFCCardError.unreadableBackup }
+        return backup
     }
 
     func wipe() async throws {

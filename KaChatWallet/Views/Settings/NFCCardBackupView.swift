@@ -223,8 +223,13 @@ struct NFCCardBackupView: View {
             }
             let passphrase = seedPhrase.passphrase ?? ""
             guard !passphrase.isEmpty else { throw NFCCardError.noPassphrase }
-            let family = walletManager.walletSourceFamily(for: wallet.publicAddress)
-            let index = walletManager.chattingAddressIndex(for: wallet.publicAddress)
+            // The saved type and index can be gone (a reinstall): found again from the words, or
+            // the card would restore another account.
+            guard let identity = walletManager.identityParameters(for: wallet.publicAddress, seedPhrase: seedPhrase) else {
+                throw NFCCardError.accountMismatch
+            }
+            let family = identity.family
+            let index = identity.index
             // The same derivation a restore checks against, so the two can't disagree.
             guard let chattingIndex = UInt32(exactly: index),
                   let chattingAddress = walletManager.previewChattingAddress(
@@ -234,6 +239,9 @@ struct NFCCardBackupView: View {
                       family: family
                   ) else {
                 throw NFCCardError.seedUnavailable
+            }
+            guard WalletManager.isSameAccount(chattingAddress, wallet.publicAddress) else {
+                throw NFCCardError.accountMismatch
             }
             let payload = NFCCardBackupPayload(
                 words: seedPhrase.words,
@@ -275,7 +283,7 @@ struct NFCCardBackupView: View {
                 }
                 try await connection.verifyPIN(enteredPIN)
                 try await connection.writeBackup(backup)
-                guard try await connection.readBackup() == backup else {
+                guard try await connection.readBackup(maxLength: current.maxBackup) == backup else {
                     throw NFCCardError.saveNotConfirmed
                 }
             }

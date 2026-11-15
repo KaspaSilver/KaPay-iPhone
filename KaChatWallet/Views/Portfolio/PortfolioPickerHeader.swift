@@ -164,7 +164,7 @@ struct PortfolioPickerHeader: View {
                 }
             }
         }
-        .presentationDetents([.height(180)])
+        .fittedSheetDetents(180, scrolls: false)
     }
 }
 

@@ -138,15 +138,17 @@ struct PortfolioTransactionsView<Header: View>: View {
             AddPortfolioAddressSheet(viewModel: viewModel, presetAddress: addAddressPreset) { result in
                 switch result {
                 case .success(let importResult):
-                    var message = "Imported \(importResult.imported.count) transaction\(importResult.imported.count == 1 ? "" : "s")"
+                    var message = importResult.imported.count == 1
+                        ? AppLocalization.string("Imported 1 transaction")
+                        : localizedFormat("Imported %lld transactions", importResult.imported.count)
                     if !importResult.fees.isEmpty {
                         message += localizedFormat(". Network fees counted: %lld", importResult.fees.count)
                     }
                     if importResult.missingPriceCount > 0 {
-                        message += ". Prices for \(importResult.missingPriceCount) are still loading and will fill in automatically"
+                        message += localizedFormat(". Prices for %lld are still loading and will fill in automatically", importResult.missingPriceCount)
                     }
                     if !importResult.historyComplete {
-                        message += ". Some history couldn't be fetched, re-add this address later to import the rest"
+                        message += AppLocalization.string(". Some history couldn't be fetched, re-add this address later to import the rest")
                     }
                     showToast(message)
                 case .failure(let error):
@@ -234,9 +236,15 @@ struct PortfolioTransactionsView<Header: View>: View {
     /// The toast after a CSV import: how many rows, and into which portfolio.
     private func importMessage(_ result: PortfolioViewModel.CsvImportResult) -> String {
         guard result.count > 0 else { return AppLocalization.string("Import failed. Check the CSV format") }
-        let rows = result.count == 1 ? "1 transaction" : "\(result.count) transactions"
-        guard !result.portfolioNames.isEmpty else { return "Imported \(rows)" }
-        return "Imported \(rows) into \(result.portfolioNames.joined(separator: ", "))"
+        guard !result.portfolioNames.isEmpty else {
+            return result.count == 1
+                ? AppLocalization.string("Imported 1 transaction")
+                : localizedFormat("Imported %lld transactions", result.count)
+        }
+        let names = result.portfolioNames.joined(separator: ", ")
+        return result.count == 1
+            ? localizedFormat("Imported 1 transaction into %@", names)
+            : localizedFormat("Imported %lld transactions into %@", result.count, names)
     }
 
     private func localizedFormat(_ key: String, _ args: CVarArg...) -> String {
@@ -609,42 +617,10 @@ struct PortfolioTransactionsView<Header: View>: View {
         DispatchQueue.main.async { present() }
     }
 
-    /// Manual build via a plain symbol prefix rather than `.formatted(.currency(code:))` - the
-    /// latter is Foundation's ISO-4217-driven `FormatStyle`, whose behavior for a non-ISO-4217
-    /// code like `.bitcoin`'s "BTC" isn't something to rely on sight-unseen.
-    ///
-    /// The formatters are built once (per currency for the symbol), not twice per row per redraw.
+    /// The Portfolio tab's own formatting (`PortfolioFormat.currency`), so a row reads the same
+    /// as the totals above it: the in-app language's separators, bitcoin in full.
     private func formatCurrency(_ value: Double) -> String {
-        let sign = value < 0 ? "-" : ""
-        let code = settingsViewModel.settings.currency.code
-        let symbol = settingsViewModel.settings.currency == .bitcoin ? "₿" : PortfolioRowFormatters.currencySymbol(for: code)
-        let magnitude = PortfolioRowFormatters.twoDecimals.string(from: NSNumber(value: abs(value))) ?? String(format: "%.2f", abs(value))
-        return sign + symbol + magnitude
-    }
-}
-
-/// `PortfolioTransactionsView`'s formatters, outside it because a generic type can't hold
-/// static stored properties.
-private enum PortfolioRowFormatters {
-    static let twoDecimals: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        formatter.usesGroupingSeparator = true
-        return formatter
-    }()
-
-    private static var symbols: [String: String] = [:]
-
-    static func currencySymbol(for code: String) -> String {
-        if let known = symbols[code] { return known }
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = code
-        let symbol = formatter.currencySymbol ?? code
-        symbols[code] = symbol
-        return symbol
+        PortfolioFormat.currency(value, settingsViewModel.settings.currency)
     }
 }
 
@@ -946,6 +922,8 @@ private struct PortfolioTransactionEditor: View {
     @State private var feeText: String = ""
     @State private var notesText: String
     @State private var timestamp: Date
+    // Set on the first Add/Save tap, so a second tap before the sheet closes adds nothing.
+    @State private var isSaving = false
 
     init(viewModel: PortfolioViewModel, existing: PortfolioTransaction?) {
         self.viewModel = viewModel
@@ -990,23 +968,16 @@ private struct PortfolioTransactionEditor: View {
         return formatter.currencySymbol ?? settingsViewModel.settings.currency.code
     }
 
-    /// Manual build via `currencySymbol` rather than `.formatted(.currency(code:))` - the latter
-    /// is Foundation's ISO-4217-driven `FormatStyle`, whose behavior for a non-ISO-4217 code like
-    /// `.bitcoin`'s "BTC" isn't something to rely on sight-unseen.
+    /// The Portfolio tab's own formatting, so the total reads like the rows and totals.
     private func formatCurrency(_ value: Double) -> String {
-        let sign = value < 0 ? "-" : ""
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        formatter.usesGroupingSeparator = true
-        let magnitude = formatter.string(from: NSNumber(value: abs(value))) ?? String(format: "%.2f", abs(value))
-        return sign + currencySymbol + magnitude
+        PortfolioFormat.currency(value, settingsViewModel.settings.currency)
     }
 
-    /// A transfer only needs its amount: it has no price that counts for anything.
+    /// A transfer only needs its amount: it has no price that counts for anything. The amount
+    /// must also be one the portfolio can store (at most the supply cap).
     private var isValid: Bool {
-        (quantity ?? 0) > 0 && (type == .transfer || (pricePerCoin ?? 0) > 0)
+        guard let quantity, quantity > 0, PortfolioViewModel.sompi(fromKas: quantity) != nil else { return false }
+        return type == .transfer || (pricePerCoin ?? 0) > 0
     }
 
     var body: some View {
@@ -1096,14 +1067,15 @@ private struct PortfolioTransactionEditor: View {
                     Button(existing == nil ? "Add" : "Save") {
                         save()
                     }
-                    .disabled(!isValid)
+                    .disabled(!isValid || isSaving)
                 }
             }
         }
     }
 
     private func save() {
-        guard let quantity else { return }
+        guard !isSaving, let quantity else { return }
+        isSaving = true
         // A transfer with no price is still a complete record.
         let total = self.total ?? 0
         let notes = notesText.trimmingCharacters(in: .whitespacesAndNewlines)

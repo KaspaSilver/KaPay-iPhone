@@ -144,6 +144,16 @@ struct NameResolution: Identifiable, Equatable {
     /// first as always, but nothing can resolve there.
     var notLive: Bool = false
 
+    init(tld: NameServiceTLD, display: String, address: String?, failed: Bool, notLive: Bool = false) {
+        self.tld = tld
+        self.display = display
+        // a service's answer counts only as an address of this network; anything else is no answer
+        let usable = address.flatMap { KaspaAddress.isValidOnActiveNetwork($0) ? $0 : nil }
+        self.address = usable
+        self.failed = failed || (address != nil && usable == nil)
+        self.notLive = notLive
+    }
+
     var id: String { tld.rawValue }
 }
 
@@ -418,13 +428,13 @@ final class NameServicesClient: ObservableObject {
     static func notFoundMessage(typed input: String, results: [NameResolution]) -> String {
         let wanted = NameServiceTLD.splitTypedName(input).tld ?? .kachat
         if wanted == .kachat, results.contains(where: { $0.tld == .kachat && $0.notLive }) || !NameServiceTLD.kachat.isLive {
-            return String(localized: ".kachat names aren't live on this network yet")
+            return AppLocalization.string(".kachat names aren't live on this network yet")
         }
         // the service couldn't be asked: that says nothing about whether the name exists
         if results.contains(where: { $0.tld == wanted && $0.failed }) {
-            return String(localized: "Couldn't look up \(wanted.suffix) right now. Try again in a moment.")
+            return String(format: AppLocalization.string("Couldn't look up %@ right now. Try again in a moment."), String(wanted.suffix))
         }
-        return String(localized: "No \(wanted.suffix) domain found")
+        return String(format: AppLocalization.string("No %@ domain found"), String(wanted.suffix))
     }
 
     /// `.kachat`: the registry's owner of a name that is active or in its grace period - an owner
@@ -457,8 +467,9 @@ final class NameServicesClient: ObservableObject {
     private func resolveKas(_ label: String) async -> NameResolution? {
         guard let canonical = KNSService.shared.normalizeDomainLabel(label) else { return nil }
         let display = "\(canonical).kas"
-        let resolution = await KNSService.shared.resolveDomain(canonical)
-        return NameResolution(tld: .kas, display: display, address: resolution?.ownerAddress, failed: false)
+        // KNS unreachable is "couldn't look up", never "no such domain"
+        let lookup = await KNSService.shared.resolveDomainLookup(canonical)
+        return NameResolution(tld: .kas, display: display, address: lookup.resolution?.ownerAddress, failed: lookup.failed)
     }
 
     private struct DotkNameResponse: Decodable {

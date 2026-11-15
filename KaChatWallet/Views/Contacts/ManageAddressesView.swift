@@ -15,6 +15,8 @@ struct ManageAddressesView: View {
 
     @State private var entries: [SpendingAddressEntry] = []
     @State private var isLoading = false
+    /// The one running `loadEntries` - see `reloadEntries`.
+    @State private var loadTask: Task<Void, Never>?
     @State private var isGenerating = false
     @State private var isDiscovering = false
     @State private var errorMessage: String?
@@ -89,7 +91,7 @@ struct ManageAddressesView: View {
             }
             .listStyle(.plain)
             .refreshable {
-                await loadEntries()
+                await reloadEntriesAndWait()
             }
             // Room to scroll the last row out from under the floating button.
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -108,12 +110,12 @@ struct ManageAddressesView: View {
             }
         }) {
             addressActionsSheet
-                .presentationDetents([.height(440)])
+                .fittedSheetDetents(440)
                 .presentationDragIndicator(.visible)
         }
         .sheet(item: $addressActionsTarget) { entry in
             addressRowActionsSheet(entry)
-                .presentationDetents([.height(rowActionsSheetHeight(entry))])
+                .fittedSheetDetents(rowActionsSheetHeight(entry))
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showVisibilityManager, onDismiss: {
@@ -121,29 +123,29 @@ struct ManageAddressesView: View {
             // loadEntries() re-fetches every balance and used-flag, which takes long
             // enough on big wallets that the screen looked stale after hitting Done.
             applyVisibilityChangesInstantly()
-            Task { await loadEntries() }
+            reloadEntries()
         }) {
             SpendingAddressVisibilityView()
         }
         .task {
-            await loadEntries()
+            await reloadEntriesAndWait()
         }
         // Live own-address receive detected (AddressActivityNotifier) - refresh balances so
         // the screen reflects the funds without a manual pull.
         .onReceive(NotificationCenter.default.publisher(for: .ownAddressActivity)) { _ in
-            Task { await loadEntries() }
+            reloadEntries()
         }
         // Always-post variant: also fires for self-send change (payment rotation,
         // consolidation) that the notification-gated event above suppresses.
         .onReceive(NotificationCenter.default.publisher(for: .ownAddressUtxoActivity)) { _ in
-            Task { await loadEntries() }
+            reloadEntries()
         }
         // Primary pointer rotated (post-send rotation or Set as Primary elsewhere) - the rows
         // already read the live primary index for the star and menu guards, so they update the
         // moment WalletManager republishes; this reload refreshes balances and the persisted
         // snapshot so the old primary's row is consistent (and hideable) right away.
         .onReceive(NotificationCenter.default.publisher(for: .spendingPrimaryChanged)) { _ in
-            Task { await loadEntries() }
+            reloadEntries()
         }
         .toast(message: toastMessage)
         .alert(
@@ -173,7 +175,7 @@ struct ManageAddressesView: View {
                     walletManager.setSpendingAddressLabel(index: renameTarget.index, label: renameText)
                 }
                 renameTarget = nil
-                Task { await loadEntries() }
+                reloadEntries()
             }
             Button("Cancel", role: .cancel) {
                 renameTarget = nil
@@ -651,6 +653,26 @@ struct ManageAddressesView: View {
         entries = updated.sorted { $0.index < $1.index }
     }
 
+    /// Every reload runs as one task: a newer one cancels the older, so a slow older run can't
+    /// write its results over newer ones (the screen's task, pull to refresh and the activity
+    /// notifications all reload).
+    private func reloadEntries() {
+        loadTask?.cancel()
+        loadTask = Task { await loadEntries() }
+    }
+
+    /// `reloadEntries`, awaited, and cancelled with the caller (the screen's task, the refresh).
+    private func reloadEntriesAndWait() async {
+        let task = Task { await loadEntries() }
+        loadTask?.cancel()
+        loadTask = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     private func loadEntries() async {
         // Instant paint from the persisted snapshot of the last full load — the screen shows
         // rows immediately (even with the network down) while the live refresh below replaces
@@ -661,6 +683,7 @@ struct ManageAddressesView: View {
         }
         isLoading = entries.isEmpty
         let baseEntries = await walletManager.getSpendingAddressList()
+        guard !Task.isCancelled else { return }
 
         // Resolve everything answerable WITHOUT a network probe before the rows paint:
         // funded rows are used by definition (a balance proves history - persist that, it's
@@ -724,6 +747,11 @@ struct ManageAddressesView: View {
                 group.addTask { (entry.address, await self.walletService.spendingAddressUsedState(entry.address)) }
             }
             while let (address, used) = await group.next() {
+                // A newer reload owns the rows now.
+                if Task.isCancelled {
+                    group.cancelAll()
+                    return
+                }
                 if let used {
                     if let position = entries.firstIndex(where: { $0.address == address }) {
                         entries[position].everUsed = used
@@ -739,6 +767,7 @@ struct ManageAddressesView: View {
             }
         }
 
+        guard !Task.isCancelled else { return }
         // Persist the freshly-loaded snapshot so the NEXT open paints instantly from cache.
         walletManager.storeSpendingAddressListCache(entries)
 
@@ -754,6 +783,7 @@ struct ManageAddressesView: View {
         }
         // .kachat names count too (testnet, where the registry is live).
         owners.formUnion(await KachatNamesRegistry.shared.ownersOfNames(among: addresses))
+        guard !Task.isCancelled else { return }
         domainOwningAddresses = owners
     }
 
@@ -841,8 +871,12 @@ struct ManageAddressesView: View {
             // showToast auto-dismisses on the standard timer and replaces (never stacks or
             // extends) any toast a rapid earlier press put up. The old direct assignment
             // here never scheduled a dismissal, so the success toast lingered indefinitely.
-            showToast("Address #\(WalletManager.addressNumber(forIndex: index)) is ready.")
-            Task { await loadEntries() }
+            showToast(String(
+                format: AppLocalization.string("Address #%lld is ready."),
+                locale: AppLocalization.locale,
+                WalletManager.addressNumber(forIndex: index)
+            ))
+            reloadEntries()
         }
     }
 
@@ -876,14 +910,17 @@ struct ManageAddressesView: View {
                 discoveryProgress = progress
             }
             await HotWalletBalance.shared.refresh(force: true)
-            await loadEntries()
+            await reloadEntriesAndWait()
             isDiscovering = false
             discoveryProgress = nil
             // The count is addresses that hold a balance or a KNS domain - say so, rather than
             // "used", which is what the old high-water-mark number implied and was not.
             let summary = discovered == 0
-                ? "No addresses with a balance or domain found."
-                : "Found \(discovered) address\(discovered == 1 ? "" : "es") with a balance or domain."
+                ? AppLocalization.string("No addresses with a balance or domain found.")
+                : discovered == 1
+                    ? AppLocalization.string("Found 1 address with a balance or domain.")
+                    : String(format: AppLocalization.string("Found %lld addresses with a balance or domain."),
+                             locale: AppLocalization.locale, discovered)
             discoverySummary = summary
             // Closed the sheet and carried on? Then the summary above has nowhere to render, so
             // say it here instead of finishing silently.
@@ -1004,7 +1041,7 @@ struct SpendingAddressWithdrawView: View {
     /// True once we have a usable recipient - either a resolved KNS domain or a directly valid
     /// Kaspa address (mirrors WithdrawKaspaView.hasValidRecipient).
     private var hasValidRecipient: Bool {
-        if resolvedAddress != nil { return true }
+        if let resolvedAddress { return KaspaAddress.isValidOnActiveNetwork(resolvedAddress) }
         return isValidAddress && !isResolvingKNS
     }
 
@@ -1311,6 +1348,12 @@ struct SpendingAddressWithdrawView: View {
 
     private func handleInputChange(_ input: String) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An upper-case address goes into the field in lower case; that change comes back here.
+        let lowered = lowercasedKaspaAddress(trimmed)
+        if lowered != trimmed {
+            addressInput = lowered
+            return
+        }
 
         resolvedAddress = nil
         resolvedDomain = nil
@@ -1324,7 +1367,7 @@ struct SpendingAddressWithdrawView: View {
             return
         }
 
-        if trimmed.hasPrefix("kaspa:") || trimmed.hasPrefix("kaspatest:") {
+        if trimmed.lowercased().hasPrefix("kaspa:") || trimmed.lowercased().hasPrefix("kaspatest:") {
             // the other network's address is the same key on another chain: refused
             isValidAddress = KaspaAddress.isValidOnActiveNetwork(trimmed)
             return
@@ -1341,6 +1384,14 @@ struct SpendingAddressWithdrawView: View {
     /// Use one service's answer (the priority one, or a pick from "Other domains").
     private func selectResolution(_ resolution: NameResolution) {
         guard let address = resolution.address else { return }
+        // Only an address of this network is an answer; anything else reads as not found.
+        guard KaspaAddress.isValidOnActiveNetwork(address) else {
+            resolvedAddress = nil
+            resolvedDomain = nil
+            selectedTLD = nil
+            knsError = NameServicesClient.notFoundMessage(typed: resolution.display, results: [])
+            return
+        }
         resolvedAddress = address
         resolvedDomain = resolution.display
         selectedTLD = resolution.tld
@@ -1387,6 +1438,7 @@ struct SpendingAddressWithdrawView: View {
             if let queryIndex = address.firstIndex(of: "?") {
                 address = String(address[..<queryIndex])
             }
+            address = lowercasedKaspaAddress(address)
         }
         addressInput = address
         handleInputChange(address)
@@ -1911,7 +1963,7 @@ struct SpendingAddressTransactionHistoryView: View {
                 onViewPrivateKey: {
                     afterAddressActions = {
                         if settingsViewModel.settings.biometricSpendingKeyEnabled {
-                            DeviceAuth.authenticate(reason: "Unlock to view this address's private key") {
+                            DeviceAuth.authenticate(reason: AppLocalization.string("Unlock to view this address's private key")) {
                                 showPrivateKeySheet = true
                             }
                         } else {
@@ -1930,7 +1982,7 @@ struct SpendingAddressTransactionHistoryView: View {
                 }
             )
             sheet
-                .presentationDetents([.height(sheet.height)])
+                .fittedSheetDetents(sheet.height)
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showPublicKeySheet) {

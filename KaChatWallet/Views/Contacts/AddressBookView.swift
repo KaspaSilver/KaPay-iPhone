@@ -692,6 +692,14 @@ struct AddressBookEntryEditor: View {
 
     private func selectResolution(_ resolution: NameResolution) {
         guard let address = resolution.address else { return }
+        // Only an address of this network is an answer; anything else reads as not found.
+        guard KaspaAddress.isValidOnActiveNetwork(address) else {
+            resolvedAddress = nil
+            resolvedName = nil
+            selectedTLD = nil
+            lookupError = NameServicesClient.notFoundMessage(typed: resolution.display, results: [])
+            return
+        }
         resolvedAddress = address
         resolvedName = resolution.display
         selectedTLD = resolution.tld

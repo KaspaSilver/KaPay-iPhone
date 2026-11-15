@@ -457,22 +457,38 @@ struct OwnPaymentRequestView: View {
 struct PaymentRequestSheetPresenter: ViewModifier {
     @ObservedObject private var router = PaymentRequestRouter.shared
     @EnvironmentObject private var settingsViewModel: SettingsViewModel
+    /// The request on screen: the router's, once nothing else is presented over the tabs (a
+    /// sheet asked for over another one never shows). The router keeps it until it appears.
+    @State private var shown: PaymentRequest?
 
     func body(content: Content) -> some View {
         content
-            .sheet(item: $router.pending) { request in
-                if request.isOwn {
-                    OwnPaymentRequestView(request: request)
+            .onReceive(router.$pending) { request in
+                guard request != nil else { return }
+                DockSheetGate.whenUncovered {
+                    // the newest request, if another came in meanwhile
+                    guard let request = router.pending else { return }
+                    shown = request
+                }
+            }
+            .sheet(item: $shown) { request in
+                Group {
+                    if request.isOwn {
+                        OwnPaymentRequestView(request: request)
+                            .environmentObject(settingsViewModel)
+                    } else if let wallet = WalletManager.shared.currentWallet {
+                        WithdrawKaspaView(
+                            fromAddress: wallet.publicAddress,
+                            availableBalanceSompi: wallet.balanceSompi,
+                            paymentRequest: request
+                        )
+                        .environmentObject(WalletService.shared)
+                        .environmentObject(WalletManager.shared)
                         .environmentObject(settingsViewModel)
-                } else if let wallet = WalletManager.shared.currentWallet {
-                    WithdrawKaspaView(
-                        fromAddress: wallet.publicAddress,
-                        availableBalanceSompi: wallet.balanceSompi,
-                        paymentRequest: request
-                    )
-                    .environmentObject(WalletService.shared)
-                    .environmentObject(WalletManager.shared)
-                    .environmentObject(settingsViewModel)
+                    }
+                }
+                .onAppear {
+                    if router.pending == request { router.pending = nil }
                 }
             }
     }

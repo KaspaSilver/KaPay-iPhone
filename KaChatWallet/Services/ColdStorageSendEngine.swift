@@ -211,31 +211,28 @@ final class ColdStorageSendEngine {
     /// quoted rate, same as Android. `manualUtxos`, if given (coin control), fixes the exact
     /// input set instead of letting `selectUtxos` greedily grow one — re-resolved against this
     /// call's own fresh `getUtxosByAddresses` fetch by outpoint, not used as-is, so a UTXO spent
-    /// since the coin-control picker was shown can't silently get included.
+    /// since the coin-control picker was shown can't silently get included. `previewed`: those
+    /// coins are `previewAutomaticSelection`'s, not the user's pick, so a coin may still be added.
     func buildUnsignedTransaction(
         fromAddress: String,
         toAddress: String,
         amountSompi: UInt64,
         feeRateOverride: UInt64? = nil,
-        manualUtxos: [UTXO]? = nil
+        manualUtxos: [UTXO]? = nil,
+        previewed: Bool = false
     ) async throws -> UnsignedColdTx {
         guard amountSompi > 0 else {
             throw KasiaError.networkError("Amount must be greater than zero")
         }
         if let reason = KaspaAddress.otherNetworkReason(toAddress) { throw KasiaError.networkError(reason) }
-        guard let recipientScript = KaspaAddress.scriptPublicKey(from: toAddress),
+        // whatever handed it over (a name service, a scan), only a valid address of this network
+        guard KaspaAddress.isValidOnActiveNetwork(toAddress),
+              let recipientScript = KaspaAddress.scriptPublicKey(from: toAddress),
               let changeScript = KaspaAddress.scriptPublicKey(from: fromAddress) else {
             throw KasiaError.invalidAddress
         }
 
-        // Unlike most of this app's other UTXO-consuming paths, this one deliberately does NOT
-        // filter out coinbase UTXOs — matching Android's ColdStorageSendEngine.kt exactly, which
-        // passes the node's UTXO response straight into selection with no coinbase filtering at
-        // all. A node's UTXO-set query only ever returns mature, spendable outputs in the first
-        // place, so a matured coinbase output is just as spendable as any other UTXO; excluding
-        // it here made iOS select a different (and potentially larger) set of inputs than
-        // Android would for the identical on-chain balance.
-        let spendable = try await NodePoolService.shared.getUtxosByAddresses([fromAddress])
+        let spendable = try await spendableCoins(at: fromAddress)
         guard !spendable.isEmpty else { throw ColdSendError.noSpendableUtxos }
 
         let feeRate: UInt64
@@ -268,8 +265,32 @@ final class ColdStorageSendEngine {
                 changeScriptLen: changeScript.count
             )
         }
-        guard let selection = selectionResult else {
+        guard var selection = selectionResult else {
             throw ColdSendError.insufficientFunds
+        }
+        // Change the storage mass won't take: one more coin first (the largest left), as the hot
+        // wallet's selector does, so it can stay rather than go to the fee or be refused.
+        let isAutomatic = previewed || (manualUtxos?.isEmpty ?? true)
+        if isAutomatic, selection.changeSompi > 0, selection.utxos.count < KsptCodec.maxInputs,
+           !KasiaTransactionBuilder.fitsStorageMass(
+               inputAmounts: selection.utxos.map(\.amount),
+               outputAmounts: [selection.finalAmount, selection.changeSompi]
+           ) {
+            let chosen = Set(selection.utxos.map(\.id))
+            if let extra = spendable.filter({ !chosen.contains($0.id) }).max(by: { $0.amount < $1.amount }),
+               let wider = Self.buildManualSelection(
+                   utxos: selection.utxos + [extra],
+                   amountSompi: amountSompi,
+                   feeRateSompiPerGram: feeRate,
+                   recipientScriptLen: recipientScript.count,
+                   changeScriptLen: changeScript.count
+               ),
+               KasiaTransactionBuilder.fitsStorageMass(
+                   inputAmounts: wider.utxos.map(\.amount),
+                   outputAmounts: [wider.finalAmount, wider.changeSompi]
+               ) {
+                selection = wider
+            }
         }
         guard selection.utxos.count <= KsptCodec.maxInputs else {
             throw ColdSendError.tooManyInputs(selection.utxos.count)
@@ -294,6 +315,14 @@ final class ColdStorageSendEngine {
             } else if selection.changeSompi > KasiaTransactionBuilder.maxFoldedChangeSompi {
                 throw KasiaError.networkError(KasiaTransactionBuilder.smallSendMassMessage)
             }
+        }
+        // The recipient's output must fit too (a small amount from a big coin doesn't), or the
+        // node refuses what KasSigner signed.
+        guard KasiaTransactionBuilder.fitsStorageMass(
+            inputAmounts: selection.utxos.map(\.amount),
+            outputAmounts: outputs.map(\.value)
+        ) else {
+            throw KasiaError.networkError(KasiaTransactionBuilder.smallSendMassMessage)
         }
 
         let transaction = KaspaRpcTransaction(
@@ -327,18 +356,18 @@ final class ColdStorageSendEngine {
     /// reference-mass guess) whenever a fresh preview is available, and — critically — lets the
     /// form pass this exact same UTXO set into the real build as `manualUtxos`, so the two numbers
     /// can't diverge the way they could when each independently guessed at the input count.
-    /// Uses standard 34-byte output script lengths (matching `referenceMassForFeeEditor`) since
-    /// this only needs to be right about *how many inputs*, not the recipient's exact address.
-    func previewAutomaticSelection(fromAddress: String, amountSompi: UInt64, feeRateSompiPerGram: UInt64) async -> AutomaticSelectionPreview? {
-        guard amountSompi > 0, let spendable = try? await NodePoolService.shared.getUtxosByAddresses([fromAddress]), !spendable.isEmpty else {
+    /// Priced at the recipient's real script (35 bytes for a quantum address), 34 bytes until
+    /// there is one, so its fee is what the build charges for the same coins.
+    func previewAutomaticSelection(fromAddress: String, toAddress: String? = nil, amountSompi: UInt64, feeRateSompiPerGram: UInt64) async -> AutomaticSelectionPreview? {
+        guard amountSompi > 0, let spendable = try? await spendableCoins(at: fromAddress), !spendable.isEmpty else {
             return nil
         }
         guard let selection = Self.selectUtxos(
             from: spendable,
             amountSompi: amountSompi,
             feeRateSompiPerGram: feeRateSompiPerGram,
-            recipientScriptLen: 34,
-            changeScriptLen: 34
+            recipientScriptLen: Self.scriptLength(of: toAddress),
+            changeScriptLen: Self.scriptLength(of: fromAddress)
         ) else {
             return nil
         }
@@ -351,10 +380,10 @@ final class ColdStorageSendEngine {
     /// anyway) rather than running the incremental selection loop. If coin control has fixed a
     /// UTXO set, Max reflects only that subset (re-resolved against this call's own fresh fetch,
     /// same as `buildUnsignedTransaction`) rather than the whole address's balance.
-    func estimateMaxAmount(fromAddress: String, feeRateOverride: UInt64? = nil, manualUtxos: [UTXO]? = nil) async throws -> UInt64 {
-        // No coinbase filtering here either — see the matching comment in
-        // buildUnsignedTransaction above.
-        let spendable = try await NodePoolService.shared.getUtxosByAddresses([fromAddress])
+    /// Priced at the recipient's real script, as the build is: a quantum (35-byte) recipient
+    /// priced as 34 bytes left Max a few sompi short of its fee.
+    func estimateMaxAmount(fromAddress: String, toAddress: String? = nil, feeRateOverride: UInt64? = nil, manualUtxos: [UTXO]? = nil) async throws -> UInt64 {
+        let spendable = try await spendableCoins(at: fromAddress)
         guard !spendable.isEmpty else { throw ColdSendError.noSpendableUtxos }
 
         let utxosToUse: [UTXO]
@@ -384,7 +413,11 @@ final class ColdStorageSendEngine {
             feeRate = await Self.fetchQuotedFeeRateSompiPerGram()
         }
 
-        let mass = Self.calculateMass(numInputs: max(utxosToUse.count, 1), outputScriptLens: [34, 34], payloadSize: 0)
+        let mass = Self.calculateMass(
+            numInputs: max(utxosToUse.count, 1),
+            outputScriptLens: [Self.scriptLength(of: toAddress), Self.scriptLength(of: fromAddress)],
+            payloadSize: 0
+        )
         let fee = Self.calculateFee(mass: mass, rateSompiPerGram: feeRate)
 
         guard totalBalance > fee else { return 0 }
@@ -397,13 +430,27 @@ final class ColdStorageSendEngine {
     /// `fromAddress` (largest-first, so each round sheds the most value and converges fastest),
     /// plus whether more than that many remain. Merging cap -> 1 per round means an address with
     /// N UTXOs takes ceil((N-1)/(cap-1)) rounds; the caller repeats Compound until a single UTXO
-    /// is left. No coinbase filtering, matching `buildUnsignedTransaction`.
+    /// is left. The same coins as `buildUnsignedTransaction` (`spendableCoins`).
     func compoundInputs(fromAddress: String) async throws -> (utxos: [UTXO], hasMore: Bool) {
-        let spendable = try await NodePoolService.shared.getUtxosByAddresses([fromAddress])
+        let spendable = try await spendableCoins(at: fromAddress)
         guard !spendable.isEmpty else { throw ColdSendError.noSpendableUtxos }
         let sorted = spendable.sorted { $0.amount > $1.amount }
         let capped = Array(sorted.prefix(KsptCodec.maxInputs))
         return (capped, sorted.count > KsptCodec.maxInputs)
+    }
+
+    /// What a send from this address may spend, as for a hot-wallet spending address: a mining
+    /// reward only once mature, and not a coin a send has just spent (held two minutes,
+    /// `WalletService.unreservedUtxos`).
+    private func spendableCoins(at address: String) async throws -> [UTXO] {
+        let utxos = try await NodePoolService.shared.getUtxosByAddresses([address])
+        let virtualDaaScore = await WalletService.shared.resolveVirtualDaaScore(nil, utxos: utxos)
+        return WalletService.shared.unreservedUtxos(WalletService.spendableUtxos(utxos, virtualDaaScore: virtualDaaScore))
+    }
+
+    /// An address's script length for pricing; 34 (P2PK) when there's no valid address yet.
+    private static func scriptLength(of address: String?) -> Int {
+        address.flatMap { KaspaAddress.scriptPublicKey(from: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }?.count ?? 34
     }
 
     /// Live quoted fee rate (sompi per mass-gram), matching Android's ColdStorageSendEngine:
@@ -540,7 +587,7 @@ final class ColdStorageSendEngine {
             payload: unsignedTx.transaction.payload
         )
 
-        let (txId, _) = try await NodePoolService.shared.submitTransaction(signedTx, allowOrphan: false)
+        let (txId, _) = try await NodePoolService.shared.submitTransaction(signedTx, allowOrphan: false, escalateOrphan: false)
         return txId
     }
 }

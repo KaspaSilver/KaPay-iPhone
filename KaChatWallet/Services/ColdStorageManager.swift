@@ -102,8 +102,11 @@ final class ColdStorageManager: ObservableObject {
 
     private var storageKey: String? {
         guard let activeWalletAddress else { return nil }
-        let sanitized = activeWalletAddress.replacingOccurrences(of: ":", with: "_")
-        return "\(storageKeyPrefix)\(sanitized)"
+        return walletStorageKey(for: activeWalletAddress)
+    }
+
+    private func walletStorageKey(for walletAddress: String) -> String {
+        "\(storageKeyPrefix)\(walletAddress.replacingOccurrences(of: ":", with: "_"))"
     }
 
     // MARK: - Import / management
@@ -135,6 +138,7 @@ final class ColdStorageManager: ObservableObject {
     func removeAccount(_ account: ColdStorageAccount) {
         accounts.removeAll { $0.id == account.id }
         saveAccounts()
+        removePerAccountData(of: [account])
     }
 
     /// Turns receive notifications on or off for one account (see `ColdStorageAccount.notifyOnReceive`).
@@ -630,15 +634,57 @@ final class ColdStorageManager: ObservableObject {
     /// account's labels/hidden-address state), used when a saved account is removed
     /// from the device entirely.
     func clearAllLocalData() {
-        let idsToClear = accounts.map { $0.id }
+        let removed = accounts
         if let storageKey {
             UserDefaults.standard.removeObject(forKey: storageKey)
         }
-        for id in idsToClear {
-            UserDefaults.standard.removeObject(forKey: addressLabelsKey(for: id))
-            UserDefaults.standard.removeObject(forKey: hiddenIndicesKey(for: id))
-            UserDefaults.standard.removeObject(forKey: addressBalancesKey(for: id))
-        }
         accounts = []
+        removePerAccountData(of: removed)
+    }
+
+    /// `clearAllLocalData` for any wallet, read from its own key: never switched to, so the
+    /// one-time migration above can't hand the pre-per-wallet list to an account being removed.
+    func removeAllData(forWalletAddress walletAddress: String) {
+        guard let normalized = normalizeWalletAddress(walletAddress) else { return }
+        let key = walletStorageKey(for: normalized)
+        let stored = UserDefaults.standard.data(forKey: key)
+            .flatMap { try? JSONDecoder().decode([ColdStorageAccount].self, from: $0) } ?? []
+        UserDefaults.standard.removeObject(forKey: key)
+        if activeWalletAddress == normalized { accounts = [] }
+        removePerAccountData(of: stored)
+    }
+
+    /// What each removed account filed besides the list: its labels, hidden indexes, balances,
+    /// and the UTXO labels filed under its addresses. Those go only when no other wallet on
+    /// this device still holds the same kpub, since they're filed by address.
+    private func removePerAccountData(of removed: [ColdStorageAccount]) {
+        guard !removed.isEmpty else { return }
+        let defaults = UserDefaults.standard
+        for account in removed {
+            defaults.removeObject(forKey: addressLabelsKey(for: account.id))
+            defaults.removeObject(forKey: hiddenIndicesKey(for: account.id))
+            defaults.removeObject(forKey: addressBalancesKey(for: account.id))
+        }
+        let utxoPrefix = utxoLabelsKey(for: "")
+        let stored = defaults.dictionaryRepresentation()
+        var labelled = Set(stored.keys.filter { $0.hasPrefix(utxoPrefix) }.map { String($0.dropFirst(utxoPrefix.count)) })
+        guard !labelled.isEmpty else { return }
+        let keptKpubs = Set(stored.flatMap { key, value -> [String] in
+            guard key.hasPrefix(storageKeyPrefix), let data = value as? Data,
+                  let others = try? JSONDecoder().decode([ColdStorageAccount].self, from: data) else { return [] }
+            return others.map(\.kpubString)
+        })
+        for account in removed where !keptKpubs.contains(account.kpubString) {
+            guard let extendedKey = KaspaExtendedPublicKey(kpubString: account.kpubString) else { continue }
+            for network in NetworkType.allCases {
+                for index in 0...max(account.maxAddressIndex, 0) {
+                    guard !labelled.isEmpty else { return }
+                    guard let address = try? extendedKey.receiveAddress(at: UInt32(index), network: network) else { break }
+                    if labelled.remove(address) != nil {
+                        defaults.removeObject(forKey: utxoLabelsKey(for: address))
+                    }
+                }
+            }
+        }
     }
 }

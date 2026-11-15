@@ -9,7 +9,7 @@
 KACHAT_BUILD_NUMBER = 1
 KACHAT_IS_RELEASE = NO
 CURRENT_PROJECT_VERSION = 1
-MARKETING_VERSION = 5.2.3
+MARKETING_VERSION = 5.3
 
 // Apple Generic Versioning, so `agvtool` can set CURRENT_PROJECT_VERSION if a build script
 // ever needs to.

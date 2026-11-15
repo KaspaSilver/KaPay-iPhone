@@ -485,13 +485,13 @@ enum KachatNames {
         /// What `extend(years)` leaves: the same period start, the expiry `years` periods later.
         func extended(_ years: Int64, periodMs: Int64) -> NameFields {
             NameFields(key: key, paddedName: paddedName, owner: owner, price: price, periodStart: periodStart,
-                       expiresAt: expiresAt + years * periodMs)
+                       expiresAt: KachatNames.clampedSum(expiresAt, KachatNames.clampedProduct(years, periodMs)))
         }
 
         /// What `renew(years)` leaves: a new period from the old expiry, so no time is lost or gained.
         func renewed(_ years: Int64, periodMs: Int64) -> NameFields {
             NameFields(key: key, paddedName: paddedName, owner: owner, price: price, periodStart: expiresAt,
-                       expiresAt: expiresAt + years * periodMs)
+                       expiresAt: KachatNames.clampedSum(expiresAt, KachatNames.clampedProduct(years, periodMs)))
         }
     }
 

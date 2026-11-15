@@ -424,14 +424,32 @@ struct NodeRecord: Codable, Identifiable {
         health.latencyMs.value ?? health.globalLatencyMs.value ?? Double.infinity
     }
 
+    /// Health and profile alone. The registry's rebalance also requires the reported network to be
+    /// this one and the DAA score not to lag (`NodeRegistry.isActiveEligible`).
     var isActiveEligible: Bool {
         profile.lastProfiledAt != nil &&
         profile.isSynced == true &&
         profile.peerInfoOk == true &&
+        profile.networkName?.isEmpty == false &&
         health.consecutiveSuccesses >= 2 &&
         health.consecutiveFailures < 2 &&
         !health.isQuarantined &&
         !health.isCircuitOpen
+    }
+
+    /// How far (in DAA score) an active node may trail the pool's median: about a minute at 10
+    /// blocks a second, past where `NodeSelector`'s lag penalty stops growing (5 x 100).
+    static let maxActiveDaaLag: UInt64 = 600
+
+    /// The node's reported DAA score carried forward to `now` (10 a second), so nodes profiled
+    /// minutes apart compare fairly. Nil when the report is missing or past its TTL.
+    func projectedDaaScore(at now: Date) -> UInt64? {
+        guard let daa = profile.virtualDaaScore,
+              let profiledAt = profile.lastProfiledAt else { return nil }
+        let age = now.timeIntervalSince(profiledAt)
+        guard age >= 0, age <= profile.profileTTL else { return nil }
+        let (projected, overflow) = daa.addingReportingOverflow(UInt64(age * 10))
+        return overflow ? UInt64.max : projected
     }
 
     init(endpoint: Endpoint, origin: NodeOrigin = .discovered) {

@@ -161,7 +161,7 @@ struct SettingsView: View {
     /// The seed phrase, behind the biometric gate when enabled.
     private func unlockSeedPhrase(_ show: @escaping () -> Void) {
         if settingsViewModel.settings.biometricSeedPhraseEnabled {
-            DeviceAuth.authenticate(reason: "Unlock to view your 12 or 24 words", onSuccess: show)
+            DeviceAuth.authenticate(reason: AppLocalization.string("Unlock to view your 12 or 24 words"), onSuccess: show)
         } else {
             show()
         }
@@ -1731,7 +1731,7 @@ struct ConnectionSettingsView: View {
                     Text(verbatim: tld.suffix)
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text(tld.apiBaseURL(for: settingsViewModel.settings.networkType) ?? String(localized: "Not available on this network"))
+                    Text(tld.apiBaseURL(for: settingsViewModel.settings.networkType) ?? AppLocalization.string("Not available on this network"))
                         .font(.system(.body, design: .monospaced))
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
@@ -3337,9 +3337,13 @@ struct CacheSettingsPage: View {
         .task { await cache.refreshSizes() }
         .sheet(item: $pendingClear) { category in
             ConfirmActionSheet(
-                title: "Clear \(category.title)?",
+                title: String(format: AppLocalization.string("Clear %@?"), locale: AppLocalization.locale, category.title),
                 confirmTitle: "Clear",
-                confirmSubtitle: "\(CacheManager.formatted(cache.sizes[category] ?? 0)) freed. \(category.detail)",
+                confirmSubtitle: String(
+                    format: AppLocalization.string("%@ freed. %@"),
+                    locale: AppLocalization.locale,
+                    CacheManager.formatted(cache.sizes[category] ?? 0), category.detail
+                ),
                 confirmSystemImage: "trash"
             ) {
                 Task { await cache.clear(category) }
@@ -3349,7 +3353,11 @@ struct CacheSettingsPage: View {
             ConfirmActionSheet(
                 title: "Clear All Cache?",
                 confirmTitle: "Clear All",
-                confirmSubtitle: "Frees \(CacheManager.formatted(cache.totalBytes)). Your contacts and keys are not touched.",
+                confirmSubtitle: String(
+                    format: AppLocalization.string("Frees %@. Your contacts and keys are not touched."),
+                    locale: AppLocalization.locale,
+                    CacheManager.formatted(cache.totalBytes)
+                ),
                 confirmSystemImage: "trash"
             ) {
                 Task { await cache.clearAll() }

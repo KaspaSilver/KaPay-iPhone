@@ -31,7 +31,7 @@ struct MainTabView: View {
                         // Single Label whose VALUES vary (no structural if) - conditional tabItem
                         // content churns the tab bar's identity on every render.
                         Label {
-                            Text(tab.label)
+                            Text(LocalizedStringKey(tab.label))
                         } icon: {
                             // Values vary, structure does not - the comment above is why this is
                             // one Label with a varying image rather than two Labels behind an if.
@@ -202,11 +202,20 @@ struct MainTabView: View {
     /// is delivered before this view exists (the app is still on the loading/onboarding route),
     /// so its tab switch is lost while the pending target survives. The destination screens
     /// consume the target itself; this only puts the user on the tab that mounts them.
-    /// Opens the address a tapped "Received" notification named, over whatever tab is showing.
+    /// Opens the address a tapped "Received" notification named, over whatever tab is showing,
+    /// once nothing else is presented there (a sheet asked for over another one never shows).
+    /// The route stays pending until the sheet appears (`OwnAddressSheetPresenter`).
     private func takeOwnAddressRoute() {
         guard let address = OwnAddressRoute.pending else { return }
-        OwnAddressRoute.pending = nil
-        ownAddressSheet = OwnAddressSheetTarget(address: address)
+        // Already on screen.
+        if ownAddressSheet?.address == address {
+            OwnAddressRoute.pending = nil
+            return
+        }
+        DockSheetGate.whenUncovered {
+            guard let address = OwnAddressRoute.pending else { return }
+            ownAddressSheet = OwnAddressSheetTarget(address: address)
+        }
     }
 
     private func consumePendingNotificationRoute() {
@@ -357,7 +366,36 @@ private struct OwnAddressSheetPresenter: ViewModifier {
                     .environmentObject(WalletService.shared)
                     .environmentObject(settingsViewModel)
                     .environmentObject(WalletManager.shared)
+                    // On screen: the tap is answered.
+                    .onAppear {
+                        if OwnAddressRoute.pending == target.address { OwnAddressRoute.pending = nil }
+                    }
             }
+    }
+}
+
+/// SwiftUI can't present a sheet from the dock while a tab (or another dock sheet) already has
+/// one up: it drops it without a word. `whenUncovered` waits until nothing is presented over the
+/// dock, then presents.
+@MainActor
+enum DockSheetGate {
+    /// Whether a sheet or full-screen cover is up in a window on screen (a tapped notification
+    /// can arrive while the scene is still becoming active).
+    static var isCovered: Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive }
+            .flatMap(\.windows)
+            .contains { $0.rootViewController?.presentedViewController != nil }
+    }
+
+    static func whenUncovered(_ present: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            while isCovered {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+            present()
+        }
     }
 }
 

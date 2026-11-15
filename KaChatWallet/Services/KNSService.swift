@@ -834,50 +834,57 @@ final class KNSService: NSObject, ObservableObject, URLSessionTaskDelegate {
     ///   - network: Network type (mainnet or testnet) - ignored, uses settings
     /// - Returns: KNSDomainResolution with owner address, or nil if not found
     func resolveDomain(_ domain: String, network: NetworkType = .mainnet) async -> KNSDomainResolution? {
+        await resolveDomainLookup(domain, network: network).resolution
+    }
+
+    /// `resolveDomain`, telling a lookup that couldn't be made (`failed`: KNS unreachable, an odd
+    /// answer) from a domain with no owner.
+    func resolveDomainLookup(_ domain: String, network: NetworkType = .mainnet) async -> (resolution: KNSDomainResolution?, failed: Bool) {
         // Ensure domain has .kas suffix
         let fullDomain = domain.lowercased().hasSuffix(".kas") ? domain.lowercased() : "\(domain.lowercased()).kas"
 
         // URL encode the domain name
         guard let encodedDomain = fullDomain.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
-            return nil
+            return (nil, false)
         }
 
-        guard var components = URLComponents(string: baseURL) else { return nil }
+        guard var components = URLComponents(string: baseURL) else { return (nil, true) }
         components.path += "/\(encodedDomain)/owner"
-        guard let url = components.url else { return nil }
+        guard let url = components.url else { return (nil, false) }
 
         do {
             let (data, response) = try await fetchData(from: url)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                return nil
+                return (nil, true)
             }
 
             // 404 means domain not found
             if httpResponse.statusCode == 404 {
-                return nil
+                return (nil, false)
             }
 
             guard httpResponse.statusCode == 200 else {
-                return nil
+                return (nil, true)
             }
 
             let result = try JSONDecoder().decode(KNSDomainOwnerResponse.self, from: data)
             guard result.success,
                   let ownerData = result.data,
-                  let ownerAddress = ownerData.owner,
-                  ownerData.asset == fullDomain else {
-                return nil
+                  let ownerAddress = ownerData.owner else {
+                return (nil, false)
             }
+            // an answer for another domain is no answer
+            guard ownerData.asset == fullDomain else { return (nil, true) }
 
-            return KNSDomainResolution(
+            return (KNSDomainResolution(
                 domain: fullDomain,
                 ownerAddress: ownerAddress,
                 inscriptionId: ownerData.id
-            )
+            ), false)
         } catch {
             AppLog.log("[KNS] Domain resolution error for %@: %@", domain, error.localizedDescription)
-            return nil
+            return (nil, true)
         }
     }
 
@@ -2320,16 +2327,16 @@ enum KNSProfileFieldKey: String, CaseIterable, Codable {
 
     var displayName: String {
         switch self {
-        case .redirectUrl: return String(localized: "Redirect")
-        case .avatarUrl: return String(localized: "Avatar")
-        case .bannerUrl: return String(localized: "Banner")
-        case .bio: return String(localized: "Bio")
-        case .x: return String(localized: "X")
-        case .website: return String(localized: "Website")
-        case .telegram: return String(localized: "Telegram")
-        case .discord: return String(localized: "Discord")
-        case .contactEmail: return String(localized: "Email")
-        case .github: return String(localized: "GitHub")
+        case .redirectUrl: return AppLocalization.string("Redirect")
+        case .avatarUrl: return AppLocalization.string("Avatar")
+        case .bannerUrl: return AppLocalization.string("Banner")
+        case .bio: return AppLocalization.string("Bio")
+        case .x: return AppLocalization.string("X")
+        case .website: return AppLocalization.string("Website")
+        case .telegram: return AppLocalization.string("Telegram")
+        case .discord: return AppLocalization.string("Discord")
+        case .contactEmail: return AppLocalization.string("Email")
+        case .github: return AppLocalization.string("GitHub")
         }
     }
 }
@@ -2605,9 +2612,11 @@ private struct KNSPagination: Codable {
 /// node refused it) those coins stay at a script nothing else knows about. Each commit is filed
 /// here before it is sent and the reveal is tried again when the app becomes active.
 ///
-/// Only for an hour: the reveal performs what the person asked for (a transfer, a profile change),
-/// and doing that long after they saw it fail would be a surprise. Nothing secret is filed; the
-/// key is read from the Keychain at the time.
+/// The reveal is sent by itself only for an hour: it performs what the person asked for (a
+/// transfer, a profile change), and days later that could undo a newer choice. The record is the
+/// only copy of the redeem script that frees those coins, though, so it stays until the commit is
+/// spent; one whose commit never reached the chain goes after 30 days and two empty checks.
+/// Nothing secret is filed; the key is read from the Keychain at the time.
 @MainActor
 enum KNSRevealRecovery {
     private struct Pending: Codable {
@@ -2626,10 +2635,19 @@ enum KNSRevealRecovery {
         var revealTargetAddress: String
         var priorityFeeSompi: UInt64?
         var createdAt: Date
+        /// A node has shown the commit: once it is gone again, it was spent.
+        var seenOnChain: Bool? = nil
+        /// Checks past `abandonAfter` that found no commit.
+        var misses: Int? = nil
+        /// Checks in a row that found a seen commit gone (one lagging node mustn't drop the record).
+        var goneChecks: Int? = nil
     }
 
     private static let storeKey = "kachat_kns_pending_reveals_v1"
-    private static let maxAge: TimeInterval = 3600
+    /// A commit never seen on chain by then never got there.
+    private static let abandonAfter: TimeInterval = 30 * 86_400
+    /// How long the reveal is still sent by itself.
+    private static let autoRevealWindow: TimeInterval = 3600
     /// Commits whose own send is still running: it does the reveal itself.
     private static var inFlow: Set<String> = []
     private static var resuming = false
@@ -2681,21 +2699,46 @@ enum KNSRevealRecovery {
         save(load().filter { $0.commitTxId != id })
     }
 
-    /// Sends the reveal of any commit left on chain with none, for the signed-in account.
+    private static func update(_ id: String, _ change: (inout Pending) -> Void) {
+        var list = load()
+        guard let i = list.firstIndex(where: { $0.commitTxId == id }) else { return }
+        change(&list[i])
+        save(list)
+    }
+
+    /// Sends the reveal of any commit left on chain with none, for the signed-in account, and
+    /// drops the records whose commit is spent (or never got there).
     static func resume() async {
-        guard !resuming, let wallet = WalletManager.shared.currentWallet?.publicAddress else { return }
+        guard !resuming else { return }
         resuming = true
         defer { resuming = false }
-        let now = Date()
-        // an hour on, the action is dropped (see above)
-        let expired = load().filter { now.timeIntervalSince($0.createdAt) > maxAge }
-        for p in expired { AppLog.log("[KNS] gave up on the reveal of commit %@", String(p.commitTxId.prefix(12))) }
-        if !expired.isEmpty { save(load().filter { now.timeIntervalSince($0.createdAt) <= maxAge }) }
-        for p in load() where p.wallet == wallet && !inFlow.contains(p.commitTxId) {
-            // not landed yet, or already spent by its reveal: an empty answer is either
-            guard let utxos = try? await NodePoolService.shared.getUtxosByAddresses([p.commitAddress]),
-                  utxos.contains(where: { $0.outpoint.transactionId.lowercased() == p.commitTxId.lowercased() && $0.outpoint.index == p.commitOutputIndex }),
-                  WalletManager.shared.currentWallet?.publicAddress == wallet else { continue }
+        let wallet = WalletManager.shared.currentWallet?.publicAddress
+        for p in load() where !inFlow.contains(p.commitTxId) {
+            // only a node's answer counts: none says nothing
+            guard let utxos = try? await NodePoolService.shared.getUtxosByAddresses([p.commitAddress]) else { continue }
+            let onChain = utxos.contains { $0.outpoint.transactionId.lowercased() == p.commitTxId.lowercased() && $0.outpoint.index == p.commitOutputIndex }
+            guard onChain else {
+                if p.seenOnChain == true {
+                    // seen before and gone twice in a row: its reveal spent it (here or on another device)
+                    let gone = (p.goneChecks ?? 0) + 1
+                    if gone >= 2 { finished(p.commitTxId) } else { update(p.commitTxId) { $0.goneChecks = gone } }
+                } else if Date().timeIntervalSince(p.createdAt) > abandonAfter {
+                    let misses = (p.misses ?? 0) + 1
+                    if misses >= 2 {
+                        AppLog.log("[KNS] commit %@ never reached the chain: dropped", String(p.commitTxId.prefix(12)))
+                        finished(p.commitTxId)
+                    } else {
+                        update(p.commitTxId) { $0.misses = misses }
+                    }
+                }
+                continue
+            }
+            if p.seenOnChain != true || p.goneChecks != nil {
+                update(p.commitTxId) { $0.seenOnChain = true; $0.goneChecks = nil }
+            }
+            guard Date().timeIntervalSince(p.createdAt) <= autoRevealWindow,
+                  let wallet, p.wallet == wallet, WalletManager.shared.currentWallet?.publicAddress == wallet,
+                  !inFlow.contains(p.commitTxId) else { continue }
             let key = p.ownerSpendingIndex.map { WalletManager.shared.spendingPrivateKey(at: $0) } ?? WalletManager.shared.getPrivateKey()
             guard let key else { continue }
             do {

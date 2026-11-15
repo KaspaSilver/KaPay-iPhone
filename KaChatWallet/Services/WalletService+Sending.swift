@@ -28,11 +28,12 @@ extension WalletService {
         guard amountSompi > 0 else {
             throw KasiaError.networkError("Amount must be greater than zero")
         }
-        guard KaspaAddress.scriptPublicKey(from: toAddress) != nil else {
-            throw KasiaError.invalidAddress
-        }
         // the script ignores the prefix: a kaspatest: address on mainnet would pay real KAS
         if let reason = KaspaAddress.otherNetworkReason(toAddress) { throw KasiaError.networkError(reason) }
+        // whatever handed it over (a name service, a link), only a valid address of this network
+        guard KaspaAddress.isValidOnActiveNetwork(toAddress) else {
+            throw KasiaError.invalidAddress
+        }
         guard let wallet = WalletManager.shared.currentWallet else {
             throw KasiaError.walletNotFound
         }
@@ -77,7 +78,8 @@ extension WalletService {
                 senderPrivateKey: privateKey,
                 utxos: spendable,
                 manualUtxos: resolvedManualUtxos,
-                extraFeeSompi: extraFeeSompi
+                extraFeeSompi: extraFeeSompi,
+                leadingOutpoint: self.conflictingOutpoint(in: spendable)
             )
             try self.checkFeeAgainstReview(tx, spending: spendable, expectedFeeSompi: expectedFeeSompi)
 
@@ -87,7 +89,8 @@ extension WalletService {
             do {
                 (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false, escalateOrphan: false)
             } catch let unknown as SendOutcomeUnknownError {
-                // No hold on its coins: a resend then picks the same ones, so at most one can land.
+                // No hold on its coins: a resend, or the next send, spends one of the same ones
+                // (`conflictingOutpoint`), so at most one can land.
                 self.dropUtxoCache()
                 throw unknown
             }
@@ -120,7 +123,8 @@ extension WalletService {
             recipientScriptPubKey: recipientScriptPubKey,
             senderScriptPubKey: senderScriptPubKey,
             manualUtxos: resolvedManualUtxos,
-            extraFeeSompi: extraFeeSompi
+            extraFeeSompi: extraFeeSompi,
+            leadingOutpoint: conflictingOutpoint(in: spendable)
         )
     }
 
@@ -151,6 +155,7 @@ extension WalletService {
         let maxSet = resolvedManualUtxos ?? chunk ?? spendable
 
         let totalBalance = try maxSet.totalAmount()
+        let leadingOutpoint = conflictingOutpoint(in: spendable)
 
         let amount = try Self.maxSendAmount(
             total: totalBalance,
@@ -172,7 +177,8 @@ extension WalletService {
                     amount: sompi,
                     recipientScriptPubKey: recipientScriptPubKey,
                     senderScriptPubKey: senderScriptPubKey,
-                    manualUtxos: resolvedManualUtxos
+                    manualUtxos: resolvedManualUtxos,
+                    leadingOutpoint: leadingOutpoint
                 ))?.networkFee
             }
         )
@@ -230,42 +236,43 @@ extension WalletService {
         guard amountSompi > 0 else {
             throw KasiaError.networkError("Amount must be greater than zero")
         }
-        guard KaspaAddress.scriptPublicKey(from: toAddress) != nil else {
-            throw KasiaError.invalidAddress
-        }
         // the script ignores the prefix: a kaspatest: address on mainnet would pay real KAS
         if let reason = KaspaAddress.otherNetworkReason(toAddress) { throw KasiaError.networkError(reason) }
+        // whatever handed it over (a name service, a link), only a valid address of this network
+        guard KaspaAddress.isValidOnActiveNetwork(toAddress) else {
+            throw KasiaError.invalidAddress
+        }
         guard let fromAddress = WalletManager.shared.spendingAddress(at: index),
               let privateKey = WalletManager.shared.spendingPrivateKey(at: index) else {
             throw KasiaError.keychainError("Could not derive this spending address")
         }
-        // Fresh change index for the primary only: past the all-time max, so it has never been
-        // revealed, funded or offered (the same rule as a .kas transfer). Decided up
-        // front and applied only after the node accepts the transaction, so a failed send moves
-        // nothing. If the fresh address cannot be derived this instant, change stays put and
-        // the primary stays put with it - rotating onto an address the change did not reach
-        // would strand the funds behind a pointer. A self-send (the Compound action) moves
-        // nothing out of the address, so it neither splits its consolidation onto a fresh
-        // address nor rotates.
-        var freshChangeIndex: Int?
-        var changeAddress: String?
-        let isSelfSend = toAddress.lowercased() == fromAddress.lowercased()
-        // A quantum source's change must NEVER return to it - the spend reveals its key, and
-        // change back would park funds on a revealed address (KIP-22). A legacy primary keeps
-        // rotating as before; both rotate onto a fresh quantum slot now. A self-send (Compound)
-        // still consolidates into the address itself, shield off.
-        let isPrimary = index == WalletManager.shared.currentSpendingAddressIndex
-        if !isSelfSend, WalletManager.isQuantumIndex(index) || isPrimary {
-            if let slot = await WalletManager.shared.verifiedFreshQuantumSlot() {
-                freshChangeIndex = slot.index
-                changeAddress = slot.address
-            } else if WalletManager.isQuantumIndex(index) {
-                // never change back onto the key this spend reveals (IOS-104)
-                throw KasiaError.keychainError(AppLocalization.string("Couldn't prepare the next address. Try again."))
-            }
-        }
-
         return try await enqueueOutgoingTxOperation {
+            // Fresh change index for the primary only: past the all-time max, so it has never been
+            // revealed, funded or offered (the same rule as a .kas transfer). Picked inside the
+            // queue, so a send waiting behind another can't get the same slot, and applied only
+            // after the node accepts the transaction, so a failed send moves nothing. If the fresh address cannot be derived this instant, change stays put and
+            // the primary stays put with it - rotating onto an address the change did not reach
+            // would strand the funds behind a pointer. A self-send (the Compound action) moves
+            // nothing out of the address, so it neither splits its consolidation onto a fresh
+            // address nor rotates.
+            var freshChangeIndex: Int?
+            var changeAddress: String?
+            let isSelfSend = toAddress.lowercased() == fromAddress.lowercased()
+            // A quantum source's change must NEVER return to it - the spend reveals its key, and
+            // change back would park funds on a revealed address (KIP-22). A legacy primary keeps
+            // rotating as before; both rotate onto a fresh quantum slot now. A self-send (Compound)
+            // still consolidates into the address itself, shield off.
+            let isPrimary = index == WalletManager.shared.currentSpendingAddressIndex
+            if !isSelfSend, WalletManager.isQuantumIndex(index) || isPrimary {
+                if let slot = await WalletManager.shared.verifiedFreshQuantumSlot() {
+                    freshChangeIndex = slot.index
+                    changeAddress = slot.address
+                } else if WalletManager.isQuantumIndex(index) {
+                    // never change back onto the key this spend reveals (IOS-104)
+                    throw KasiaError.keychainError(AppLocalization.string("Couldn't prepare the next address. Try again."))
+                }
+            }
+
             let rpcManager = NodePoolService.shared
             let settings = self.currentSettings
 
@@ -321,15 +328,17 @@ extension WalletService {
                 extraFeeSompi: extraFeeSompi,
                 changeAddress: changeAddress,
                 virtualDaaScore: vds,
-                senderRedeemScript: senderRedeemScript
+                senderRedeemScript: senderRedeemScript,
+                leadingOutpoint: self.conflictingOutpoint(in: spendable)
             )
             try self.checkFeeAgainstReview(tx, spending: spendable, expectedFeeSompi: expectedFeeSompi)
 
             AppLog.log("[WalletService] Submitting spending-address withdrawal via RPC manager...")
             @MainActor func noteSpend(outcomeKnown: Bool) async {
                 // Its coins stay out of the next send from this address until the spend is in a
-                // block. Not when the outcome is unknown: a resend must pick the same coins, so
-                // that at most one of the two can land.
+                // block. Not when the outcome is unknown: a resend must pick the same coins, and
+                // the next send spends one of them (`conflictingOutpoint`), so that at most one
+                // of the two can land.
                 if outcomeKnown { self.recordSpend(tx) } else { self.dropUtxoCache() }
                 // the session's "never used" answer for these is out of date now
                 self.markSpendingAddressUsed(fromAddress)
@@ -375,6 +384,8 @@ extension WalletService {
     /// compound with a bare "No spendable UTXOs" (the old `!isCoinbase` filter dropped them all).
     static func spendableUtxos(_ utxos: [UTXO], virtualDaaScore: UInt64?) -> [UTXO] {
         utxos.filter { utxo in
+            // a covenant-bound coin (a .kachat name) can't go into a plain send
+            guard utxo.covenantId == nil else { return false }
             guard utxo.isCoinbase else { return true }
             guard let vds = virtualDaaScore else { return true }
             // overflow (a nonsense DAA score from a node) counts as not yet mature
@@ -464,7 +475,8 @@ extension WalletService {
             extraFeeSompi: extraFeeSompi,
             virtualDaaScore: vds,
             signatureScriptSize: WalletManager.isQuantumIndex(index)
-                ? KasiaTransactionBuilder.kip22SignatureScriptSize : 66
+                ? KasiaTransactionBuilder.kip22SignatureScriptSize : 66,
+            leadingOutpoint: conflictingOutpoint(in: spendable)
         )
     }
 
@@ -510,6 +522,7 @@ extension WalletService {
         let totalBalance = try maxSet.totalAmount()
         let signatureScriptSize = WalletManager.isQuantumIndex(index)
             ? KasiaTransactionBuilder.kip22SignatureScriptSize : 66
+        let leadingOutpoint = conflictingOutpoint(in: spendable)
 
         let amount = try Self.maxSendAmount(
             total: totalBalance,
@@ -535,7 +548,8 @@ extension WalletService {
                     senderScriptPubKey: senderScriptPubKey,
                     manualUtxos: resolvedManualUtxos,
                     virtualDaaScore: vds,
-                    signatureScriptSize: signatureScriptSize
+                    signatureScriptSize: signatureScriptSize,
+                    leadingOutpoint: leadingOutpoint
                 ))?.networkFee
             }
         )
@@ -605,7 +619,7 @@ extension WalletService {
     /// rewards, and not just spent by this app (`unreservedUtxos`). Compound, the send's Available
     /// and Coin Control count the same coins the send does.
     func withdrawalSpendable(_ utxos: [UTXO]) -> [UTXO] {
-        unreservedUtxos(utxos.filter { $0.blockDaaScore > 0 && !$0.isCoinbase })
+        unreservedUtxos(utxos.filter { $0.blockDaaScore > 0 && !$0.isCoinbase && $0.covenantId == nil })
     }
 
     private func withdrawalSpendableUtxos(for address: String) async throws -> [UTXO] {
@@ -646,6 +660,41 @@ extension WalletService {
             reservedOutpoints[key] = until
         }
         dropUtxoCache()
+    }
+
+    /// Holds a submit's coins while it is out, so a send running alongside can't pick them too.
+    /// Returns the ones it added (not already held), for `releaseOutpoints` if nothing went out.
+    func holdOutpointsForSubmit(_ keys: [String]) -> [String] {
+        let now = Date()
+        let added = keys.filter { (reservedOutpoints[$0] ?? .distantPast) <= now }
+        reserveOutpoints(added)
+        return added
+    }
+
+    func releaseOutpoints(_ keys: [String]) {
+        for key in keys {
+            reservedOutpoints.removeValue(forKey: key)
+        }
+    }
+
+    /// A send ended "Not confirmed": its coins, for `unknownOutcomeHold`.
+    func rememberUnknownOutcome(_ keys: [String]) {
+        let until = Date().addingTimeInterval(unknownOutcomeHold)
+        for key in keys {
+            unknownOutcomeOutpoints[key] = until
+        }
+    }
+
+    /// The coin an automatic send from these coins must spend first: the largest one a "Not
+    /// confirmed" send also spent, so the two conflict and at most one can land. nil if none is left.
+    func conflictingOutpoint(in spendable: [UTXO]) -> String? {
+        let now = Date()
+        unknownOutcomeOutpoints = unknownOutcomeOutpoints.filter { $0.value > now }
+        guard !unknownOutcomeOutpoints.isEmpty else { return nil }
+        return spendable
+            .filter { unknownOutcomeOutpoints[Self.outpointKey($0.outpoint)] != nil }
+            .max { $0.amount < $1.amount }
+            .map { Self.outpointKey($0.outpoint) }
     }
 
     /// Whether an address has ever appeared in a transaction, independent of its current
