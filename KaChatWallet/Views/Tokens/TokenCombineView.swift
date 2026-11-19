@@ -98,7 +98,9 @@ struct TokenCombineView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
-        .task { if prepared == nil, sent == nil { await prepare() } }
+        // not `.task`: SwiftUI can cancel a view's task while a sheet settles, which surfaced as
+        // "CancellationError" mid-build; this build runs to the end either way
+        .onAppear { if prepared == nil, sent == nil, !isPreparing { Task { await prepare() } } }
     }
 
     private func line(_ title: LocalizedStringKey, _ value: String, bold: Bool = false, placeholder: Bool = false) -> some View {
@@ -113,17 +115,26 @@ struct TokenCombineView: View {
         }
     }
 
-    private func prepare() async {
+    private func prepare(attempt: Int = 0) async {
         guard !isPreparing else { return }
         isPreparing = true
         prepareError = nil
         defer { isPreparing = false }
         do {
             prepared = try await KusdtTransfer.prepareCombine(holding: holding, coins: tokens.coins(of: holding))
+        } catch let error where Self.isCancellation(error) && attempt < 2 {
+            // a lookup cut short, not a refusal: build again
+            isPreparing = false
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            await prepare(attempt: attempt + 1)
         } catch {
             prepared = nil
             prepareError = error.localizedDescription
         }
+    }
+
+    static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
     }
 
     private func send() {

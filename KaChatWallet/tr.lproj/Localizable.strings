@@ -2241,3 +2241,5 @@
 "Combined Coins" = "Coin’ler Birleştirildi";
 "No %@ activity yet." = "Henüz %@ hareketi yok.";
 "Sends, receives and combines on this phone show here from now on." = "Bu telefondaki gönderimler, alımlar ve birleştirmeler bundan sonra burada görünür.";
+"Send to Chatting Address" = "Sohbet Adresine Gönder";
+"Moves Kaspa from this address to your Chatting Address." = "Bu adresteki Kaspa’yı Sohbet Adresine taşır.";

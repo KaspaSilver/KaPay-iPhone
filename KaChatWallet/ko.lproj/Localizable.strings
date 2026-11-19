@@ -2241,3 +2241,5 @@
 "Combined Coins" = "코인 합침";
 "No %@ activity yet." = "아직 %@ 활동이 없어요.";
 "Sends, receives and combines on this phone show here from now on." = "이제부터 이 휴대폰에서 보내고 받고 합친 내역이 여기에 표시돼요.";
+"Send to Chatting Address" = "채팅 주소로 보내기";
+"Moves Kaspa from this address to your Chatting Address." = "이 주소의 Kaspa를 채팅 주소로 옮겨요.";

@@ -2241,3 +2241,5 @@
 "Combined Coins" = "Монеты объединены";
 "No %@ activity yet." = "Операций с %@ пока нет.";
 "Sends, receives and combines on this phone show here from now on." = "Отправки, получения и объединения на этом телефоне будут видны здесь с этого момента.";
+"Send to Chatting Address" = "Отправить на адрес для чата";
+"Moves Kaspa from this address to your Chatting Address." = "Переводит Kaspa с этого адреса на ваш адрес для чата.";

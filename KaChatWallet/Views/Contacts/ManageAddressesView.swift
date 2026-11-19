@@ -23,6 +23,9 @@ struct ManageAddressesView: View {
     @State private var isDiscovering = false
     @State private var errorMessage: String?
     @State private var qrTarget: SpendingAddressEntry?
+    /// A row's ⋮ > Send to Chatting Address: Send Kaspa from that address, the Chatting Address
+    /// filled in as the recipient.
+    @State private var sendToChattingTarget: SpendingAddressEntry?
     @State private var renameTarget: SpendingAddressEntry?
     @State private var renameText = ""
     @State private var toastMessage: String?
@@ -119,6 +122,16 @@ struct ManageAddressesView: View {
             addressRowActionsSheet(entry)
                 .fittedSheetDetents(rowActionsSheetHeight(entry))
                 .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $sendToChattingTarget) { entry in
+            if let wallet = WalletManager.shared.currentWallet {
+                WithdrawKaspaView(fromAddress: wallet.publicAddress, availableBalanceSompi: entry.balanceSompi,
+                                  prefillAddress: wallet.publicAddress,
+                                  lockedSource: .spending(index: entry.index, address: entry.address,
+                                                          label: entry.displayLabel)) {
+                    reloadEntries()
+                }
+            }
         }
         .sheet(isPresented: $showVisibilityManager, onDismiss: {
             // Apply the visibility edits to the rows we already have IMMEDIATELY -
@@ -575,7 +588,7 @@ struct ManageAddressesView: View {
 
     /// Rows vary by address, so the detent has to as well - see `addressRowActionsSheet`.
     private func rowActionsSheetHeight(_ entry: SpendingAddressEntry) -> CGFloat {
-        let rows = 4
+        let rows = 5
         return CGFloat(120 + rows * 62)
     }
 
@@ -620,6 +633,16 @@ struct ManageAddressesView: View {
             ) {
                 addressActionsTarget = nil
                 DispatchQueue.main.async { qrTarget = entry }
+            }
+            // Send Kaspa from this address with the Chatting Address already the recipient
+            ActionSheetRow(
+                title: "Send to Chatting Address",
+                subtitle: "Moves Kaspa from this address to your Chatting Address.",
+                systemImage: "arrow.up.circle",
+                isDisabled: entry.balanceSompi == 0
+            ) {
+                addressActionsTarget = nil
+                DispatchQueue.main.async { sendToChattingTarget = entry }
             }
             // Hide straight from the row - same effect as unchecking it in Address Visibility,
             // without opening that screen. Any address, funded too: it comes back from there.

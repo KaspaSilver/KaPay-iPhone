@@ -294,7 +294,9 @@ P2PK) address (`WalletManager.freshReceiveAddress`, `lowestUnusedRegularAddress`
 still unused: a regular address takes kUSDT as well as Kaspa, and a quantum-resistant one can't trade
 it, so nobody puts tokens on one by mistake. Quantum-resistant addresses are made on purpose:
 Manage Addresses > Address Actions has Generate Non-Quantum Address and Generate Quantum-Resistant
-Address (`generateNew(quantum:)`, each recycling a hidden unused row of its own chain first). Change
+Address (`generateNew(quantum:)`, each recycling a hidden unused row of its own chain first). Each
+address row's ⋮ has Rename, Copy, Show QR Code, Send to Chatting Address (Send Kaspa from that
+address with the Chatting Address filled in; off with no balance) and Hide. Change
 still goes to fresh quantum slots. Every receive screen is the one shared screen, `AddressReceiveView`
 (`Views/Shared/`, from kUSDT's design): icon and "Receive …", optional choices, the address's name and
 balance, the QR on white, the whole address, a privacy note (`ReceiveNotes`: fresh, spending,

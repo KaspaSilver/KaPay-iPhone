@@ -430,7 +430,9 @@ struct TokenSendView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
-        .task { if prepared == nil, sent == nil { await prepare() } }
+        // not `.task`: SwiftUI can cancel a view's task while a sheet settles, which surfaced as
+        // "CancellationError" mid-build; this build runs to the end either way
+        .onAppear { if prepared == nil, sent == nil, !isPreparing { Task { await prepare() } } }
         .sheet(item: $fundingRequest, onDismiss: {
             // closed by Done after the send, or swiped away (maybe after sending): look either way
             let sent = funded
@@ -472,7 +474,7 @@ struct TokenSendView: View {
     }
 
     /// Builds and signs the transfer for what's on the review (no network yet but the coin reads).
-    private func prepare() async {
+    private func prepare(attempt: Int = 0) async {
         guard let from, let recipient, let amountUnits, !isPreparing else { return }
         isPreparing = true
         prepareError = nil
@@ -488,6 +490,11 @@ struct TokenSendView: View {
             fundShortfall = short
             fundForChangeCoin = forChangeCoin
             prepareError = KusdtTransfer.Failure.notEnoughKas(short: short, forChangeCoin: forChangeCoin).localizedDescription
+        } catch let error where TokenCombineView.isCancellation(error) && attempt < 2 {
+            // a lookup cut short, not a refusal: build again
+            isPreparing = false
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            await prepare(attempt: attempt + 1)
         } catch {
             prepared = nil
             fundShortfall = nil
