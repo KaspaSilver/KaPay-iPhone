@@ -384,6 +384,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
             return
         }
 
+        // A "Received kUSDT" notification: that token's Manage screen, on the Wallet tab.
+        if threadIdentifier == TokenWallet.notificationThread {
+            let token = content.userInfo["token"] as? String
+            Task { @MainActor in
+                TokenRoute.pending = token ?? WalletToken.kusdt.id
+                PendingTabRoute.pending = .profile
+                NotificationCenter.default.post(name: .openToken, object: nil)
+            }
+            completionHandler()
+            return
+        }
+
         // The app's own "Received" notification: open the address that got the Kaspa (main,
         // spending or cold storage - MainTabView works out which). `PendingTabRoute` and
         // `OwnAddressRoute` cover the cold start, where the post has no observer yet.
@@ -405,6 +417,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
 
         completionHandler()
     }
+}
+
+/// The token a tapped "Received" token notification opens (`TokenManageView`), for the Wallet tab to
+/// take. Survives a cold start, where the post has no observer yet.
+enum TokenRoute {
+    static var pending: String?
 }
 
 /// Cold-start handoff for a notification tap whose whole destination IS a dock tab (wallet
@@ -455,6 +473,8 @@ enum KaChatLinkRouter {
 
 extension Notification.Name {
     static let openPortfolio = Notification.Name("openPortfolio")
+    /// A token's Manage screen (a "Received kUSDT" notification): `TokenRoute.pending` names it.
+    static let openToken = Notification.Name("openToken")
     /// A `.kachat` name notification was tapped: the name is in `KachatDeepLink.pendingName`.
     static let openKachatName = Notification.Name("openKachatName")
     static let openColdStorage = Notification.Name("openColdStorage")

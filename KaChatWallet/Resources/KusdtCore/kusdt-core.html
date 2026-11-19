@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>kUSDT core</title></head>
+<body>
+<script type="module">
+// Trestly's kUSDT builders (kaspador/kusdt-open bridge/packages/core/pkg-web), run offline inside
+// KaPay: loaded only from the app (kusdt-core://), never from the network. KaPay calls
+// window.kusdtCore.run(command, requestJSON) and gets the answer's JSON back.
+import init, { run, version } from './kusdt_wasm.js';
+window.kusdtCore = { ready: false };
+init().then(() => {
+  window.kusdtCore = { ready: true, run: (command, request) => run(command, request), version: () => version() };
+  window.webkit.messageHandlers.kusdtCore.postMessage({ ready: true, version: version() });
+}).catch((e) => {
+  window.webkit.messageHandlers.kusdtCore.postMessage({ error: String(e) });
+});
+</script>
+</body>
+</html>

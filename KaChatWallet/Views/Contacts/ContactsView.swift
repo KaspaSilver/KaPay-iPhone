@@ -13,7 +13,6 @@ private struct WalletBalanceCard: View {
     let chattingSompi: UInt64?
     /// Every revealed spending address together. Nil until it's known, which shows as a dash.
     let spendingSompi: UInt64?
-    let onCopied: () -> Void
     @ObservedObject private var portfolio = PortfolioViewModel.shared
 
     var body: some View {
@@ -24,23 +23,19 @@ private struct WalletBalanceCard: View {
         }()
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Total Balance")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                Button {
-                    guard let total else { return }
-                    UIPasteboard.general.string = KaspaUnit.plain(total)
-                    Haptics.success()
-                    onCopied()
-                } label: {
-                    Text(verbatim: total.map(KaspaUnit.amount) ?? "--")
-                        .font(.largeTitle.weight(.bold))
-                        .foregroundColor(.primary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                HStack(spacing: 8) {
+                    Text("Total Balance")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer(minLength: 0)
+                    TapToManageLabel()
                 }
-                .buttonStyle(.plain)
+                Text(verbatim: total.map(KaspaUnit.groupedAmount) ?? "--")
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundColor(.primary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                 if let fiat = fiatText(total) {
                     Text(verbatim: fiat)
                         .font(.subheadline)
@@ -69,6 +64,7 @@ private struct WalletBalanceCard: View {
                         .stroke(Color.accentColor.opacity(0.35), lineWidth: 0.8)
                 )
         )
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .onAppear { portfolio.refreshSpotPriceIfStale() }
     }
 
@@ -77,7 +73,7 @@ private struct WalletBalanceCard: View {
             Text(title)
                 .font(.caption)
                 .foregroundColor(.secondary)
-            Text(verbatim: sompi.map(KaspaUnit.amount) ?? "--")
+            Text(verbatim: sompi.map(KaspaUnit.groupedAmount) ?? "--")
                 .font(.footnote.weight(.semibold))
                 .monospacedDigit()
                 .lineLimit(1)
@@ -139,9 +135,18 @@ struct ProfileView: View {
     @State private var isSavingKNSProfile = false
     @State private var knsSaveProgressText: String?
     @State private var failedKNSUpdates: [KNSProfileFieldKey: String] = [:]
-    @State private var showNotifCenter = false
+    /// The toolbar's Help: the Help screen, pushed.
+    @State private var showHelp = false
     @ObservedObject private var notifCenter = GlobalNotificationCenter.shared
     @State private var walletAction: WalletAction?
+    /// The balance card's Kaspa page, tapped: Manage Addresses, pushed.
+    @State private var showManageAddresses = false
+    /// A token's page of the balance card, tapped: Manage kUSDT (`TokenManageView`), pushed.
+    @State private var openToken: WalletToken?
+    /// The balance card's page: 0 is Kaspa, then one per token (`TokenWallet.tokens`).
+    @State private var balancePage = 0
+    /// The tallest page, so the swipeable card is as tall as its content.
+    @State private var balanceCardHeight: CGFloat = 196
     private enum WalletAction: String, Identifiable {
         case send, receive, request
         var id: String { rawValue }
@@ -162,9 +167,7 @@ struct ProfileView: View {
                         if !expiredKachatNames.visible.isEmpty {
                             KachatExpiredNamesBanner(model: expiredKachatNames)
                         }
-                        WalletBalanceCard(chattingSompi: wallet.balanceSompi, spendingSompi: hotWallet.spendingSompi(for: wallet)) {
-                            showToast(AppLocalization.string("Balance copied to clipboard."))
-                        }
+                        balancePager(wallet)
                         walletActionsRow
                         if backupStatus.isHygieneDue(wallet.publicAddress) {
                             BackupHygieneCard { showBackupHygiene = true }
@@ -173,10 +176,10 @@ struct ProfileView: View {
                         if AppSettings.load().networkType == .testnet {
                             TestnetFaucetClaimButton(address: wallet.publicAddress)
                         }
-                        addressSquares(wallet)
+                        chattingAddressSection(wallet)
                         yourDomainsSection
                         addressBookSection
-                        helpSection
+                        notificationsSection
                     } else {
                         Text("No active account")
                             .foregroundColor(.secondary)
@@ -187,6 +190,18 @@ struct ProfileView: View {
             .task(id: "\(walletManager.currentWallet?.publicAddress ?? "")-\(kachatRegistry.revision)") {
                 await expiredKachatNames.load()
             }
+            .navigationDestination(isPresented: $showHelp) {
+                ProfileHelpView(onKNSSetupGuide: { showKachatSetupGuide = true })
+            }
+            .navigationDestination(isPresented: $showManageAddresses) {
+                ManageAddressesView()
+            }
+            .navigationDestination(isPresented: Binding(get: { openToken != nil }, set: { if !$0 { openToken = nil } })) {
+                if let openToken { TokenManageView(token: openToken) }
+            }
+            // a tapped "Received kUSDT" notification (`TokenRoute`): its Manage screen
+            .onReceive(NotificationCenter.default.publisher(for: .openToken)) { _ in takeTokenRoute() }
+            .onAppear { takeTokenRoute() }
             .refreshable {
                 _ = try? await walletManager.refreshBalance(force: true)
                 await loadSpendingAddressBalance()
@@ -229,30 +244,16 @@ struct ProfileView: View {
                     balanceToolbarView
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    // The notification bell: Kaspa received and .kachat name news. A plain red
-                    // DOT (no count) signals unread.
+                    // Help, top right (owner's call, 2026-11-19); the notifications took its
+                    // card in the list.
                     Button {
-                        showNotifCenter = true
+                        showHelp = true
                     } label: {
-                        // The dot is drawn INSIDE the padded bounds rather than offset out
-                        // past the glyph's corner. A toolbar item clips to its own frame, so an
-                        // outward offset put most of the dot outside it and the badge came out
-                        // as a sliver.
-                        Image(systemName: "bell")
+                        Image(systemName: "questionmark.circle")
                             .padding(4)
-                            .overlay(alignment: .topTrailing) {
-                                if notifCenter.unreadCount > 0 {
-                                    Circle()
-                                        .fill(Color.red)
-                                        .frame(width: 8, height: 8)
-                                }
-                            }
                     }
-                    .accessibilityLabel(Text("Notifications"))
+                    .accessibilityLabel(Text("Help"))
                 }
-            }
-            .sheet(isPresented: $showNotifCenter) {
-                GlobalNotificationListView()
             }
             .toast(message: toastMessage, style: toastStyle)
             // KNS save progress: a PERSISTENT banner (state-driven, no auto-dismiss timer) that
@@ -319,13 +320,11 @@ struct ProfileView: View {
             .sheet(item: $walletAction) { action in
                 switch action {
                 case .send:
-                    if let wallet = walletManager.currentWallet {
-                        WithdrawKaspaView(fromAddress: wallet.publicAddress, availableBalanceSompi: wallet.balanceSompi)
-                    }
+                    // "What are you sending?" first: Kaspa or a token
+                    SendAssetChooser()
                 case .receive:
                     NavigationStack {
                         ReceiveKaspaQRView()
-                            .navigationTitle("Receive Kaspa")
                             .navigationBarTitleDisplayMode(.inline)
                             .toolbar {
                                 ToolbarItem(placement: .confirmationAction) {
@@ -581,6 +580,27 @@ struct ProfileView: View {
         await kachatRegistry.dropLapsed(from: names) { kachatOwnedCount = $0.count }
     }
 
+    /// The Chatting Address's QR page, as a card in the list like Your Domains and Contacts
+    /// (owner's call, 2026-11-19).
+    private func chattingAddressSection(_ wallet: Wallet) -> some View {
+        NavigationLink {
+            ChattingAddressQRView(address: wallet.publicAddress, balanceSompi: wallet.balanceSompi)
+        } label: {
+            HStack {
+                Label("Chatting Address", systemImage: "qrcode")
+                    .foregroundColor(.primary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(glassBackground(cornerRadius: 18))
+    }
+
     /// Address Book, as a card in the list - it moved here from the dock when Settings took its
     /// slot (owner's call, 2026-10-27).
     private var addressBookSection: some View {
@@ -602,17 +622,25 @@ struct ProfileView: View {
         .background(glassBackground(cornerRadius: 18))
     }
 
-    /// Entry to the Help screen: every guide in one place.
-    private var helpSection: some View {
+    /// Notifications (Kaspa received, .kachat name news) as a card in the list, where Help was
+    /// (owner's call, 2026-11-19): a red dot and the count while any are unread.
+    private var notificationsSection: some View {
         NavigationLink {
-            ProfileHelpView(
-                onKNSSetupGuide: { showKachatSetupGuide = true }
-            )
+            GlobalNotificationListView(isPushed: true)
         } label: {
             HStack {
-                Label("Help", systemImage: "questionmark.circle")
+                Label("Notifications", systemImage: "bell")
                     .foregroundColor(.primary)
                 Spacer()
+                if notifCenter.unreadCount > 0 {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(verbatim: "\(notifCenter.unreadCount)")
+                            .foregroundColor(.secondary)
+                    }
+                }
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -817,10 +845,18 @@ struct ProfileView: View {
         var body: some View {
             Group {
                 if let address {
-                    ChattingAddressQRView(
+                    // the shared receive screen (owner's design, 2026-11-19, from kUSDT's)
+                    AddressReceiveView(
+                        title: AppLocalization.string("Receive Kaspa"),
                         address: address,
-                        balanceSompi: balanceSompi,
-                        subtitle: "A fresh address, never used before. Kaspa sent here lands in this account and shows in your spending total. Use it for everything except .kachat names."
+                        addressLabel: walletManager.ownAddressLabel(for: address),
+                        balanceLine: balanceSompi.map(KaspaUnit.groupedAmount),
+                        privacyNote: ReceiveNotes.freshAddress,
+                        notes: [
+                            ReceiveNotes.kaspaAndKusdt,
+                            ReceiveNote(kind: .info, text: AppLocalization.string("It lands in this account and shows in your spending total. Use it for everything except .kachat names.")),
+                        ],
+                        icon: { KaspaLogoIcon() }
                     )
                 } else if resolving {
                     ProgressView("Preparing a fresh address")
@@ -859,6 +895,56 @@ struct ProfileView: View {
         }
     }
 
+    /// Opens the token a notification named, once the tab is on screen (a push onto a stack
+    /// that isn't showing yet came up blank).
+    private func takeTokenRoute() {
+        guard TokenRoute.pending != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            guard let id = TokenRoute.pending else { return }
+            TokenRoute.pending = nil
+            openToken = TokenWallet.shared.tokens.first(where: { $0.id == id }) ?? .kusdt
+        }
+    }
+
+    // MARK: - The balance card
+
+    /// Total Balance, then a page per token (kUSDT), swiped between, with dots under it so it's
+    /// plain there's more (owner's design, 2026-11-19). Each card says "Tap to Manage": Total
+    /// Balance opens Manage Addresses, a token's page opens its screen.
+    private func balancePager(_ wallet: Wallet) -> some View {
+        let tokens = TokenWallet.shared.tokens
+        return VStack(spacing: 10) {
+            // Plain taps, not NavigationLinks or a long-press menu: those hold the touch a moment
+            // before a swipe can have it, and swiping felt stuck.
+            SlidingCardPager(pages: [
+                AnyView(
+                    WalletBalanceCard(chattingSompi: wallet.balanceSompi, spendingSompi: hotWallet.spendingSompi(for: wallet))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(BalanceCardHeightReader())
+                        .onTapGesture {
+                            Haptics.impact(.light)
+                            showManageAddresses = true
+                        }
+                )
+            ] + tokens.map { token in
+                AnyView(
+                    TokenBalanceCard(token: token)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .background(BalanceCardHeightReader())
+                        .onTapGesture {
+                            Haptics.impact(.light)
+                            openToken = token
+                        }
+                )
+            }, page: $balancePage)
+            .frame(height: balanceCardHeight)
+            .onPreferenceChange(BalanceCardHeightKey.self) { height in
+                if height > 0 { balanceCardHeight = height }
+            }
+            BalancePagePills(titles: [AppLocalization.string("Kaspa")] + tokens.map(\.symbol), selected: $balancePage)
+        }
+    }
+
     // MARK: - Send, Receive, Request and the addresses
 
     private var walletActionsRow: some View {
@@ -883,71 +969,14 @@ struct ProfileView: View {
                 Text(title)
                     .font(.subheadline)
                     .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    /// Which address a send comes from is picked on the send screen (From), so this tab doesn't
-    /// split Main from Spending or have a "primary".
-    private func addressSquares(_ wallet: Wallet) -> some View {
-        HStack(spacing: 14) {
-            NavigationLink {
-                ManageAddressesView()
-            } label: {
-                addressSquare(icon: "list.bullet.rectangle", title: "Manage Addresses")
-            }
-            .buttonStyle(.plain)
-            NavigationLink {
-                ChattingAddressQRView(address: wallet.publicAddress, balanceSompi: wallet.balanceSompi)
-            } label: {
-                addressSquare(icon: "qrcode", title: "Chatting Address")
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    /// Square on a phone. As wide as half an iPad, a square would fill most of the screen with
-    /// nothing, so there it keeps the width and a set height.
-    @ViewBuilder
-    private var addressSquareShape: some View {
-        if horizontalSizeClass == .regular {
-            Color.clear.frame(height: 170)
-        } else {
-            Color.clear.aspectRatio(1, contentMode: .fit)
-        }
-    }
-
-    private func addressSquare(icon: String, title: LocalizedStringKey) -> some View {
-        addressSquareShape
-            .frame(maxWidth: .infinity)
-            .overlay {
-                VStack(spacing: 8) {
-                    Image(systemName: icon)
-                        .font(.scaled(size: 22, weight: .medium))
-                        .foregroundColor(.accentColor)
-                        .frame(width: 48, height: 48)
-                        .background(Circle().fill(.regularMaterial))
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                }
-                .padding(.horizontal, 10)
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.regularMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 18))
     }
 
     /// Coalesces balance refreshes triggered by own-address activity.
@@ -3616,8 +3645,9 @@ struct ChattingAddressManageView: View {
     /// for every transaction row on every render of the list.
     private static let blockTimeFormat = Date.FormatStyle(date: .abbreviated, time: .shortened)
 
+    /// All eight decimals, the thousands grouped ("1,234.50000000").
     private func formatKasExact(_ sompi: UInt64) -> String {
-        String(format: "%.8f", Double(sompi) / 100_000_000.0)
+        KaspaUnit.groupedExact(sompi)
     }
 
     private func loadTransactions() async {
@@ -3851,115 +3881,27 @@ struct AddressPublicKeyView: View {
 /// .secondary, since forcing a white content area regardless of system dark/light mode would
 /// otherwise leave semantic text colors resolved for dark mode (and invisible on the white
 /// background) unless the whole screen's color scheme were overridden too.
+/// The Chatting Address's receive page, on the shared receive screen (`AddressReceiveView`): its QR,
+/// Copy and Share, the orange note that it shows your .kachat name, and what it's for.
 struct ChattingAddressQRView: View {
     let address: String
     let balanceSompi: UInt64?
-    var subtitle: String = "Your chatting address holds your .kachat names and profile. Domains cost from 35 to 4,000 Kaspa, depending on the name."
-
-    @State private var qrImage: UIImage?
-    @State private var toastMessage: String?
-    @State private var toastToken = UUID()
+    var subtitle: String = "Your chatting address holds your .kachat names and identity."
 
     var body: some View {
-        Color.white
-            .ignoresSafeArea()
-            .overlay(
-                VStack(spacing: 28) {
-                    Spacer()
-                    Group {
-                        if let qrImage {
-                            Image(uiImage: qrImage)
-                                .interpolation(.none)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 240, height: 240)
-                        } else {
-                            ProgressView()
-                                .frame(width: 240, height: 240)
-                        }
-                    }
-                    .padding(20)
-                    .background(Color.white)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.accentColor, lineWidth: 3)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-
-                    Text(address)
-                        .font(.footnote.monospaced())
-                        .foregroundColor(.black)
-                        .multilineTextAlignment(.center)
-                        // Show the whole address, always. A Kaspa address is ~60-66 chars with no
-                        // spaces; capping at 2 lines truncated it on narrower screens. Let it wrap
-                        // to as many lines as needed and take the vertical space it requires.
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 28)
-
-                    // Looked up, not shown verbatim - it read English in every language.
-                    Text(LocalizedStringKey(subtitle))
-                        .font(.subheadline)
-                        .foregroundColor(Color.black.opacity(0.6))
-                        .multilineTextAlignment(.center)
-                        // Its full height always: in a sheet that is still growing it otherwise
-                        // truncated, then re-wrapped and jumped.
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 40)
-
-                    Text("Tap anywhere to copy")
-                        .font(.footnote)
-                        .foregroundColor(Color.black.opacity(0.4))
-
-                    Spacer()
-                    Spacer()
-                }
-            )
-            .contentShape(Rectangle())
-            .onTapGesture { copyAddress() }
-            .toast(message: toastMessage)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(balanceSompi.map { "\(formatKaspaExact($0)) \(KaspaUnit.symbol)" } ?? "—")
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
-                        .foregroundColor(.primary)
-                }
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .onAppear {
-                qrImage = ProfileQRCodeCache.cachedImage(for: address)
-                ProfileQRCodeCache.preload(address: address) { image in
-                    qrImage = image
-                }
-            }
-    }
-
-    private func copyAddress() {
-        UIPasteboard.general.string = address
-        Haptics.success()
-        showToast(address.addressCopiedToastText)
-    }
-
-    private func showToast(_ message: String) {
-        let token = UUID()
-        toastToken = token
-        withAnimation(.easeOut(duration: 0.2)) {
-            toastMessage = message
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            if toastToken == token {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    toastMessage = nil
-                }
-            }
-        }
-    }
-
-    private func formatKaspaExact(_ sompi: UInt64) -> String {
-        let kas = Double(sompi) / 100_000_000.0
-        return String(format: "%.8f", kas)
+        AddressReceiveView(
+            title: AppLocalization.string("Chatting Address"),
+            address: address,
+            balanceLine: balanceSompi.map(KaspaUnit.groupedAmount),
+            privacyNote: ReceiveNotes.chattingAddress,
+            notes: [
+                ReceiveNotes.kaspaAndKusdt,
+                // Looked up, not shown verbatim - it read English in every language.
+                ReceiveNote(kind: .info, text: AppLocalization.string(subtitle)),
+            ],
+            icon: { KaspaLogoIcon() }
+        )
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -5271,4 +5213,18 @@ private struct InAppWebView: UIViewRepresentable {
 private struct DomainProfileEditTarget: Identifiable {
     let info: KNSAddressProfileInfo
     var id: String { info.assetId ?? info.address }
+}
+
+/// The balance card pages' heights: the swipeable card takes the tallest.
+private struct BalanceCardHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+private struct BalanceCardHeightReader: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: BalanceCardHeightKey.self, value: proxy.size.height)
+        }
+    }
 }

@@ -1022,8 +1022,9 @@ struct ColdStorageDetailView: View {
         }
     }
 
+    /// All eight decimals, the thousands grouped ("1,234.50000000").
     private func formatKasExact(_ sompi: UInt64) -> String {
-        String(format: "%.8f", Double(sompi) / 100_000_000.0)
+        KaspaUnit.groupedExact(sompi)
     }
 
     private func showToast(_ message: String) {
@@ -1044,103 +1045,33 @@ struct ColdStorageDetailView: View {
 
 /// White-background QR display for a single Cold Storage address, matching the same visual
 /// treatment as ManageAddressesView's SpendingAddressQRView.
+/// A Cold Storage address's receive page, on the shared receive screen (`AddressReceiveView`). Its
+/// key is on the KasSigner, which signs Kaspa only, so kUSDT isn't for here.
 private struct ColdStorageAddressQRView: View {
     let entry: ColdStorageAddressEntry
     @Environment(\.dismiss) private var dismiss
-    @State private var qrImage: UIImage?
-    @State private var toastMessage: String?
-    @State private var toastToken = UUID()
 
     var body: some View {
         NavigationStack {
-            Color.white
-                .ignoresSafeArea()
-                .overlay(
-                    VStack(spacing: 20) {
-                        Spacer()
-                        Group {
-                            if let qrImage {
-                                Image(uiImage: qrImage)
-                                    .interpolation(.none)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 240, height: 240)
-                            } else {
-                                ProgressView()
-                                    .frame(width: 240, height: 240)
-                            }
-                        }
-                        .padding(20)
-                        .background(Color.white)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .stroke(Color.accentColor, lineWidth: 3)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-
-                        Text(entry.address)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(Color.black.opacity(0.7))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
-
-                        Text("Tap anywhere to copy")
-                            .font(.footnote)
-                            .foregroundColor(Color.black.opacity(0.4))
-
-                        Spacer()
-                        Spacer()
-                    }
-                )
-                .contentShape(Rectangle())
-                .onTapGesture { copyAddress() }
-                .navigationTitle(entry.displayLabel)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Close") { dismiss() }
-                    }
-                }
-                .onAppear { generateQR() }
-                .toast(message: toastMessage)
-        }
-    }
-
-    private func copyAddress() {
-        UIPasteboard.general.string = entry.address
-        Haptics.success()
-        showToast(entry.address.addressCopiedToastText)
-    }
-
-    private func showToast(_ message: String) {
-        let token = UUID()
-        toastToken = token
-        withAnimation(.easeOut(duration: 0.2)) {
-            toastMessage = message
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            if toastToken == token {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    toastMessage = nil
+            AddressReceiveView(
+                title: AppLocalization.string("Receive Kaspa"),
+                address: entry.address,
+                addressLabel: entry.displayLabel,
+                balanceLine: KaspaUnit.groupedAmount(entry.balanceSompi),
+                privacyNote: ReceiveNote(kind: .info, text: AppLocalization.string("A Cold Storage address: its key is on your KasSigner, never on this phone.")),
+                notes: [
+                    ReceiveNotes.kaspaOnly,
+                    ReceiveNote(kind: .warning, text: AppLocalization.string("Don't send kUSDT here: Cold Storage can't move it.")),
+                ],
+                icon: { KaspaLogoIcon() }
+            )
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") { dismiss() }
                 }
             }
         }
-    }
-
-    private func generateQR() {
-        let trimmed = entry.address.trimmingCharacters(in: .whitespacesAndNewlines)
-        let uri = trimmed.hasPrefix("kaspa:") ? trimmed : "kaspa:\(trimmed)"
-        guard let data = uri.data(using: .utf8) else { return }
-
-        let filter = CIFilter.qrCodeGenerator()
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("M", forKey: "inputCorrectionLevel")
-
-        guard let outputImage = filter.outputImage else { return }
-        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return }
-        qrImage = UIImage(cgImage: cgImage)
     }
 }
 
@@ -2563,8 +2494,9 @@ struct ColdStorageAddressTransactionHistoryView: View {
         .padding(.vertical, 4)
     }
 
+    /// All eight decimals, the thousands grouped ("1,234.50000000").
     private func formatKasExact(_ sompi: UInt64) -> String {
-        String(format: "%.8f", Double(sompi) / 100_000_000.0)
+        KaspaUnit.groupedExact(sompi)
     }
 
     private func loadTransactions() async {

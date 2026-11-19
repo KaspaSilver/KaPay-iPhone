@@ -183,7 +183,9 @@ struct KachatMarketView: View {
                     .accessibilityLabel(Text("How it works"))
                 }
             }
-            .sheet(isPresented: $showHowItWorks) { howItWorksSheet }
+            .fullScreenCover(isPresented: $showHowItWorks) {
+                KachatHelpView(isLive: live.isLive) { showHowItWorks = false }
+            }
         }
         // on the stack, so the Marketplace page it opens from can be pushed
         .sheet(item: $claimTarget) { target in
@@ -555,71 +557,6 @@ struct KachatMarketView: View {
         .padding(.top, 4)
     }
 
-    // MARK: - How it works
-
-    private var howItWorksSheet: some View {
-        NavigationStack {
-            List {
-                Section {
-                    howItWorksRow(
-                        icon: "at.badge.plus",
-                        title: "Claim",
-                        detail: "Pick a free name and register it on Kaspa. It's yours: your name, your profile, your link."
-                    )
-                    howItWorksRow(
-                        icon: "tag",
-                        title: "List",
-                        detail: "Set a price. The name waits in an on-chain covenant, not with KaChat or anyone else, until someone buys it or you take it back."
-                    )
-                    howItWorksRow(
-                        icon: "cart",
-                        title: "Buy",
-                        detail: "Pay the listed price. The payment reaches the seller and the name reaches you in the same transaction - both happen, or neither does."
-                    )
-                    howItWorksRow(
-                        icon: "hand.raised",
-                        title: "Offer",
-                        detail: LocalizedStringKey(KaspaUnit.label(AppLocalization.string("Name your own price. Your KAS waits on chain until the seller accepts, you withdraw the offer, or it expires.")))
-                    )
-                    howItWorksRow(
-                        icon: "checkmark.shield",
-                        title: "Trustless",
-                        detail: "No middleman and no escrow account: Kaspa's own rules enforce every sale."
-                    )
-                } footer: {
-                    if live.isLive, KachatNamesService.networkName == "mainnet" {
-                        Text("Live on Mainnet: names, prices and payments here are real KAS.")
-                    } else if live.isLive {
-                        Text("Live on Testnet: names, prices and payments here use TKAS on testnet-10. Mainnet names are live on Mainnet.")
-                    } else {
-                        Text("Nothing here is live yet.")
-                    }
-                }
-            }
-            .navigationTitle("How .kachat works")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { showHowItWorks = false }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    private func howItWorksRow(icon: String, title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(.accentColor)
-                .frame(width: 30)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(detail).font(.subheadline).foregroundColor(.secondary)
-            }
-        }
-        .padding(.vertical, 4)
-    }
 }
 
 // MARK: - Listing

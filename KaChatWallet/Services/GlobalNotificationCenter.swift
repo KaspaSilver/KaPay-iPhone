@@ -17,11 +17,14 @@ final class GlobalNotificationCenter: ObservableObject {
             case wallet
             /// a .kachat name event; `targetId` is the name
             case kachat
+            /// a token received (kUSDT); `targetId` is the token's id
+            case token
 
             var label: String {
                 switch self {
                 case .wallet: return "Wallet"
                 case .kachat: return ".kachat"
+                case .token: return "Tokens"
                 }
             }
 
@@ -29,6 +32,7 @@ final class GlobalNotificationCenter: ObservableObject {
                 switch self {
                 case .wallet: return "arrow.down.circle"
                 case .kachat: return "at"
+                case .token: return "dollarsign.circle"
                 }
             }
         }
@@ -115,14 +119,24 @@ final class GlobalNotificationCenter: ObservableObject {
     }
 }
 
-/// The bell's sheet: newest-first feed of all sources, source-tagged rows, Clear all.
-/// Opening it marks everything seen (clears the bell badge).
+/// Notifications: newest-first feed of all sources, source-tagged rows, Clear all.
+/// Opening it marks everything seen (clears the unread dot). The Wallet tab pushes it as its own
+/// screen (`isPushed`, a large "Notifications" title like Contacts, owner's call 2026-11-19);
+/// elsewhere it's a sheet with Done.
 struct GlobalNotificationListView: View {
+    var isPushed = false
     @ObservedObject private var center = GlobalNotificationCenter.shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
+        if isPushed {
+            list
+        } else {
+            NavigationStack { list }
+        }
+    }
+
+    private var list: some View {
             Group {
                 if center.entries.isEmpty {
                     VStack(spacing: 12) {
@@ -172,10 +186,12 @@ struct GlobalNotificationListView: View {
                 }
             }
             .navigationTitle("Notifications")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(isPushed ? .large : .inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                if !isPushed {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Clear All") { center.clearAll() }
@@ -183,12 +199,11 @@ struct GlobalNotificationListView: View {
                 }
             }
             .onAppear { center.markAllSeen() }
-        }
     }
 
-    /// Routes a tapped row to its subject. The sheet has to close first (only one sheet presents
-    /// at a time), so the pending target is staged now and the tab switch posted after the
-    /// dismissal animation - the same two-step every notification tap uses.
+    /// Routes a tapped row to its subject. The sheet (or the pushed screen) closes first (only one
+    /// sheet presents at a time), so the pending target is staged now and the tab switch posted
+    /// after the dismissal animation - the same two-step every notification tap uses.
     private func open(_ entry: GlobalNotificationCenter.Entry) {
         let target = entry.targetId ?? ""
         switch entry.source {
@@ -204,6 +219,14 @@ struct GlobalNotificationListView: View {
                 } else {
                     NotificationCenter.default.post(name: .openPortfolio, object: nil)
                 }
+            }
+        case .token:
+            // the token's Manage screen, on the Wallet tab
+            dismiss()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                TokenRoute.pending = target.isEmpty ? WalletToken.kusdt.id : target
+                PendingTabRoute.pending = .profile
+                NotificationCenter.default.post(name: .openToken, object: nil)
             }
         case .kachat:
             // The name, the same way a tapped .kachat push opens it.

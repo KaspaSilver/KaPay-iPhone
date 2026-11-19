@@ -671,6 +671,11 @@ struct AppSettings: Codable {
     var knsBaseURL: String { Self.defaultKNSURL(for: networkType) }
 
     var kaspaRestAPIURL: String
+    /// Trestly's API (kusdt-open's coordinator): where kUSDT balances are looked up
+    /// (`/tokens?owner=`), each answer checked on the node.
+    var trestlyAPIURL: String
+    /// Trestly's site, opened inside KaPay for buying, swapping and bridging (`TrestlyBrowserView`).
+    var trestlySiteURL: String
     var kaspaExplorer: KaspaExplorer
     /// A user-pinned "host:port" gRPC node - when non-blank, NodePoolService stops discovery
     /// (DNS seeds/peer-gossip/scoring) entirely and only ever connects to this address,
@@ -730,6 +735,15 @@ struct AppSettings: Codable {
     /// back to this same address. Kaspium's own currently-live default, TLS-secured (`grpcs://`).
     static let defaultTrustedNodeAddress = "grpcs://toccata.kaspium.io"
 
+    /// Trestly's own deployments (kusdt-open `wallet/extension/src/config/defaults.ts`).
+    static func defaultTrestlyAPIURL(for network: NetworkType) -> String {
+        network == .mainnet ? "https://api.trestly.io/api/v1" : "https://testnet.trestly.io/api/v1"
+    }
+
+    static func defaultTrestlySiteURL(for network: NetworkType) -> String {
+        network == .mainnet ? "https://trestly.io" : "https://testnet.trestly.io"
+    }
+
     /// The active network's connection settings, as one value.
     var currentConnectionProfile: ConnectionProfile {
         ConnectionProfile(
@@ -737,7 +751,9 @@ struct AppSettings: Codable {
             pushIndexerURL: pushIndexerURL,
             kaspaRestAPIURL: kaspaRestAPIURL,
             trustedNodeAddress: trustedNodeAddress,
-            savedNodeAddresses: savedNodeAddresses
+            savedNodeAddresses: savedNodeAddresses,
+            trestlyAPIURL: trestlyAPIURL,
+            trestlySiteURL: trestlySiteURL
         )
     }
 
@@ -754,6 +770,8 @@ struct AppSettings: Codable {
         kaspaRestAPIURL = next.kaspaRestAPIURL
         trustedNodeAddress = next.trustedNodeAddress
         savedNodeAddresses = next.savedNodeAddresses
+        trestlyAPIURL = next.trestlyAPIURL ?? Self.defaultTrestlyAPIURL(for: network)
+        trestlySiteURL = next.trestlySiteURL ?? Self.defaultTrestlySiteURL(for: network)
         networkType = network
     }
 
@@ -792,6 +810,8 @@ struct AppSettings: Codable {
         case indexerURL
         case pushIndexerURL
         case kaspaRestAPIURL
+        case trestlyAPIURL
+        case trestlySiteURL
         case kaspaExplorer
         case trustedNodeAddress
         case savedNodeAddresses
@@ -826,6 +846,8 @@ struct AppSettings: Codable {
         indexerURL: String,
         pushIndexerURL: String,
         kaspaRestAPIURL: String,
+        trestlyAPIURL: String? = nil,
+        trestlySiteURL: String? = nil,
         kaspaExplorer: KaspaExplorer = .default,
         trustedNodeAddress: String = AppSettings.defaultTrustedNodeAddress,
         savedNodeAddresses: [SavedNodeAddress] = [],
@@ -850,6 +872,8 @@ struct AppSettings: Codable {
         self.indexerURL = indexerURL
         self.pushIndexerURL = pushIndexerURL
         self.kaspaRestAPIURL = kaspaRestAPIURL
+        self.trestlyAPIURL = trestlyAPIURL ?? Self.defaultTrestlyAPIURL(for: networkType)
+        self.trestlySiteURL = trestlySiteURL ?? Self.defaultTrestlySiteURL(for: networkType)
         self.kaspaExplorer = kaspaExplorer
         self.trustedNodeAddress = trustedNodeAddress
         self.savedNodeAddresses = savedNodeAddresses
@@ -911,6 +935,8 @@ struct AppSettings: Codable {
             stashed.pushIndexerURL = AppSettings.migratedIndexerURL(stashed.pushIndexerURL, network: network)
             connectionProfiles[network.rawValue] = stashed
         }
+        trestlyAPIURL = try filled(.trestlyAPIURL, AppSettings.defaultTrestlyAPIURL(for: networkType))
+        trestlySiteURL = try filled(.trestlySiteURL, AppSettings.defaultTrestlySiteURL(for: networkType))
         kaspaExplorer = try container.decodeIfPresent(KaspaExplorer.self, forKey: .kaspaExplorer) ?? .default
         trustedNodeAddress = try container.decodeIfPresent(String.self, forKey: .trustedNodeAddress) ?? AppSettings.defaultTrustedNodeAddress
         savedNodeAddresses = try container.decodeIfPresent([SavedNodeAddress].self, forKey: .savedNodeAddresses) ?? []
@@ -948,6 +974,8 @@ struct AppSettings: Codable {
         try container.encode(indexerURL, forKey: .indexerURL)
         try container.encode(pushIndexerURL, forKey: .pushIndexerURL)
         try container.encode(kaspaRestAPIURL, forKey: .kaspaRestAPIURL)
+        try container.encode(trestlyAPIURL, forKey: .trestlyAPIURL)
+        try container.encode(trestlySiteURL, forKey: .trestlySiteURL)
         try container.encode(kaspaExplorer, forKey: .kaspaExplorer)
         try container.encode(trustedNodeAddress, forKey: .trustedNodeAddress)
         try container.encode(savedNodeAddresses, forKey: .savedNodeAddresses)
@@ -1158,6 +1186,9 @@ struct ConnectionProfile: Codable, Equatable {
     var kaspaRestAPIURL: String
     var trustedNodeAddress: String
     var savedNodeAddresses: [SavedNodeAddress]
+    /// Optional, so profiles stashed by builds before Trestly still decode (nil = the default).
+    var trestlyAPIURL: String? = nil
+    var trestlySiteURL: String? = nil
 
     /// What a network starts with. Testnet: the public testnet REST API, automatic node
     /// discovery, and no indexer (push and .kachat names stay off unless one is entered).
@@ -1169,7 +1200,9 @@ struct ConnectionProfile: Codable, Equatable {
                 pushIndexerURL: AppSettings.defaultPushIndexerURL,
                 kaspaRestAPIURL: AppSettings.defaultKaspaMainnetURL,
                 trustedNodeAddress: AppSettings.defaultTrustedNodeAddress,
-                savedNodeAddresses: []
+                savedNodeAddresses: [],
+                trestlyAPIURL: AppSettings.defaultTrestlyAPIURL(for: .mainnet),
+                trestlySiteURL: AppSettings.defaultTrestlySiteURL(for: .mainnet)
             )
         case .testnet:
             return ConnectionProfile(
@@ -1177,7 +1210,9 @@ struct ConnectionProfile: Codable, Equatable {
                 pushIndexerURL: AppSettings.defaultTestnetIndexerURL,
                 kaspaRestAPIURL: AppSettings.defaultKaspaTestnetURL,
                 trustedNodeAddress: "",
-                savedNodeAddresses: []
+                savedNodeAddresses: [],
+                trestlyAPIURL: AppSettings.defaultTrestlyAPIURL(for: .testnet),
+                trestlySiteURL: AppSettings.defaultTrestlySiteURL(for: .testnet)
             )
         }
     }

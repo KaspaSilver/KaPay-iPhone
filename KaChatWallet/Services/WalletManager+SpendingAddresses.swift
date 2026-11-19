@@ -642,17 +642,18 @@ extension WalletManager {
         // belongs to the other account and is dropped, nothing written (IOS-109).
         guard let owner = currentWallet?.publicAddress else { return nil }
         let chosen: (index: Int, address: String)
-        // Rule 1: the pointer from last time, while it is still untouched - and quantum. A
-        // legacy pointer, even unused, carries its key in the address itself (P2PK), so the QR
-        // moves to the quantum chain the first time it is opened after the upgrade.
-        if let index = receiveAddressIndex, Self.isQuantumIndex(index), let address = spendingAddress(at: index),
-           !isQuantumAddressSpentLocally(address),
+        // Receive hands out REGULAR addresses (owner's call, 2026-11-19): a regular address takes
+        // kUSDT as well as Kaspa, and a quantum-safe one can't trade it, so nobody ends up with
+        // tokens on one by mistake. Quantum-safe addresses are made on purpose, in Manage
+        // Addresses' Address Actions. (Before, the QR moved to the quantum chain.)
+        // Rule 1: the pointer from last time, while it is still untouched - and regular.
+        if let index = receiveAddressIndex, !Self.isQuantumIndex(index), let address = spendingAddress(at: index),
            await WalletService.shared.spendingAddressUsedState(address) != true {
             chosen = (index, address)
         } else {
-            // Rule 2: the lowest quantum slot never used (recycling a hidden unused one), else a
+            // Rule 2: the lowest regular slot never used (recycling a hidden unused one), else a
             // brand-new slot past the chain's end.
-            let index = await lowestUnusedQuantumAddress()
+            let index = await lowestUnusedRegularAddress()
             guard currentWallet?.publicAddress == owner else { return nil }
             guard let address = spendingAddress(at: index) else { return currentSpendingAddress() }
             receiveAddressIndex = index
@@ -663,6 +664,21 @@ extension WalletManager {
             await revealSpendingAddress(at: chosen.index, owner: owner)
         }
         return chosen.address
+    }
+
+    /// `lowestUnusedSpendingAddress`, on the regular (legacy, P2PK) chain only: the lowest hidden
+    /// regular slot confirmed unused (recycling un-hides it), else one past the chain's end.
+    func lowestUnusedRegularAddress() async -> Int {
+        let entries = await getSpendingAddressList().filter { !$0.isQuantum }.sorted { $0.index < $1.index }
+        for entry in entries {
+            guard entry.hidden else { continue }
+            if entry.isCurrent { continue }
+            if entry.balanceSompi > 0 { continue }
+            if await WalletService.shared.spendingAddressUsedState(entry.address) == false {
+                return entry.index
+            }
+        }
+        return maxSpendingAddressIndex + 1
     }
 
     /// `lowestUnusedSpendingAddress`, on the quantum chain: the lowest hidden quantum slot that

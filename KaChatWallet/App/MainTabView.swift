@@ -84,6 +84,13 @@ struct MainTabView: View {
         ) { address in
             if let address { ProfileView.preloadQRCode(for: address) }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openToken)) { _ in
+            // a token's Received notification: the Wallet tab, which opens Manage kUSDT
+            PendingTabRoute.pending = nil
+            routeToWalletTab(.profile)
+        }
+        // tokens are checked while the app is open, so one that arrives is announced
+        .onAppear { TokenWallet.shared.startPolling() }
         .onReceive(NotificationCenter.default.publisher(for: .openPortfolio)) { _ in
             // Spending-address receipts: land on Portfolio.
             PendingTabRoute.pending = nil

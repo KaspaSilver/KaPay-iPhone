@@ -8,6 +8,8 @@ import UIKit
 /// "generate new address" action, rename, QR, hide. Which address a send comes from is picked on
 /// the send screen itself (From), so there is no "primary" here.
 struct ManageAddressesView: View {
+    /// The total's value in your currency, under it (as the Wallet tab's card shows it).
+    @ObservedObject private var portfolio = PortfolioViewModel.shared
     @EnvironmentObject var walletManager: WalletManager
     @EnvironmentObject var walletService: WalletService
     @EnvironmentObject var settingsViewModel: SettingsViewModel
@@ -110,7 +112,7 @@ struct ManageAddressesView: View {
             }
         }) {
             addressActionsSheet
-                .fittedSheetDetents(440)
+                .fittedSheetDetents(510)
                 .presentationDragIndicator(.visible)
         }
         .sheet(item: $addressActionsTarget) { entry in
@@ -398,14 +400,39 @@ struct ManageAddressesView: View {
                 Text("Total Balance")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text(verbatim: "\(formatKasExact(totalBalanceSompi)) \(KaspaUnit.symbol)")
-                    .font(.title2)
-                    .fontWeight(.bold)
+                HStack(spacing: 10) {
+                    Image("KaspaLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 30, height: 30)
+                        .clipShape(Circle())
+                        .accessibilityHidden(true)
+                    Text(verbatim: "\(formatKasExact(totalBalanceSompi)) \(KaspaUnit.symbol)")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                if let fiat = totalFiatText {
+                    Text(verbatim: fiat)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
         .padding(.vertical, 8)
+        .onAppear { portfolio.refreshSpotPriceIfStale() }
+    }
+
+    /// What the total is worth in your currency, like the Wallet tab's card. Testnet coins aren't
+    /// worth anything, so there's none there.
+    private var totalFiatText: String? {
+        guard AppSettings.load().networkType == .mainnet,
+              let price = portfolio.currentPriceUsd, price > 0 else { return nil }
+        return formatFiatAmount(Double(totalBalanceSompi) / 100_000_000.0 * price, currency: portfolio.currentCurrency, decimals: 4)
     }
 
     /// The floating glass button behind "Address Actions", like the Wallet tab's send / receive one.
@@ -490,13 +517,23 @@ struct ManageAddressesView: View {
             } else {
                 VStack(spacing: 12) {
                     ActionSheetRow(
-                        title: "Generate New Spending Address",
-                        subtitle: "Reveals the next unused address in this wallet.",
+                        title: "Generate Non-Quantum Address",
+                        subtitle: "A regular address, like Receive gives you. Works with everything, kUSDT included.",
                         systemImage: "plus.circle",
                         isBusy: isGenerating,
                         isDisabled: isDiscovering
                     ) {
-                        generateNew()
+                        generateNew(quantum: false)
+                        showAddressActions = false
+                    }
+                    ActionSheetRow(
+                        title: "Generate Quantum-Resistant Address",
+                        subtitle: "Keeps its key hidden until it spends. For Kaspa only: kUSDT can't be traded from it.",
+                        systemImage: "shield",
+                        isBusy: isGenerating,
+                        isDisabled: isDiscovering
+                    ) {
+                        generateNew(quantum: true)
                         showAddressActions = false
                     }
                     ActionSheetRow(
@@ -787,7 +824,9 @@ struct ManageAddressesView: View {
         domainOwningAddresses = owners
     }
 
-    private func generateNew() {
+    /// Address Actions' two Generate rows (owner's call, 2026-11-19): a regular address (Receive's
+    /// kind, the one that takes kUSDT too) or a quantum-resistant one, each chosen on purpose.
+    private func generateNew(quantum: Bool) {
         guard !isGenerating else { return }
         isGenerating = true
         Task {
@@ -806,13 +845,12 @@ struct ManageAddressesView: View {
             // the all-time max, which is provably fresh by construction and needs no network
             // at all. A background reload reconciles afterwards.
             let primaryIndex = walletManager.currentSpendingAddressIndex
-            // Generate makes quantum-safe (KIP-22) slots from now on: recycling considers only
-            // hidden unused QUANTUM rows, and the fresh path extends the quantum chain - the
-            // legacy chain is never grown again from here.
+            // One chain per row: recycling considers only hidden unused rows of the chain asked
+            // for, and the fresh path extends that chain.
             let candidates = entries
                 .sorted { $0.index < $1.index }
                 .filter { entry in
-                    entry.isQuantum
+                    entry.isQuantum == quantum
                         && entry.hidden
                         && entry.index != primaryIndex
                         && entry.balanceSompi == 0
@@ -853,7 +891,13 @@ struct ManageAddressesView: View {
                     entries[i].hidden = false
                 }
             } else {
-                index = await walletManager.generateNextQuantumAddress()
+                if quantum {
+                    index = await walletManager.generateNextQuantumAddress()
+                } else {
+                    // past the regular chain's all-time end: never revealed, funded or handed out
+                    await walletManager.generateNextSpendingAddress()
+                    index = walletManager.maxSpendingAddressIndex
+                }
                 if let address = walletManager.spendingAddress(at: index) {
                     entries.append(SpendingAddressEntry(
                         index: index,
@@ -928,8 +972,9 @@ struct ManageAddressesView: View {
         }
     }
 
+    /// All eight decimals, the thousands grouped ("1,234.50000000").
     private func formatKasExact(_ sompi: UInt64) -> String {
-        String(format: "%.8f", Double(sompi) / 100_000_000.0)
+        KaspaUnit.groupedExact(sompi)
     }
 
     private func showToast(_ message: String, style: ToastStyle = .success) {
@@ -1638,103 +1683,32 @@ struct SpendingSourcePicker: View {
     }
 }
 
+/// One spending address's receive page, on the shared receive screen (`AddressReceiveView`). A
+/// quantum-resistant one says it's for Kaspa only: kUSDT can't be traded from it.
 private struct SpendingAddressQRView: View {
     let entry: SpendingAddressEntry
     @Environment(\.dismiss) private var dismiss
-    @State private var qrImage: UIImage?
-    @State private var toastMessage: String?
-    @State private var toastToken = UUID()
 
     var body: some View {
         NavigationStack {
-            Color.white
-                .ignoresSafeArea()
-                .overlay(
-                    VStack(spacing: 20) {
-                        Spacer()
-                        Group {
-                            if let qrImage {
-                                Image(uiImage: qrImage)
-                                    .interpolation(.none)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(width: 240, height: 240)
-                            } else {
-                                ProgressView()
-                                    .frame(width: 240, height: 240)
-                            }
-                        }
-                        .padding(20)
-                        .background(Color.white)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .stroke(Color.accentColor, lineWidth: 3)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-
-                        Text(entry.address)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(Color.black.opacity(0.7))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 32)
-
-                        Text("Tap anywhere to copy")
-                            .font(.footnote)
-                            .foregroundColor(Color.black.opacity(0.4))
-
-                        Spacer()
-                        Spacer()
-                    }
-                )
-                .contentShape(Rectangle())
-                .onTapGesture { copyAddress() }
-                .navigationTitle(entry.displayTitle)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Close") { dismiss() }
-                    }
-                }
-                .onAppear { generateQR() }
-                .toast(message: toastMessage)
-        }
-    }
-
-    private func copyAddress() {
-        UIPasteboard.general.string = entry.address
-        Haptics.success()
-        showToast(entry.address.addressCopiedToastText)
-    }
-
-    private func showToast(_ message: String) {
-        let token = UUID()
-        toastToken = token
-        withAnimation(.easeOut(duration: 0.2)) {
-            toastMessage = message
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-            if toastToken == token {
-                withAnimation(.easeIn(duration: 0.2)) {
-                    toastMessage = nil
+            AddressReceiveView(
+                title: AppLocalization.string("Receive Kaspa"),
+                address: entry.address,
+                addressLabel: entry.displayLabel,
+                balanceLine: KaspaUnit.groupedAmount(entry.balanceSompi),
+                privacyNote: entry.isQuantum ? ReceiveNotes.quantumAddress : ReceiveNotes.spendingAddress,
+                notes: entry.isQuantum
+                    ? [ReceiveNotes.kaspaOnly, ReceiveNotes.noKusdtOnQuantum]
+                    : [ReceiveNotes.kaspaAndKusdt],
+                icon: { KaspaLogoIcon() }
+            )
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Close") { dismiss() }
                 }
             }
         }
-    }
-
-    private func generateQR() {
-        let trimmed = entry.address.trimmingCharacters(in: .whitespacesAndNewlines)
-        let uri = trimmed.hasPrefix("kaspa:") ? trimmed : "kaspa:\(trimmed)"
-        guard let data = uri.data(using: .utf8) else { return }
-
-        let filter = CIFilter.qrCodeGenerator()
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("M", forKey: "inputCorrectionLevel")
-
-        guard let outputImage = filter.outputImage else { return }
-        let scaled = outputImage.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return }
-        qrImage = UIImage(cgImage: cgImage)
     }
 }
 
@@ -2301,8 +2275,9 @@ struct SpendingAddressTransactionHistoryView: View {
         .padding(.vertical, 4)
     }
 
+    /// All eight decimals, the thousands grouped ("1,234.50000000").
     private func formatKasExact(_ sompi: UInt64) -> String {
-        String(format: "%.8f", Double(sompi) / 100_000_000.0)
+        KaspaUnit.groupedExact(sompi)
     }
 
     private func loadTransactions() async {

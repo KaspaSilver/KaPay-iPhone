@@ -30,8 +30,8 @@ Five fixed tabs (`AppTab` in `KaChatWallet/Models/Models.swift`, rendered by
 |---|---|
 | Portfolio | `PortfolioView` (`Views/Portfolio/`) |
 | Cold Storage | `ColdStorageListView` (`Views/ColdStorage/`) |
-| Wallet | `ProfileView` (`Views/Contacts/ContactsView.swift`, `AppTab.profile`) - the home tab, where the app opens after logging in; as on KaChat's Wallet tab (`WalletView` there), the total balance split into chatting and spending (`WalletBalanceCard`), Send, Receive and Request (`CreatePaymentRequestView`), Backup Hygiene when due, and the Manage Addresses and Chatting Address squares; then Your Domains, Contacts (`AddressBookView`, its own pushed screen) and help. No profile card: those belong to KaChat and KaPost. About is in Settings |
-| .kachat | `KachatMarketView` (`Views/Ecosystem/`); dock icon `KachatTabIcon.domainsImage` (name tag with an @) - the full .kachat names marketplace. The name search sits first under the logo (Claim on a free name); then claims in progress, Your Names (when there are any), and a row each of Available, For sale and Expired plus the latest activity, each with See All for its full page. Your Domains > .kachat's button is "Claim a Name" and opens this screen. Search, buy, claim, sell, offers, activity |
+| Wallet | `ProfileView` (`Views/Contacts/ContactsView.swift`, `AppTab.profile`) - the home tab, where the app opens after logging in; as on KaChat's Wallet tab (`WalletView` there), the total balance split into chatting and spending (`WalletBalanceCard`, which opens Manage Addresses), swiped to a page per token (`TokenBalanceCard`, kUSDT, which opens its screen) with a pill per card under it (`BalancePagePills`: "Kaspa", "kUSDT", the one showing filled, a tap slides to it); `SlidingCardPager` (its own drag, not a paged TabView) slides every change of card with one spring, swipe, flick or pill; each card says "Tap to Manage" (`TapToManageLabel`) and opens on a plain tap gesture, not a NavigationLink or a long-press menu, which held the touch and made the swipe stick. Then three round buttons: Send ("What are you sending?" first: `SendAssetChooser`, Kaspa or kUSDT), Receive and Request (`CreatePaymentRequestView`); Backup Hygiene when due; then the list cards: Chatting Address (its QR page), Your Domains, Contacts (`AddressBookView`, its own pushed screen) and Notifications (its own pushed screen, `GlobalNotificationListView(isPushed: true)`, a large "Notifications" title and Clear All; the card shows a red dot and the count while any are unread). Help is the "?" at the top right. No profile card: those belong to KaChat and KaPost. About is in Settings |
+| .kachat | `KachatMarketView` (`Views/Ecosystem/`); dock icon `KachatTabIcon.domainsImage` (name tag with an @) - the full .kachat names marketplace. The name search sits first under the logo (Claim on a free name); then claims in progress, Your Names (when there are any), and a row each of Available, For sale and Expired plus the latest activity, each with See All for its full page. Your Domains > .kachat's button is "Claim a Name" and switches to this tab (no screen of its own). Its "?" opens `KachatHelpView` full screen: two cards, How It Works (each action, one card each) and Pricing (the claim and renew table by name length, from the registry's params, then where the price goes, the bond and deposit, paying ahead, no marketplace fee, the network fee). Search, buy, claim, sell, offers, activity |
 | Settings | `SettingsView(isDockTab: true)` (`Views/Settings/SettingsView.swift`, `AppTab.settings`) - no Done button as a tab; alphabetical rows with no descriptive text, as in KaChat: Account Name, Back Up Account (Complete Your Backup, View 12 or 24 Words, Back Up to NFC Card), Connection, Customization, Diagnostics, Notifications, Security, Storage; then Delete Account (`DeleteAccountSheet`, the warning the sign-in screen's Delete also shows; `WalletManager.deleteCurrentAccount`) and Log Out |
 
 Account setup: `ContentView` -> `OnboardingView` (create / import a seed) -> `MainTabView`. Create
@@ -75,8 +75,110 @@ read says KaPay. Texts about the KaChat ecosystem (KaChat profiles, .kachat name
 
 The Wallet tab keeps Your Domains; a profile is edited and shared in KaChat or KaPost, not here. Help has only the .kachat names guide. People read "12 or 24 words" rather than "seed phrase" or "recovery phrase",
 as in KaChat; the code keeps its names (`SeedPhrase`, `SeedPhraseView`). The Chatting Address is
-address #0, so the legacy chain's first spending slot shows as #1 (`WalletManager.addressNumber`). The bell (`GlobalNotificationCenter`) lists
+address #0, so the legacy chain's first spending slot shows as #1 (`WalletManager.addressNumber`). The Notifications card (`GlobalNotificationCenter`) lists
 "Received" and .kachat notifications.
+
+## Tokens (kUSDT)
+
+KCC-20 tokens on Kaspa L1, starting with Trestly's kUSDT (owner's call, 2026-11-19; the open code
+is `kaspador/kusdt-open`, its SPEC.md the protocol). KaPay has no Swap or Bridge screens: swapping
+KAS and kUSDT and adding to KasPool (the only trading KaPay does, owner's call 2026-11-19; no
+bridging or redeeming from KaPay) happen on Trestly's own site, opened inside KaPay
+(`TrestlyBrowserView`) and connected to the address you choose. KaChat, KaPost and KaPlay, on the same words, only hold and
+send. `Views/Tokens/`: the Wallet tab's balance card swipes to a page per token
+(`TokenBalanceCard`), which opens `TokenManageView` ("Manage kUSDT", like Manage Addresses: the
+total with a "Bridged by Trestly" pill under it (`TokenAboutSheet`: what kUSDT is, the not-audited
+warning, the vault link), a row per visible address holding it, and the floating options button at
+the bottom right: Open Trestly, Generate New Address (`TokenWallet.generateFreshAddress`: the next
+unused regular address, revealed and checked on in the list, "Address #n is ready."), Discover kUSDT
+Addresses (pull to
+refresh runs it too, four addresses at a time) (progress in
+the sheet, keeps going if it's closed; UI stage walks the addresses and reports the sample) and
+kUSDT Address Visibility (`TokenAddressVisibilityView`: the same screen as Kaspa's Non-Quantum
+Addresses, every regular address in pages of 50 with #0 the Chatting Address always on, the kUSDT
+amount or Unused on the right, a tap saving at once, Hide All; tokens never live on quantum
+addresses, so there's no chain to choose). Manage kUSDT lists the Chatting Address, each address
+holding kUSDT unless hidden, and any empty address checked on (`listedHoldings`, kept per account
+on the phone); hidden ones still count in the total and stay in Send's From. A row opens
+`TokenAddressView` (each regular address row has Manage Addresses' ⋮: Rename, shared with Manage
+Addresses, Copy, Show QR Code, Hide): that address's balance, its history of just kUSDT, Receive and Send at the
+bottom (from that address), and the top-right options (Open Trestly With This Address, View in
+Explorer). `TrestlyConnectSheet` picks the address (Chatting Address, every address holding kUSDT,
+or a fresh one) before the site opens. `TokenSendView` is Send Kaspa's steps (To with names, From,
+How much on the keypad in the token's decimals, the swipe-up review with Goes With It, the 1.5 KAS
+each token coin holds, and the network fee); never to a script address. `TokenReceiveSheet` opens on
+Fresh Address (the next regular spending slot, put on the list once copied or shared) with Chatting
+Address the other choice, or shows one address (`fixedHolding`) from its page.
+
+**Where tokens live** (owner's call, 2026-11-19: privacy from the start): the Chatting Address and
+the regular (legacy, P2PK) spending addresses (`TokenHolding`), never a quantum-safe one (sending a
+token from a P2SH owner spends its KAS too and reveals its key, and Trestly's builder and pool don't
+take one). The Chatting Address shows the .kachat name, so Receive defaults to a fresh address.
+Send has a From step ("Where are you sending from?", skipped when one address holds it), and the
+KAS for the fee and the 1.5 KAS come from that same address ("KAS Paid From"), so a send links no
+other address. Trestly's own wallet only reads the first key (the Chatting Address). `TokenIcon` draws the USDT mark (`USDTMark`, the T and its ring on USDT green #26A17B) in code, not
+from an image, with a small Kaspa "K" badge at the corner, since kUSDT is bridged USDT on Kaspa, not
+Tether's own.
+
+**Connection Settings** (`ConnectionSettingsView`) is a card per connection, each opening its own
+screen (`page`) with Save (Node saves as you pick): Push, Node, Domains, Explorer and Trestly. Trestly
+holds `AppSettings.trestlyAPIURL` (the coordinator API, kUSDT balances) and `trestlySiteURL` (what
+`TrestlyBrowserView` opens, on its `/swap` page), kept per network like the others (`ConnectionProfile`, optional there so
+older stashed profiles decode); blank means the network's default (api.trestly.io / trestly.io,
+testnet.trestly.io on testnet), and like every field here they must be https.
+
+**Wiring** (2026-11-19, stage 1 of 3: real balances). `Services/Tokens/Kusdt.swift` pins the
+deployment (covenant and pool ids per network, 1.5 KAS per coin) and the KCC20 template
+(`Resources/kusdt-kcc20-template.json`: prefix and suffix from kusdt-open's artifact, checked against
+`templateSHA256` at load), and encodes a coin's 112-byte state and its P2SH script.
+`KusdtBalances.fetch` asks Trestly's `GET /tokens?owner=` and keeps a coin only if it's a plain coin
+of that address's key and the node (no REST fallback) holds that exact outpoint at the recomputed
+script with kUSDT's covenant id: a wrong template or a lying API can hide coins, never invent them.
+`TokenWallet.refresh` looks up the Chatting Address and every revealed regular spending address
+(four at a time; one failure fails the refresh, keeping the last good balances and `lastError`);
+Discover walks 20 past the last revealed and reveals up to the furthest holding some. Received
+notifications: a token coin sits at its own contract address, so the Kaspa watch never sees it;
+instead every refresh compares coins with those known on this phone (`token_seen_<id>_<account>`)
+and announces new ones as "Received 25.50 kUSDT" (local notification + Notifications list, source
+`.token`, behind Address Activity; a tap opens Manage kUSDT via `TokenRoute`). Never announced: the
+first look, what Discover finds, and own transfers (the tx spent a known coin or an input from one
+of your addresses). `startPolling` refreshes every 90 s while the app is open. Push when closed
+needs the indexer (a handoff, later). History isn't
+read yet (the API keeps none).
+
+Stage 2, sends (owner's call: Trestly's own builder, not a Swift port, since a KCC-20 input's
+unlock script and compute budget come from running the contract): `KusdtCore` runs kusdt-open's
+WebAssembly (`Resources/KusdtCore/`: the `.wasm`, its loader shipped as `kusdt_wasm.js.txt`, and
+`kusdt-core.html`, all three SHA-256-pinned and checked before loading) in a hidden, non-persistent
+`WKWebView` served only by the `kusdt-core://` scheme; `run(command, request)` answers its JSON.
+`KusdtTransfer.prepare` follows kusdt-open's `buildTransfer`/`buildFunded`/`checkBuilt`: at most 3
+kUSDT coins of the From address (largest first; more is "send a smaller amount"), the recipient's
+coin plus a change coin to the sender (1.5 KAS each), plain Schnorr KAS coins of the same address
+(unreserved, largest first, one more while the builder asks "add funding" or its fee doesn't
+settle, or more than 0.05 KAS of change would go to the fee), feerate 100, the key of that address
+only; then every token output must be the approved state at its recomputed script with 1.5 KAS,
+every other output must pay the sender, and the fee must be at most 3 KAS. `send` submits through
+`NodePoolService.submitRpcTransaction(_:expectedTxId:)` (holds the coins, looks up a lost answer by
+id), with `storageMass` filled as .kachat does (the v1 id doesn't cover it). The review builds when
+it opens (exact fee), rebuilds if left over 2 minutes, and a lost answer's Try Again resends the
+same signed transaction; `TokenWallet.noteSent` drops the spent coins at once (also on an unknown
+outcome), marks the send's outputs known, and refreshes after 4 s. Trestly's list lags a send, so
+the coins a send made that are yours (the change, or kUSDT to another of your addresses) are kept as
+`pendingCoins` and checked on the node with the listed ones (`KusdtBalances.Expected`) until Trestly
+lists them (30 minutes at most); for 2 minutes one the node doesn't show yet still counts in the
+balance (not in what can be spent), with a refresh every 5 s, so the balance never dips to 0. A whole send (all the address's kUSDT, no change coin) with no KAS there takes the fee from the
+coins' own KAS instead (kusdt-open `feeFromTokenKas`: the recipient's coin gets the inputs' KAS
+less 0.02, 0.05, 0.1 or 0.19 KAS, the least the builder takes; `Prepared.feeFromTokenKas`, noted on
+the review), so it never needs funding. When a partial send's From address lacks KAS
+(`Failure.notEnoughKas(short:forChangeCoin:)`, the button "Add … for Fee and Change Coin" or "… for
+the Network Fee";
+what it needs plus a 0.2 KAS fee margin, less what's there, 0.1 KAS at least), the review offers
+Fund This Address: Send Kaspa with a payment request (signed by the Chatting Address, memo "KAS for
+a kUSDT send") locking in that address and amount, so you only pick the source and swipe; when that sheet closes (Done or swiped away) the review
+builds again, every 3 s for up to a minute after a send ("Waiting for your KAS to arrive…", no
+top-up button meanwhile). If it's still short after a funding send, the review says the KAS hasn't
+shown up yet and offers Check Again, with "Add … More" only as a small link, so nobody tops up twice. Still to come: stage 3,
+kusdt-open's wallet provider (SPEC section 14) in the Trestly browser for swaps and the pool only.
 
 ## Send Kaspa (and every other send)
 
@@ -99,7 +201,7 @@ Every screen that moves Kaspa is the same steps, built from the shared pieces in
    never under the network's minimum, warned above ten times it); Confirm goes back to the review.
 
 Where each screen uses them:
-- `WithdrawKaspaView` (`Views/Contacts/ContactsView.swift`): the Wallet tab's Send, an address's
+- `WithdrawKaspaView` (`Views/Contacts/ContactsView.swift`): the Wallet tab's Send (after `SendAssetChooser`'s Kaspa), an address's
   Send, a contact's, paying a payment request, Compound UTXOs. A pre-filled recipient or a
   payment request opens on From (a request's amount is fixed: no keypad), Compound on the review.
 - Cold Storage (`ColdSendFlowView`): To, Amount ("To" / "From Cold Storage" chips, `SendStepChip`),
@@ -174,6 +276,20 @@ Review re-estimates. The Review prices change at the script it will really go to
 quantum source's change goes to a fresh quantum slot (35 bytes, `reviewChangeScript`). Only the primary
 rotates there; another quantum source just lists the slot. The Receive QR's slot is never given to
 change, and a slot that has held change or spent isn't shown again.
+
+**Receive and Generate** (owner's call, 2026-11-19): Receive always hands out a fresh REGULAR (legacy,
+P2PK) address (`WalletManager.freshReceiveAddress`, `lowestUnusedRegularAddress`), the last one while
+still unused: a regular address takes kUSDT as well as Kaspa, and a quantum-resistant one can't trade
+it, so nobody puts tokens on one by mistake. Quantum-resistant addresses are made on purpose:
+Manage Addresses > Address Actions has Generate Non-Quantum Address and Generate Quantum-Resistant
+Address (`generateNew(quantum:)`, each recycling a hidden unused row of its own chain first). Change
+still goes to fresh quantum slots. Every receive screen is the one shared screen, `AddressReceiveView`
+(`Views/Shared/`, from kUSDT's design): icon and "Receive …", optional choices, the address's name and
+balance, the QR on white, the whole address, a privacy note (`ReceiveNotes`: fresh, spending,
+chatting, quantum), "Tap anywhere to copy" (the whole screen copies, with a toast; no Copy or Share
+buttons), then what may be sent there. Wallet Receive, the Chatting
+Address page, a spending address's QR (a quantum one: Kaspa only, no kUSDT), Cold Storage's
+(Kaspa only) and kUSDT's Receive all use it.
 
 **Coins**: whatever `NodePoolService.submitTransaction` or `submitRpcTransaction(_:expectedTxId:)`
 sends (every send, .kas and .kachat names, combines, Cold Storage) is held from before the submit

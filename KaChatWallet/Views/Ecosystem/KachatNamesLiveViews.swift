@@ -3501,11 +3501,6 @@ struct KachatLiveDomainsTab: View {
     /// the offers this wallet made (moved here from the marketplace's former My Names tab)
     @State private var myOffers: [KachatNames.OfferInfo] = []
     @State private var loaded = false
-    /// The .kachat marketplace, opened by Inscribe as a sheet over Your Domains: a new name
-    /// lands back here as soon as it is swiped away, and it works whether or not .kachat is in
-    /// the dock.
-    @State private var showMarketplace = false
-
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 16) {
@@ -3569,19 +3564,16 @@ struct KachatLiveDomainsTab: View {
                 inscribeButton
             }
         }
-        .sheet(isPresented: $showMarketplace, onDismiss: {
-            Task { await registry.refresh() }
-        }) {
-            KachatMarketView()
-                .presentationDragIndicator(.visible)
-        }
     }
 
     /// Pinned under the list like the other name services' "Get a domain" button, in the same
-    /// glass capsule with a teal outline (the cards above are accent-filled).
+    /// glass capsule with a teal outline (the cards above are accent-filled). Switches to the
+    /// .kachat dock tab, where names are claimed (owner's call, 2026-11-19), rather than opening
+    /// the marketplace as a screen of its own.
     private var inscribeButton: some View {
         Button {
-            showMarketplace = true
+            PendingTabRoute.pending = .kachatNames
+            NotificationCenter.default.post(name: .openKachatName, object: nil)
         } label: {
             Text("Claim a Name")
                 .font(.subheadline)
@@ -3595,7 +3587,7 @@ struct KachatLiveDomainsTab: View {
         .buttonStyle(.plain)
         .padding(.horizontal)
         .padding(.bottom, 16)
-        .accessibilityHint(Text("Opens the .kachat marketplace"))
+        .accessibilityHint(Text("Opens the .kachat tab"))
     }
 
     /// The card badge for a name: Listed, or Expired (in grace). Shared with the per-address
