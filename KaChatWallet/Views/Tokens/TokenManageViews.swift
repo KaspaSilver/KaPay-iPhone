@@ -31,6 +31,8 @@ struct TokenManageView: View {
     @State private var qrTarget: TokenHolding?
     /// Combine Coins from a row's ⋮.
     @State private var combineTarget: TokenHolding?
+    /// Send to Chatting Address from a row's ⋮: that address's kUSDT, the Chatting Address filled in.
+    @State private var sendToChattingTarget: TokenHolding?
     @State private var toastMessage: String?
     @State private var toastToken = UUID()
     @State private var isGenerating = false
@@ -107,7 +109,7 @@ struct TokenManageView: View {
         }
         .sheet(item: $rowActionsTarget) { holding in
             rowActionsSheet(holding)
-                .fittedSheetDetents(holding.coins > 1 ? 460 : 380)
+                .fittedSheetDetents(holding.coins > 1 ? 520 : 440)
                 .presentationDragIndicator(.visible)
         }
         .sheet(item: $qrTarget) { holding in
@@ -115,6 +117,11 @@ struct TokenManageView: View {
         }
         .sheet(item: $combineTarget) { holding in
             TokenCombineView(token: token, holding: holding)
+        }
+        .sheet(item: $sendToChattingTarget) { holding in
+            TokenSendView(token: token, startFrom: holding,
+                          prefillRecipient: WalletManager.shared.currentWallet?.publicAddress,
+                          prefillName: AppLocalization.string("Chatting Address"))
         }
         .alert("Rename Address", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Label", text: $renameText)
@@ -323,6 +330,16 @@ struct TokenManageView: View {
             ) {
                 rowActionsTarget = nil
                 DispatchQueue.main.async { qrTarget = holding }
+            }
+            // as Kaspa's Manage Addresses: this address's kUSDT, the Chatting Address filled in
+            ActionSheetRow(
+                title: "Send to Chatting Address",
+                subtitle: "Moves kUSDT from this address to your Chatting Address.",
+                systemImage: "arrow.up.circle",
+                isDisabled: holding.units == 0
+            ) {
+                rowActionsTarget = nil
+                DispatchQueue.main.async { sendToChattingTarget = holding }
             }
             // more than one coin: each holds 1.5 KAS, merging them gives the extra back
             if holding.coins > 1 {

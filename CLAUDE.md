@@ -101,7 +101,8 @@ addresses, so there's no chain to choose). Manage kUSDT lists the Chatting Addre
 holding kUSDT unless hidden, and any empty address checked on (`listedHoldings`, kept per account
 on the phone); hidden ones still count in the total and stay in Send's From. A row opens
 `TokenAddressView` (each regular address row has Manage Addresses' ⋮: Rename, shared with Manage
-Addresses, Copy, Show QR Code, Hide): that address's balance, its history of just kUSDT, Receive and Send at the
+Addresses, Copy, Show QR Code, Send to Chatting Address (`TokenSendView`'s `prefillRecipient`, opening
+on How much), Combine Coins with more than one coin, Hide): that address's balance, its history of just kUSDT, Receive and Send at the
 bottom (from that address), and the top-right options (Open Trestly With This Address, View in
 Explorer). `TrestlyConnectSheet` picks the address (Chatting Address, every address holding kUSDT,
 or a fresh one) before the site opens. `TokenSendView` is Send Kaspa's steps (To with names, From,

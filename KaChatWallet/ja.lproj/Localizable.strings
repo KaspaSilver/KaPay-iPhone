@@ -2243,3 +2243,4 @@
 "Sends, receives and combines on this phone show here from now on." = "これ以降、この端末での送金・受取・まとめがここに表示されます。";
 "Send to Chatting Address" = "チャットアドレスに送る";
 "Moves Kaspa from this address to your Chatting Address." = "このアドレスの Kaspa をチャットアドレスに移します。";
+"Moves kUSDT from this address to your Chatting Address." = "このアドレスの kUSDT をチャットアドレスに移します。";

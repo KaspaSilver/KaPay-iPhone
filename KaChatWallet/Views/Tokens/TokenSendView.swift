@@ -12,6 +12,19 @@ struct TokenSendView: View {
     let token: WalletToken
     /// Sent from this address (its own page's Send): no From step.
     var startFrom: TokenHolding? = nil
+
+    /// `prefillRecipient`: the To already filled in (Manage kUSDT's Send to Chatting Address), so it
+    /// opens on How much (on From when more than one address could send), `prefillName` shown in
+    /// place of the address. Back still reaches the To step to change it.
+    init(token: WalletToken, startFrom: TokenHolding? = nil, prefillRecipient: String? = nil, prefillName: String? = nil) {
+        self.token = token
+        self.startFrom = startFrom
+        if let prefillRecipient {
+            _addressInput = State(initialValue: prefillRecipient)
+            _resolvedName = State(initialValue: prefillName)
+            _step = State(initialValue: startFrom != nil ? .amount : .from)
+        }
+    }
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var walletManager: WalletManager
     @ObservedObject private var tokens = TokenWallet.shared

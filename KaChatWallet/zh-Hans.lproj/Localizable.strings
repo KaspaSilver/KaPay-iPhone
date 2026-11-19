@@ -2242,3 +2242,4 @@
 "Sends, receives and combines on this phone show here from now on." = "从现在起，此手机上的发送、接收和合并会显示在这里。";
 "Send to Chatting Address" = "发送到聊天地址";
 "Moves Kaspa from this address to your Chatting Address." = "将此地址的 Kaspa 转到你的聊天地址。";
+"Moves kUSDT from this address to your Chatting Address." = "将此地址的 kUSDT 转到你的聊天地址。";
