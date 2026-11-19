@@ -143,8 +143,20 @@ and announces new ones as "Received 25.50 kUSDT" (local notification + Notificat
 `.token`, behind Address Activity; a tap opens Manage kUSDT via `TokenRoute`). Never announced: the
 first look, what Discover finds, and own transfers (the tx spent a known coin or an input from one
 of your addresses). `startPolling` refreshes every 90 s while the app is open. Push when closed
-needs the indexer (a handoff, later). History isn't
-read yet (the API keeps none).
+needs the indexer (a handoff, later). History is kept on the phone (Trestly's API keeps none, and a
+token coin never sits at your own address): `TokenWallet.record` saves this phone's sends, Combine
+Coins and kUSDT received from others (`TokenActivity`, Codable, id "txid:holding:kind" so a send
+noted twice is one line; `token_activity_<id>_<account>`, 300 at most), shown on each address's
+page. Nothing from before, or from another app on the same words.
+
+**Combine Coins** (`TokenCombineView`, from a row's ⋮ in Manage kUSDT or an address page's options,
+when the address holds more than one coin): `KusdtTransfer.prepareCombine` sends the address's
+largest coins (3 at most per round) to itself as one coin. Every coin holds 1.5 KAS, so the KAS of
+each coin merged away comes back as plain KAS (`Prepared.kasBack`), less the fee it pays; no funding.
+Any send whose coins hold more KAS than its outputs (a send of everything from several coins too)
+gives the extra back as change, never to the recipient's coin. A kUSDT transaction's KAS change has
+no input from your addresses, so `KusdtTransfer.send` marks it handled first
+(`AddressActivityNotifier.markOwnTransaction`): never a "Received KAS".
 
 Stage 2, sends (owner's call: Trestly's own builder, not a Swift port, since a KCC-20 input's
 unlock script and compute budget come from running the contract): `KusdtCore` runs kusdt-open's

@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "כל מה שתעשו באתר של Trestly, החלפה או הוספה למאגר, קורה בכתובת הזו. רק היא מוצגת לאתר.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "לא ניתן היה לבדוק את %1$@ כרגע: %2$@ משכו למטה כדי לנסות שוב.";
 "Checking your %@..." = "בודקים את ה-%@ שלכם…";
-"%@ history isn't shown yet." = "היסטוריית %@ עדיין לא מוצגת.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "התבנית של kUSDT חסרה ב-KaPay, ולכן אי אפשר לבדוק kUSDT.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "כתובת ה-API של Trestly בהגדרות החיבור אינה כתובת https תקינה.";
 "Trestly didn't answer." = "Trestly לא ענה.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "ממתינים שה-KAS שלכם יגיע…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "ה-KAS ששלחתם עדיין לא הופיע בכתובת הזו. זה לוקח בדרך כלל כמה שניות.";
 "Add %@ More" = "הוספת עוד %@";
+"Combine Coins" = "איחוד מטבעות";
+"Merges its coins into one and gives the extra KAS back." = "מאחד את המטבעות שלה לאחד ומחזיר את ה-KAS העודף.";
+"Swipe up to Combine" = "החליקו למעלה לאיחוד";
+"Coins Combined" = "המטבעות אוחדו";
+"%d coins into 1" = "%d מטבעות ל-1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "כל מטבע %@ מחזיק %@. איחודם למטבע אחד מחזיר את ה-KAS העודף לכתובת הזו כ-KAS רגיל, בניכוי עמלת הרשת. ה-%@ שלכם נשאר אותו דבר.";
+"Combined" = "אוחד";
+"Back to This Address" = "חוזר לכתובת הזו";
+"Up to %d coins combine at a time. Combine again for the rest." = "אפשר לאחד עד %d מטבעות בכל פעם. אחדו שוב בשביל השאר.";
+"This address holds its kUSDT in one coin already." = "הכתובת הזו כבר מחזיקה את ה-kUSDT שלה במטבע אחד.";
+"Combined Coins" = "מטבעות אוחדו";
+"No %@ activity yet." = "אין עדיין פעילות %@.";
+"Sends, receives and combines on this phone show here from now on." = "מעכשיו, שליחות, קבלות ואיחודים בטלפון הזה יופיעו כאן.";

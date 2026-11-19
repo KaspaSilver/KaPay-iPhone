@@ -27,10 +27,15 @@ enum KusdtTransfer {
         let holding: TokenHolding
         /// Where the kUSDT goes (output 0).
         let recipient: String
+        /// The name it was sent to, if any (the history shows it in place of the address).
+        var recipientLabel: String? = nil
         let amount: UInt64
         /// All of the address's kUSDT went and it had no KAS: the fee came out of the KAS that
         /// travels with the tokens, so the recipient's coin holds a little under 1.5 KAS.
         let feeFromTokenKas: Bool
+        /// Plain KAS the transaction pays back to the sending address (its change). For Combine
+        /// Coins, the KAS the merged coins held beyond the one coin's 1.5 KAS, less the fee.
+        let kasBack: UInt64
         let preparedAt = Date()
     }
 
@@ -45,6 +50,7 @@ enum KusdtTransfer {
         case feeTooHigh
         case checkFailed
         case templateMissing
+        case nothingToCombine
 
         var errorDescription: String? {
             switch self {
@@ -59,6 +65,7 @@ enum KusdtTransfer {
             case .feeTooHigh: return AppLocalization.string("The network fee is above KaPay's safety limit. Nothing was sent.")
             case .checkFailed: return AppLocalization.string("The built transaction didn't match what you approved, so nothing was sent.")
             case .templateMissing: return AppLocalization.string("KaPay's kUSDT template is missing, so kUSDT can't be checked.")
+            case .nothingToCombine: return AppLocalization.string("This address holds its kUSDT in one coin already.")
             }
         }
     }
@@ -102,6 +109,9 @@ enum KusdtTransfer {
         let kasIn = picked.reduce(UInt64(0)) { $0 + $1.kasSompi }
         let kasOut = outputs.reduce(UInt64(0)) { $0 + $1.value }
         let need = kasOut > kasIn ? kasOut - kasIn : 0
+        // more coins in than out (Combine Coins, or a send of everything from several coins): the
+        // extra KAS pays the fee and comes back to this address as plain KAS
+        let excess = kasIn > kasOut ? kasIn - kasOut : 0
 
         // the key of the sending address, for this one build
         guard let secret = (holding.spendingIndex.map { WalletManager.shared.spendingPrivateKey(at: $0) } ?? WalletManager.shared.getPrivateKey()) else {
@@ -137,7 +147,7 @@ enum KusdtTransfer {
         var n = 0
         var covered: UInt64 = 0
         let margin: UInt64 = 50_000_000
-        while n < funding.count && covered < need + margin {
+        while n < funding.count && covered + excess < need + margin {
             covered += funding[n].amount
             n += 1
         }
@@ -153,7 +163,7 @@ enum KusdtTransfer {
 
         var built: [String: Any]?
         var tokenKasFees: [UInt64] = [2_000_000, 5_000_000, 10_000_000, 19_000_000]
-        if wholeSend && funding.isEmpty {
+        if wholeSend && funding.isEmpty && excess == 0 {
             feeFromTokenKas = true
             n = 0
         }
@@ -215,6 +225,7 @@ enum KusdtTransfer {
         // 4. what was built is what was approved
         guard let builtOutputs = built["outputs"] as? [[String: Any]] else { throw Failure.checkFailed }
         let mine = "0000" + Kusdt.hex(KachatNames.Codec.p2pkScript(senderKey))
+        var kasBack: UInt64 = 0
         for (index, output) in builtOutputs.enumerated() {
             let script = (output["scriptPublicKey"] as? String)?.lowercased() ?? ""
             if index < outputs.count {
@@ -226,6 +237,8 @@ enum KusdtTransfer {
                 }
             } else if script != mine {
                 throw Failure.checkFailed
+            } else {
+                kasBack += number(output["value"]) ?? 0
             }
         }
         let mass = number((built["mass"] as? [String: Any])?["storage"]) ?? 0
@@ -233,7 +246,20 @@ enum KusdtTransfer {
         return Prepared(txid: txid.lowercased(), fee: fee, kasToRecipient: outputs[0].value, rpc: rpc,
                         spentCoins: picked, changeIndex: outputs.count > 1 ? 1 : nil, holding: holding,
                         recipient: recipient, amount: amount,
-                        feeFromTokenKas: feeFromTokenKas)
+                        feeFromTokenKas: feeFromTokenKas, kasBack: kasBack)
+    }
+
+    // MARK: Combine Coins
+
+    /// Combine Coins: the address's largest coins (up to 3) become one, sent to itself. Every
+    /// kUSDT coin holds 1.5 KAS, so each coin merged away gives 1.5 KAS back to the address as
+    /// plain KAS (less the fee, which that KAS pays: no funding needed). Built and checked like any
+    /// send; `Prepared.kasBack` is what comes back. More than 3 coins take another round.
+    static func prepareCombine(holding: TokenHolding, coins: [KusdtBalances.Coin]) async throws -> Prepared {
+        let largest = coins.filter { $0.state.amount > 0 }.sorted { $0.state.amount > $1.state.amount }.prefix(maxTokenInputs)
+        guard largest.count > 1 else { throw Failure.nothingToCombine }
+        let amount = largest.reduce(UInt64(0)) { $0 + $1.state.amount }
+        return try await prepare(holding: holding, coins: Array(largest), recipient: holding.address, amount: amount)
     }
 
     // MARK: Send
@@ -241,6 +267,8 @@ enum KusdtTransfer {
     /// Sends a prepared transfer; answers its id. The node pool holds every coin it spends, and a
     /// node whose answer is lost is looked up by id before anything fails, so it never sends twice.
     static func send(_ prepared: Prepared) async throws -> String {
+        // its KAS change comes back with no input from your addresses: not a "Received KAS"
+        AddressActivityNotifier.shared.markOwnTransaction(prepared.txid)
         let (txid, endpoint) = try await NodePoolService.shared.submitRpcTransaction(prepared.rpc, expectedTxId: prepared.txid)
         AppLog.log("[kUSDT] sent %@ via %@", String(txid.prefix(12)), endpoint)
         TokenWallet.shared.noteSent(prepared)

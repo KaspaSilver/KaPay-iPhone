@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Mọi thứ bạn làm trên trang Trestly, hoán đổi hay góp vào pool, đều diễn ra trên địa chỉ này. Chỉ địa chỉ này được hiển thị cho trang.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "Chưa kiểm tra được %1$@: %2$@ Kéo xuống để thử lại.";
 "Checking your %@..." = "Đang kiểm tra %@ của bạn…";
-"%@ history isn't shown yet." = "Lịch sử %@ chưa được hiển thị.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "Thiếu mẫu kUSDT của KaPay, nên không kiểm tra được kUSDT.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "Địa chỉ API Trestly trong Cài đặt kết nối không phải địa chỉ https hợp lệ.";
 "Trestly didn't answer." = "Trestly không trả lời.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "Đang chờ KAS của bạn đến…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "KAS bạn gửi chưa xuất hiện ở địa chỉ này. Thường chỉ mất vài giây.";
 "Add %@ More" = "Thêm %@ nữa";
+"Combine Coins" = "Gộp đồng";
+"Merges its coins into one and gives the extra KAS back." = "Gộp các đồng của nó thành một và trả lại phần KAS dư.";
+"Swipe up to Combine" = "Vuốt lên để gộp";
+"Coins Combined" = "Đã gộp đồng";
+"%d coins into 1" = "%d đồng thành 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "Mỗi đồng %@ giữ %@. Gộp chúng thành một đồng sẽ trả phần KAS dư về địa chỉ này dưới dạng KAS thường, trừ phí mạng. Số %@ của bạn không đổi.";
+"Combined" = "Đã gộp";
+"Back to This Address" = "Trả về địa chỉ này";
+"Up to %d coins combine at a time. Combine again for the rest." = "Mỗi lần gộp tối đa %d đồng. Gộp lại lần nữa cho phần còn lại.";
+"This address holds its kUSDT in one coin already." = "Địa chỉ này đã giữ kUSDT trong một đồng.";
+"Combined Coins" = "Đã gộp đồng";
+"No %@ activity yet." = "Chưa có hoạt động %@.";
+"Sends, receives and combines on this phone show here from now on." = "Từ giờ, các lần gửi, nhận và gộp trên điện thoại này sẽ hiện ở đây.";

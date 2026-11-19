@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Trestly की साइट पर आप जो भी करते हैं, स्वैप या पूल में जोड़ना, सब इसी पते पर होता है। साइट को सिर्फ़ यही पता दिखता है।";
 "Couldn't check %@ just now: %@ Pull down to try again." = "अभी %1$@ जाँच नहीं पाए: %2$@ फिर कोशिश करने के लिए नीचे खींचें।";
 "Checking your %@..." = "आपके %@ जाँच रहे हैं…";
-"%@ history isn't shown yet." = "%@ इतिहास अभी नहीं दिखाया जाता।";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "KaPay का kUSDT टेम्पलेट नहीं मिला, इसलिए kUSDT जाँचा नहीं जा सकता।";
 "The Trestly API address in Connection Settings isn't a valid https address." = "कनेक्शन सेटिंग्स में Trestly API पता मान्य https पता नहीं है।";
 "Trestly didn't answer." = "Trestly ने जवाब नहीं दिया।";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "आपके KAS के आने का इंतज़ार…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "आपका भेजा KAS अभी इस पते पर नहीं दिखा। आमतौर पर कुछ सेकंड लगते हैं।";
 "Add %@ More" = "%@ और जोड़ें";
+"Combine Coins" = "कॉइन मिलाएँ";
+"Merges its coins into one and gives the extra KAS back." = "इसके कॉइन एक में मिलाता है और बचा KAS लौटाता है।";
+"Swipe up to Combine" = "मिलाने के लिए ऊपर स्वाइप करें";
+"Coins Combined" = "कॉइन मिल गए";
+"%d coins into 1" = "%d कॉइन से 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "हर %@ कॉइन में %@ रहता है। इन्हें एक कॉइन में मिलाने पर बचा KAS, नेटवर्क शुल्क घटाकर, साधारण KAS के रूप में इस पते पर लौट आता है। आपका %@ उतना ही रहता है।";
+"Combined" = "मिलाया गया";
+"Back to This Address" = "इस पते पर वापस";
+"Up to %d coins combine at a time. Combine again for the rest." = "एक बार में %d कॉइन तक मिलते हैं। बाकी के लिए फिर से मिलाएँ।";
+"This address holds its kUSDT in one coin already." = "इस पते का kUSDT पहले से एक कॉइन में है।";
+"Combined Coins" = "कॉइन मिलाए गए";
+"No %@ activity yet." = "अभी कोई %@ गतिविधि नहीं।";
+"Sends, receives and combines on this phone show here from now on." = "अब से इस फ़ोन पर भेजना, पाना और मिलाना यहाँ दिखेगा।";

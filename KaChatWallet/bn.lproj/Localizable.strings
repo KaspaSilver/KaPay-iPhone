@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Trestly-র সাইটে আপনি যা করেন, সোয়াপ বা পুলে যোগ, সব এই ঠিকানায় হয়। সাইটকে শুধু এটিই দেখানো হয়।";
 "Couldn't check %@ just now: %@ Pull down to try again." = "এখন %1$@ যাচাই করা গেল না: %2$@ আবার চেষ্টা করতে নিচে টানুন।";
 "Checking your %@..." = "আপনার %@ যাচাই করা হচ্ছে…";
-"%@ history isn't shown yet." = "%@ ইতিহাস এখনো দেখানো হয় না।";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "KaPay-এর kUSDT টেমপ্লেট নেই, তাই kUSDT যাচাই করা যাচ্ছে না।";
 "The Trestly API address in Connection Settings isn't a valid https address." = "সংযোগ সেটিংসে Trestly API ঠিকানা বৈধ https ঠিকানা নয়।";
 "Trestly didn't answer." = "Trestly উত্তর দেয়নি।";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "আপনার KAS আসার অপেক্ষায়…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "আপনার পাঠানো KAS এখনও এই ঠিকানায় দেখা যায়নি। সাধারণত কয়েক সেকেন্ড লাগে।";
 "Add %@ More" = "আরও %@ যোগ করুন";
+"Combine Coins" = "কয়েন একত্র করুন";
+"Merges its coins into one and gives the extra KAS back." = "এর কয়েনগুলো একটিতে মিলিয়ে বাড়তি KAS ফেরত দেয়।";
+"Swipe up to Combine" = "একত্র করতে ওপরে সোয়াইপ করুন";
+"Coins Combined" = "কয়েন একত্র হয়েছে";
+"%d coins into 1" = "%dটি কয়েন থেকে 1টি";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "প্রতিটি %@ কয়েনে %@ থাকে। এগুলো একটি কয়েনে মেলালে বাড়তি KAS নেটওয়ার্ক ফি বাদে সাধারণ KAS হিসেবে এই ঠিকানায় ফিরে আসে। আপনার %@ একই থাকে।";
+"Combined" = "একত্র করা হয়েছে";
+"Back to This Address" = "এই ঠিকানায় ফেরত";
+"Up to %d coins combine at a time. Combine again for the rest." = "একবারে সর্বোচ্চ %dটি কয়েন একত্র হয়। বাকিগুলোর জন্য আবার একত্র করুন।";
+"This address holds its kUSDT in one coin already." = "এই ঠিকানার kUSDT ইতিমধ্যে একটি কয়েনে আছে।";
+"Combined Coins" = "কয়েন একত্র করা হয়েছে";
+"No %@ activity yet." = "এখনও কোনো %@ কার্যকলাপ নেই।";
+"Sends, receives and combines on this phone show here from now on." = "এখন থেকে এই ফোনে পাঠানো, পাওয়া ও একত্র করা এখানে দেখাবে।";

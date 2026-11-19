@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "Couldn't check %@ just now: %@ Pull down to try again.";
 "Checking your %@..." = "Checking your %@...";
-"%@ history isn't shown yet." = "%@ history isn't shown yet.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "KaPay's kUSDT template is missing, so kUSDT can't be checked.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "The Trestly API address in Connection Settings isn't a valid https address.";
 "Trestly didn't answer." = "Trestly didn't answer.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "Waiting for your KAS to arrive…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds.";
 "Add %@ More" = "Add %@ More";
+"Combine Coins" = "Combine Coins";
+"Merges its coins into one and gives the extra KAS back." = "Merges its coins into one and gives the extra KAS back.";
+"Swipe up to Combine" = "Swipe up to Combine";
+"Coins Combined" = "Coins Combined";
+"%d coins into 1" = "%d coins into 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same.";
+"Combined" = "Combined";
+"Back to This Address" = "Back to This Address";
+"Up to %d coins combine at a time. Combine again for the rest." = "Up to %d coins combine at a time. Combine again for the rest.";
+"This address holds its kUSDT in one coin already." = "This address holds its kUSDT in one coin already.";
+"Combined Coins" = "Combined Coins";
+"No %@ activity yet." = "No %@ activity yet.";
+"Sends, receives and combines on this phone show here from now on." = "Sends, receives and combines on this phone show here from now on.";

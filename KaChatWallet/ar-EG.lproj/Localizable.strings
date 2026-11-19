@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "كل اللي بتعمله على موقع Trestly، تبديل أو إضافة للبول، بيحصل على العنوان ده. والموقع مش بيشوف غيره.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "مقدرناش نتأكد من %1$@ دلوقتي: %2$@ اسحب لتحت علشان تحاول تاني.";
 "Checking your %@..." = "بنتأكد من الـ %@ بتاعك…";
-"%@ history isn't shown yet." = "سجل %@ لسه مش ظاهر.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "قالب kUSDT بتاع KaPay مش موجود، فمش هنقدر نتأكد من kUSDT.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "عنوان API بتاع Trestly في إعدادات الاتصال مش عنوان https صحيح.";
 "Trestly didn't answer." = "Trestly مردّش.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "مستنيين الـ KAS بتاعك يوصل…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "الـ KAS اللي بعته لسه ماظهرش على العنوان ده. عادةً بياخد كام ثانية.";
 "Add %@ More" = "ضيف %@ كمان";
+"Combine Coins" = "ادمج العملات";
+"Merges its coins into one and gives the extra KAS back." = "بيدمج عملاته في عملة واحدة ويرجّع الـ KAS الزيادة.";
+"Swipe up to Combine" = "اسحب لفوق علشان تدمج";
+"Coins Combined" = "العملات اتدمجت";
+"%d coins into 1" = "%d عملات في 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "كل عملة %@ فيها %@. لما تدمجهم في عملة واحدة، الـ KAS الزيادة بيرجع للعنوان ده KAS عادي بعد رسوم الشبكة. الـ %@ بتاعك بيفضل زي ما هو.";
+"Combined" = "المدموج";
+"Back to This Address" = "راجع للعنوان ده";
+"Up to %d coins combine at a time. Combine again for the rest." = "بيتدمج لحد %d عملات في المرة. ادمج تاني للباقي.";
+"This address holds its kUSDT in one coin already." = "العنوان ده شايل الـ kUSDT في عملة واحدة أصلاً.";
+"Combined Coins" = "العملات اتدمجت";
+"No %@ activity yet." = "لسه مفيش نشاط %@.";
+"Sends, receives and combines on this phone show here from now on." = "من دلوقتي الإرسال والاستلام والدمج على الموبايل ده هيظهروا هنا.";

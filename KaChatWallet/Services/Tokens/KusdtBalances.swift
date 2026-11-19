@@ -96,7 +96,7 @@ enum KusdtBalances {
         if coins.count < wanted.count {
             AppLog.log("[kUSDT] %d of %d listed coins weren't on the node as listed: not shown", wanted.count - coins.count, wanted.count)
         }
-        return AddressResult(address: address, coins: coins, uncheckedCount: answer.unreadCount, listedByAPI: listedByAPI)
+        return AddressResult(address: address, coins: coins, listedByAPI: listedByAPI, uncheckedCount: answer.unreadCount)
     }
 
     // MARK: Trestly's API

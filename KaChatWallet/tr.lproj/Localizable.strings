@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Trestly’nin sitesinde yaptığın her şey, takas ya da havuza ekleme, bu adreste olur. Siteye yalnızca bu adres gösterilir.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "%1$@ şu an kontrol edilemedi: %2$@ Yeniden denemek için aşağı çek.";
 "Checking your %@..." = "%@ kontrol ediliyor…";
-"%@ history isn't shown yet." = "%@ geçmişi henüz gösterilmiyor.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "KaPay’in kUSDT şablonu eksik, bu yüzden kUSDT kontrol edilemiyor.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "Bağlantı Ayarları’ndaki Trestly API adresi geçerli bir https adresi değil.";
 "Trestly didn't answer." = "Trestly yanıt vermedi.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "KAS’ının gelmesi bekleniyor…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "Gönderdiğin KAS henüz bu adreste görünmüyor. Genellikle birkaç saniye sürer.";
 "Add %@ More" = "%@ Daha Ekle";
+"Combine Coins" = "Coin’leri Birleştir";
+"Merges its coins into one and gives the extra KAS back." = "Coin’lerini tek bir coin’de birleştirir ve fazla KAS’ı geri verir.";
+"Swipe up to Combine" = "Birleştirmek için yukarı kaydır";
+"Coins Combined" = "Coin’ler Birleştirildi";
+"%d coins into 1" = "%d coin 1 oldu";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "Her %@ coin’i %@ tutar. Onları tek coin’de birleştirince fazla KAS, ağ ücreti düşülerek bu adrese normal KAS olarak döner. %@ miktarın aynı kalır.";
+"Combined" = "Birleştirilen";
+"Back to This Address" = "Bu Adrese Dönen";
+"Up to %d coins combine at a time. Combine again for the rest." = "Bir seferde en fazla %d coin birleşir. Kalanlar için yeniden birleştir.";
+"This address holds its kUSDT in one coin already." = "Bu adres kUSDT’sini zaten tek coin’de tutuyor.";
+"Combined Coins" = "Coin’ler Birleştirildi";
+"No %@ activity yet." = "Henüz %@ hareketi yok.";
+"Sends, receives and combines on this phone show here from now on." = "Bu telefondaki gönderimler, alımlar ve birleştirmeler bundan sonra burada görünür.";

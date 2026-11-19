@@ -203,19 +203,21 @@ struct TokenActivityRow: View {
                             .foregroundColor(.orange)
                     }
                 }
-                Text(verbatim: counterpartyLine)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if let counterpartyLine {
+                    Text(verbatim: counterpartyLine)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 2) {
-                Text(verbatim: (isIn ? "+" : "-") + TokenAmount.plain(row.units, token: token))
+                Text(verbatim: sign + TokenAmount.plain(row.units, token: token))
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(isIn ? .green : .primary)
                     .monospacedDigit()
-                Text(row.date, style: .date)
+                Text(row.date, format: .dateTime.month(.abbreviated).day().hour().minute())
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -226,12 +228,16 @@ struct TokenActivityRow: View {
 
     private var isIn: Bool { row.kind == .received || row.kind == .bridged || row.kind == .swapped }
 
+    /// A combine moves nothing in or out: no sign.
+    private var sign: String { row.kind == .combined ? "" : (isIn ? "+" : "-") }
+
     private var icon: String {
         switch row.kind {
         case .received: return "arrow.down"
         case .sent: return "arrow.up"
         case .swapped: return "arrow.triangle.2.circlepath"
         case .bridged: return "arrow.left.arrow.right"
+        case .combined: return "arrow.triangle.merge"
         }
     }
 
@@ -241,11 +247,14 @@ struct TokenActivityRow: View {
         case .sent: return "Sent"
         case .swapped: return "Swapped"
         case .bridged: return "Bridged In"
+        case .combined: return "Combined Coins"
         }
     }
 
-    private var counterpartyLine: String {
+    private var counterpartyLine: String? {
+        if row.counterparty.isEmpty { return nil }
         switch row.kind {
+        case .combined: return String(format: AppLocalization.string("%d coins into 1"), Int(row.counterparty) ?? 2)
         case .received: return String(format: AppLocalization.string("From %@"), row.counterparty)
         case .sent: return String(format: AppLocalization.string("To %@"), row.counterparty)
         case .swapped: return String(format: AppLocalization.string("KAS for %@ on %@"), token.symbol, row.counterparty)

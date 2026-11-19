@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Всё, что вы делаете на сайте Trestly — обмен или взнос в пул, — происходит на этом адресе. Сайту показывается только он.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "Не удалось проверить %1$@: %2$@ Потяните вниз, чтобы повторить.";
 "Checking your %@..." = "Проверяю ваши %@…";
-"%@ history isn't shown yet." = "История %@ пока не показывается.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "В KaPay нет шаблона kUSDT, поэтому kUSDT нельзя проверить.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "Адрес API Trestly в настройках подключения — не действительный https-адрес.";
 "Trestly didn't answer." = "Trestly не ответил.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "Ждём, пока придут ваши KAS…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "Отправленные KAS ещё не появились на этом адресе. Обычно это занимает несколько секунд.";
 "Add %@ More" = "Добавить ещё %@";
+"Combine Coins" = "Объединить монеты";
+"Merges its coins into one and gives the extra KAS back." = "Объединяет его монеты в одну и возвращает лишние KAS.";
+"Swipe up to Combine" = "Смахните вверх, чтобы объединить";
+"Coins Combined" = "Монеты объединены";
+"%d coins into 1" = "%d монет в 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "Каждая монета %@ содержит %@. Если объединить их в одну, лишние KAS вернутся на этот адрес обычными KAS за вычетом комиссии сети. Ваш %@ не изменится.";
+"Combined" = "Объединено";
+"Back to This Address" = "Вернётся на этот адрес";
+"Up to %d coins combine at a time. Combine again for the rest." = "За раз объединяется до %d монет. Для остальных объедините ещё раз.";
+"This address holds its kUSDT in one coin already." = "На этом адресе kUSDT уже лежит одной монетой.";
+"Combined Coins" = "Монеты объединены";
+"No %@ activity yet." = "Операций с %@ пока нет.";
+"Sends, receives and combines on this phone show here from now on." = "Отправки, получения и объединения на этом телефоне будут видны здесь с этого момента.";

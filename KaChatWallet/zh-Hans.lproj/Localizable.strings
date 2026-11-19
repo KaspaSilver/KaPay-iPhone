@@ -2175,7 +2175,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "你在 Trestly 网站上的一切操作，兑换或向资金池添加，都在这个地址上进行。网站只能看到这个地址。";
 "Couldn't check %@ just now: %@ Pull down to try again." = "暂时无法核对 %1$@：%2$@ 下拉重试。";
 "Checking your %@..." = "正在核对你的 %@…";
-"%@ history isn't shown yet." = "%@ 记录暂不显示。";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "KaPay 缺少 kUSDT 模板，无法核对 kUSDT。";
 "The Trestly API address in Connection Settings isn't a valid https address." = "连接设置中的 Trestly API 地址不是有效的 https 地址。";
 "Trestly didn't answer." = "Trestly 没有响应。";
@@ -2228,3 +2227,16 @@
 "Waiting for your KAS to arrive…" = "正在等待你的 KAS 到账…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "你发送的 KAS 还没有出现在此地址上。通常只需几秒钟。";
 "Add %@ More" = "再添加 %@";
+"Combine Coins" = "合并币";
+"Merges its coins into one and gives the extra KAS back." = "将其币合并为一个，并退回多出的 KAS。";
+"Swipe up to Combine" = "上滑以合并";
+"Coins Combined" = "已合并币";
+"%d coins into 1" = "%d 个合为 1 个";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "每个 %@ 币都持有 %@。将它们合并为一个币后，多出的 KAS 会扣除网络费，以普通 KAS 退回此地址。你的 %@ 数量不变。";
+"Combined" = "合并数量";
+"Back to This Address" = "退回此地址";
+"Up to %d coins combine at a time. Combine again for the rest." = "每次最多合并 %d 个币。其余的请再合并一次。";
+"This address holds its kUSDT in one coin already." = "此地址的 kUSDT 已在一个币中。";
+"Combined Coins" = "已合并币";
+"No %@ activity yet." = "还没有 %@ 记录。";
+"Sends, receives and combines on this phone show here from now on." = "从现在起，此手机上的发送、接收和合并会显示在这里。";

@@ -117,9 +117,11 @@ enum TokenAmount {
 }
 
 /// One line of a token's activity.
-struct TokenActivity: Identifiable {
-    enum Kind { case received, sent, swapped, bridged }
-    let id = UUID()
+struct TokenActivity: Identifiable, Codable, Equatable {
+    enum Kind: String, Codable { case received, sent, swapped, bridged, combined }
+    /// "txid:holding:kind" for what this phone records, so a send noted twice (a lost answer,
+    /// then Try Again) is one line.
+    var id = UUID().uuidString
     let kind: Kind
     let units: UInt64
     /// The other side: an address or a name.
@@ -215,6 +217,7 @@ final class TokenWallet: ObservableObject {
             pendingCoins = []
             loadedAccount = account
         }
+        loadActivityIfNeeded(account: account)
         isRefreshing = true
         defer { isRefreshing = false }
         let manager = WalletManager.shared
@@ -229,6 +232,7 @@ final class TokenWallet: ObservableObject {
             guard WalletManager.shared.currentWallet?.publicAddress == account else { return }
             let previous = coins
             apply(results, for: .kusdt)
+            loadActivityIfNeeded(account: account)
             await announceNewCoins(previous: previous, account: account, token: .kusdt)
             lastError = nil
             lastRefreshed = Date()
@@ -408,6 +412,26 @@ final class TokenWallet: ObservableObject {
                 since: Date()))
         }
 
+        // the history: a combine, or a send (and its arrival, when it went to another of yours)
+        let token = WalletToken.kusdt
+        if prepared.recipient.lowercased() == prepared.holding.address.lowercased() {
+            record(TokenActivity(id: "\(prepared.txid):\(prepared.holding.id):combined", kind: .combined, units: prepared.amount,
+                                 counterparty: String(prepared.spentCoins.count), date: Date(), holdingID: prepared.holding.id),
+                   token: token, account: account)
+        } else {
+            let to = ownRecipient.map { own in
+                TokenHolding(spendingIndex: own.spendingIndex, address: own.address, units: 0, coins: 0).label
+            } ?? prepared.recipientLabel ?? prepared.recipient
+            record(TokenActivity(id: "\(prepared.txid):\(prepared.holding.id):sent", kind: .sent, units: prepared.amount,
+                                 counterparty: to, date: Date(), holdingID: prepared.holding.id),
+                   token: token, account: account)
+            if let ownRecipient {
+                record(TokenActivity(id: "\(prepared.txid):\(ownRecipient.id):received", kind: .received, units: prepared.amount,
+                                     counterparty: prepared.holding.label, date: Date(), holdingID: ownRecipient.id),
+                       token: token, account: account)
+            }
+        }
+
         var list = holdings[WalletToken.kusdt.id] ?? []
         if let i = list.firstIndex(where: { $0.id == prepared.holding.id }) {
             let old = list[i]
@@ -483,7 +507,7 @@ final class TokenWallet: ObservableObject {
         defer { rememberSeen(current, account: account, token: token) }
         guard let known else { return } // first look: learn, don't announce
         let fresh = current.filter { !known.contains(Self.outpointKey($0)) }
-        guard !fresh.isEmpty, Self.notificationsEnabled else { return }
+        guard !fresh.isEmpty else { return }
 
         // a coin we knew that's gone now: something of ours was spent in this window
         let previousKeys = Set(previous.values.flatMap { $0 }.map(Self.outpointKey))
@@ -502,10 +526,15 @@ final class TokenWallet: ObservableObject {
                     own = await Self.isOwnTransfer(coin.transactionId, known: known, ownAddresses: ownAddresses, fallback: ownCoinSpent)
                     checked[coin.transactionId] = own
                 }
-                if !own, coin.state.amount > 0 { received.append((holdingID, coin.state.amount)) }
+                if !own, coin.state.amount > 0 {
+                    received.append((holdingID, coin.state.amount))
+                    record(TokenActivity(id: "\(coin.transactionId):\(holdingID):received", kind: .received,
+                                         units: coin.state.amount, counterparty: "", date: Date(), holdingID: holdingID),
+                           token: token, account: account)
+                }
             }
         }
-        guard !received.isEmpty else { return }
+        guard !received.isEmpty, Self.notificationsEnabled else { return }
         postReceived(received, token: token)
     }
 
@@ -634,7 +663,44 @@ final class TokenWallet: ObservableObject {
         allHoldings(of: token).map { $0.reduce(0) { $0 + $1.units } }
     }
 
-    /// Trestly's API keeps no history, so this stays empty until history is read from the chain.
+    // MARK: History (kept on this phone)
+
+    /// Trestly's API keeps no history and a token coin never sits at your own address, so the
+    /// history is what this phone saw: its sends and Combine Coins (`noteSent`), and kUSDT received
+    /// from others (`announceNewCoins`), newest first, per account and token, 300 at most. What
+    /// happened before, or in another app on the same words, isn't in it.
+    private static let activityCap = 300
+    private var activityAccount: String?
+
+    private func activityKey(account: String, token: WalletToken) -> String { "token_activity_\(token.id)_\(account)" }
+
+    /// The account's saved history, read once per account (never from a view's body).
+    private func loadActivityIfNeeded(account: String) {
+        guard activityAccount != account else { return }
+        activityAccount = account
+        var loaded: [String: [TokenActivity]] = [:]
+        for token in tokens {
+            if let data = UserDefaults.standard.data(forKey: activityKey(account: account, token: token)),
+               let rows = try? JSONDecoder().decode([TokenActivity].self, from: data) {
+                loaded[token.id] = rows
+            }
+        }
+        activity = loaded
+    }
+
+    private func record(_ row: TokenActivity, token: WalletToken, account: String) {
+        loadActivityIfNeeded(account: account)
+        var rows = activity[token.id] ?? []
+        rows.removeAll { $0.id == row.id }
+        rows.insert(row, at: 0)
+        rows.sort { $0.date > $1.date }
+        if rows.count > Self.activityCap { rows.removeLast(rows.count - Self.activityCap) }
+        activity[token.id] = rows
+        if let data = try? JSONEncoder().encode(rows) {
+            UserDefaults.standard.set(data, forKey: activityKey(account: account, token: token))
+        }
+    }
+
     func activity(of token: WalletToken) -> [TokenActivity] {
         Self.isSampleData ? sample().activity : (activity[token.id] ?? [])
     }

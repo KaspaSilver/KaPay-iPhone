@@ -478,7 +478,9 @@ struct TokenSendView: View {
         prepareError = nil
         defer { isPreparing = false }
         do {
-            prepared = try await KusdtTransfer.prepare(holding: from, coins: tokens.coins(of: from), recipient: recipient, amount: amountUnits)
+            var built = try await KusdtTransfer.prepare(holding: from, coins: tokens.coins(of: from), recipient: recipient, amount: amountUnits)
+            built.recipientLabel = resolvedName ?? AddressBookManager.shared.entry(for: recipient)?.customName
+            prepared = built
             fundShortfall = nil
             fundingSent = false
         } catch KusdtTransfer.Failure.notEnoughKas(let short, let forChangeCoin) {

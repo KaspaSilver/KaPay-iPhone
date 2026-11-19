@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "هر کاری در سایت Trestly انجام دهید، مبادله یا افزودن به استخر، روی همین آدرس انجام می‌شود. فقط همین آدرس به سایت نشان داده می‌شود.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "الان نشد %1$@ را بررسی کرد: %2$@ برای تلاش دوباره به پایین بکشید.";
 "Checking your %@..." = "در حال بررسی %@ شما…";
-"%@ history isn't shown yet." = "تاریخچهٔ %@ هنوز نمایش داده نمی‌شود.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "الگوی kUSDT در KaPay نیست، پس kUSDT را نمی‌شود بررسی کرد.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "آدرس API ‏Trestly در تنظیمات اتصال یک آدرس https معتبر نیست.";
 "Trestly didn't answer." = "Trestly پاسخ نداد.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "در انتظار رسیدن KAS شما…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "KAS که فرستادید هنوز روی این آدرس نیامده. معمولاً چند ثانیه طول می‌کشد.";
 "Add %@ More" = "افزودن %@ دیگر";
+"Combine Coins" = "ادغام سکه‌ها";
+"Merges its coins into one and gives the extra KAS back." = "سکه‌هایش را یکی می‌کند و KAS اضافه را برمی‌گرداند.";
+"Swipe up to Combine" = "برای ادغام به بالا بکشید";
+"Coins Combined" = "سکه‌ها ادغام شدند";
+"%d coins into 1" = "%d سکه به ۱";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "هر سکهٔ %@ مقدار %@ نگه می‌دارد. با ادغام آن‌ها در یک سکه، KAS اضافه پس از کسر کارمزد شبکه به‌صورت KAS معمولی به این آدرس برمی‌گردد. مقدار %@ شما تغییری نمی‌کند.";
+"Combined" = "ادغام‌شده";
+"Back to This Address" = "برگشت به این آدرس";
+"Up to %d coins combine at a time. Combine again for the rest." = "هر بار حداکثر %d سکه ادغام می‌شود. برای بقیه دوباره ادغام کنید.";
+"This address holds its kUSDT in one coin already." = "این آدرس kUSDT خود را از قبل در یک سکه دارد.";
+"Combined Coins" = "سکه‌ها ادغام شدند";
+"No %@ activity yet." = "هنوز فعالیت %@ نیست.";
+"Sends, receives and combines on this phone show here from now on." = "از این پس ارسال، دریافت و ادغام‌های این گوشی اینجا نشان داده می‌شود.";

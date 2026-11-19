@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Todo lo que hagas en el sitio de Trestly, cambiar o aportar al pool, ocurre en esta dirección. Solo esta se muestra al sitio.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "No se pudo comprobar %1$@ ahora: %2$@ Desliza hacia abajo para reintentar.";
 "Checking your %@..." = "Comprobando tu %@…";
-"%@ history isn't shown yet." = "El historial de %@ aún no se muestra.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "Falta la plantilla de kUSDT de KaPay, así que no se puede comprobar kUSDT.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "La dirección de la API de Trestly en Configuración de conexión no es una dirección https válida.";
 "Trestly didn't answer." = "Trestly no respondió.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "Esperando a que llegue tu KAS…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "El KAS que enviaste aún no aparece en esta dirección. Suele tardar unos segundos.";
 "Add %@ More" = "Añadir %@ más";
+"Combine Coins" = "Combinar monedas";
+"Merges its coins into one and gives the extra KAS back." = "Une sus monedas en una y devuelve el KAS sobrante.";
+"Swipe up to Combine" = "Desliza hacia arriba para combinar";
+"Coins Combined" = "Monedas combinadas";
+"%d coins into 1" = "%d monedas en 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "Cada moneda de %@ contiene %@. Al combinarlas en una sola, el KAS sobrante vuelve a esta dirección como KAS normal, menos la comisión de red. Tu %@ no cambia.";
+"Combined" = "Combinado";
+"Back to This Address" = "De vuelta a esta dirección";
+"Up to %d coins combine at a time. Combine again for the rest." = "Se combinan hasta %d monedas a la vez. Vuelve a combinar para el resto.";
+"This address holds its kUSDT in one coin already." = "Esta dirección ya tiene su kUSDT en una sola moneda.";
+"Combined Coins" = "Monedas combinadas";
+"No %@ activity yet." = "Aún no hay actividad de %@.";
+"Sends, receives and combines on this phone show here from now on." = "Los envíos, recepciones y combinaciones de este teléfono aparecerán aquí desde ahora.";

@@ -788,6 +788,14 @@ final class AddressActivityNotifier: ObservableObject {
         saveBaselines(baselines, wallet: wallet)
     }
 
+    /// A transaction this phone sends whose KAS change lands on one of your addresses with no input
+    /// from one of them (a kUSDT send or Combine Coins: its inputs are token coins at their own
+    /// contract addresses), so the own-funds check can't tell it's yours: never "Received".
+    func markOwnTransaction(_ txId: String) {
+        guard let wallet = WalletManager.shared.currentWallet?.publicAddress else { return }
+        markHandled(txId: txId.lowercased(), wallet: wallet)
+    }
+
     // MARK: - Handled-tx persistence
 
     private func ensureHandledTxIdsLoaded(wallet: String) {

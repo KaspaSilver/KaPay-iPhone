@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Semua yang kamu lakukan di situs Trestly, menukar atau menambah ke pool, terjadi di alamat ini. Hanya alamat ini yang ditunjukkan ke situs.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "Tidak bisa memeriksa %1$@ sekarang: %2$@ Tarik ke bawah untuk mencoba lagi.";
 "Checking your %@..." = "Memeriksa %@ kamu…";
-"%@ history isn't shown yet." = "Riwayat %@ belum ditampilkan.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "Template kUSDT KaPay hilang, jadi kUSDT tidak bisa diperiksa.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "Alamat API Trestly di Pengaturan Koneksi bukan alamat https yang valid.";
 "Trestly didn't answer." = "Trestly tidak menjawab.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "Menunggu KAS-mu tiba…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "KAS yang kamu kirim belum muncul di alamat ini. Biasanya hanya butuh beberapa detik.";
 "Add %@ More" = "Tambah %@ Lagi";
+"Combine Coins" = "Gabungkan Koin";
+"Merges its coins into one and gives the extra KAS back." = "Menggabungkan koinnya jadi satu dan mengembalikan sisa KAS.";
+"Swipe up to Combine" = "Geser ke atas untuk menggabungkan";
+"Coins Combined" = "Koin Digabungkan";
+"%d coins into 1" = "%d koin jadi 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "Setiap koin %@ menyimpan %@. Jika digabung jadi satu koin, sisa KAS kembali ke alamat ini sebagai KAS biasa, dikurangi biaya jaringan. %@ milikmu tetap sama.";
+"Combined" = "Digabungkan";
+"Back to This Address" = "Kembali ke Alamat Ini";
+"Up to %d coins combine at a time. Combine again for the rest." = "Paling banyak %d koin digabung sekaligus. Gabungkan lagi untuk sisanya.";
+"This address holds its kUSDT in one coin already." = "Alamat ini sudah menyimpan kUSDT-nya dalam satu koin.";
+"Combined Coins" = "Koin Digabungkan";
+"No %@ activity yet." = "Belum ada aktivitas %@.";
+"Sends, receives and combines on this phone show here from now on." = "Kiriman, penerimaan, dan penggabungan di ponsel ini akan tampil di sini mulai sekarang.";

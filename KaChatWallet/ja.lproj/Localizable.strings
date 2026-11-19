@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Trestly のサイトで行うスワップやプールへの追加はすべてこのアドレスで行われます。サイトにはこのアドレスだけが示されます。";
 "Couldn't check %@ just now: %@ Pull down to try again." = "%1$@ を確認できませんでした：%2$@ 下に引いて再試行してください。";
 "Checking your %@..." = "%@ を確認中…";
-"%@ history isn't shown yet." = "%@ の履歴はまだ表示されません。";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "KaPay の kUSDT テンプレートがないため、kUSDT を確認できません。";
 "The Trestly API address in Connection Settings isn't a valid https address." = "接続設定の Trestly API アドレスが有効な https アドレスではありません。";
 "Trestly didn't answer." = "Trestly から応答がありません。";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "KAS の到着を待っています…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "送った KAS はまだこのアドレスに届いていません。通常は数秒で届きます。";
 "Add %@ More" = "さらに %@ を追加";
+"Combine Coins" = "コインをまとめる";
+"Merges its coins into one and gives the extra KAS back." = "コインを1つにまとめ、余分な KAS を戻します。";
+"Swipe up to Combine" = "上にスワイプしてまとめる";
+"Coins Combined" = "コインをまとめました";
+"%d coins into 1" = "%d 枚を 1 枚に";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "%@ のコインはそれぞれ %@ を保持しています。1枚にまとめると、余分な KAS がネットワーク手数料を差し引いて通常の KAS としてこのアドレスに戻ります。%@ の額は変わりません。";
+"Combined" = "まとめた額";
+"Back to This Address" = "このアドレスに戻る額";
+"Up to %d coins combine at a time. Combine again for the rest." = "一度にまとめられるのは %d 枚までです。残りはもう一度まとめてください。";
+"This address holds its kUSDT in one coin already." = "このアドレスの kUSDT はすでに1枚のコインです。";
+"Combined Coins" = "コインをまとめました";
+"No %@ activity yet." = "%@ のアクティビティはまだありません。";
+"Sends, receives and combines on this phone show here from now on." = "これ以降、この端末での送金・受取・まとめがここに表示されます。";

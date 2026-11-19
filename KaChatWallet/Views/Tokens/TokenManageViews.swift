@@ -29,6 +29,8 @@ struct TokenManageView: View {
     @State private var renameTarget: TokenHolding?
     @State private var renameText = ""
     @State private var qrTarget: TokenHolding?
+    /// Combine Coins from a row's ⋮.
+    @State private var combineTarget: TokenHolding?
     @State private var toastMessage: String?
     @State private var toastToken = UUID()
     @State private var isGenerating = false
@@ -105,11 +107,14 @@ struct TokenManageView: View {
         }
         .sheet(item: $rowActionsTarget) { holding in
             rowActionsSheet(holding)
-                .fittedSheetDetents(380)
+                .fittedSheetDetents(holding.coins > 1 ? 460 : 380)
                 .presentationDragIndicator(.visible)
         }
         .sheet(item: $qrTarget) { holding in
             TokenReceiveSheet(token: token, chattingAddress: "", fixedHolding: holding)
+        }
+        .sheet(item: $combineTarget) { holding in
+            TokenCombineView(token: token, holding: holding)
         }
         .alert("Rename Address", isPresented: Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
             TextField("Label", text: $renameText)
@@ -318,6 +323,17 @@ struct TokenManageView: View {
             ) {
                 rowActionsTarget = nil
                 DispatchQueue.main.async { qrTarget = holding }
+            }
+            // more than one coin: each holds 1.5 KAS, merging them gives the extra back
+            if holding.coins > 1 {
+                ActionSheetRow(
+                    title: "Combine Coins",
+                    subtitle: "Merges its coins into one and gives the extra KAS back.",
+                    systemImage: "arrow.triangle.merge"
+                ) {
+                    rowActionsTarget = nil
+                    DispatchQueue.main.async { combineTarget = holding }
+                }
             }
             // as unchecking it in kUSDT Address Visibility; it still counts in the total
             ActionSheetRow(
@@ -680,6 +696,7 @@ struct TokenAddressView: View {
     @State private var afterOptions: (() -> Void)?
     @State private var showReceive = false
     @State private var showSend = false
+    @State private var showCombine = false
     @State private var trestlyAddress: TrestlyTarget?
 
     /// The address as it is now (its amount changes after a send).
@@ -719,10 +736,15 @@ struct TokenAddressView: View {
                     Image(systemName: "clock")
                         .font(.title2)
                         .foregroundColor(.secondary)
-                    // Trestly's API keeps no history: it comes from the chain in a later update
-                    Text(verbatim: String(format: AppLocalization.string("%@ history isn't shown yet."), token.symbol))
+                    // Trestly's API keeps no history: this phone keeps what it sees from now on
+                    Text(verbatim: String(format: AppLocalization.string("No %@ activity yet."), token.symbol))
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+                    Text("Sends, receives and combines on this phone show here from now on.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -784,11 +806,14 @@ struct TokenAddressView: View {
             next?()
         }) {
             optionsSheet
-                .fittedSheetDetents(300)
+                .fittedSheetDetents(current.coins > 1 ? 380 : 300)
                 .presentationDragIndicator(.visible)
         }
         .fullScreenCover(item: $trestlyAddress) { target in
             TrestlyBrowserView(target: target)
+        }
+        .sheet(isPresented: $showCombine) {
+            TokenCombineView(token: token, holding: current)
         }
     }
 
@@ -807,6 +832,16 @@ struct TokenAddressView: View {
                     let target = TrestlyTarget(holding: current)
                     afterOptions = { trestlyAddress = target }
                     showOptions = false
+                }
+                if current.coins > 1 {
+                    ActionSheetRow(
+                        title: "Combine Coins",
+                        subtitle: "Merges its coins into one and gives the extra KAS back.",
+                        systemImage: "arrow.triangle.merge"
+                    ) {
+                        afterOptions = { showCombine = true }
+                        showOptions = false
+                    }
                 }
                 if let url = settingsViewModel.settings.kaspaExplorer.addressURL(for: holding.address) {
                     ActionSheetRow(

@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "كل ما تفعله على موقع Trestly، من مبادلة أو إضافة إلى المجمّع، يحدث على هذا العنوان. ولا يُعرض للموقع سواه.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "تعذّر التحقق من %1$@ الآن: %2$@ اسحب لأسفل لإعادة المحاولة.";
 "Checking your %@..." = "جارٍ التحقق من %@ لديك…";
-"%@ history isn't shown yet." = "سجل %@ لا يُعرض بعد.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "قالب kUSDT في KaPay مفقود، لذا لا يمكن التحقق من kUSDT.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "عنوان واجهة Trestly البرمجية في إعدادات الاتصال ليس عنوان https صالحًا.";
 "Trestly didn't answer." = "لم يردّ Trestly.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "في انتظار وصول KAS…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "لم يظهر KAS الذي أرسلته على هذا العنوان بعد. يستغرق ذلك عادةً بضع ثوانٍ.";
 "Add %@ More" = "إضافة %@ أخرى";
+"Combine Coins" = "دمج العملات";
+"Merges its coins into one and gives the extra KAS back." = "يدمج عملاته في عملة واحدة ويعيد KAS الزائد.";
+"Swipe up to Combine" = "اسحب للأعلى للدمج";
+"Coins Combined" = "تم دمج العملات";
+"%d coins into 1" = "%d عملات في 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "كل عملة %@ تحمل %@. عند دمجها في عملة واحدة يعود KAS الزائد إلى هذا العنوان كـ KAS عادي بعد خصم رسوم الشبكة. يبقى رصيد %@ كما هو.";
+"Combined" = "المدموج";
+"Back to This Address" = "يعود إلى هذا العنوان";
+"Up to %d coins combine at a time. Combine again for the rest." = "يمكن دمج %d عملات كحد أقصى في المرة الواحدة. ادمج مرة أخرى للباقي.";
+"This address holds its kUSDT in one coin already." = "هذا العنوان يحمل kUSDT في عملة واحدة بالفعل.";
+"Combined Coins" = "تم دمج العملات";
+"No %@ activity yet." = "لا يوجد نشاط %@ بعد.";
+"Sends, receives and combines on this phone show here from now on." = "من الآن ستظهر هنا عمليات الإرسال والاستلام والدمج على هذا الهاتف.";

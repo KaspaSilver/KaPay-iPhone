@@ -2176,7 +2176,6 @@
 "Everything you do on Trestly's site, swapping or adding to the pool, happens on this address. Only it is shown to the site." = "Tout ce que vous faites sur le site de Trestly, échanger ou alimenter le pool, se fait sur cette adresse. Seule celle-ci est montrée au site.";
 "Couldn't check %@ just now: %@ Pull down to try again." = "Impossible de vérifier %1$@ pour l’instant : %2$@ Tirez vers le bas pour réessayer.";
 "Checking your %@..." = "Vérification de vos %@…";
-"%@ history isn't shown yet." = "L’historique %@ n’est pas encore affiché.";
 "KaPay's kUSDT template is missing, so kUSDT can't be checked." = "Le modèle kUSDT de KaPay est absent, donc les kUSDT ne peuvent pas être vérifiés.";
 "The Trestly API address in Connection Settings isn't a valid https address." = "L’adresse de l’API Trestly dans les réglages de connexion n’est pas une adresse https valide.";
 "Trestly didn't answer." = "Trestly n’a pas répondu.";
@@ -2229,3 +2228,16 @@
 "Waiting for your KAS to arrive…" = "En attente de l’arrivée de vos KAS…";
 "The KAS you sent hasn't shown up on this address yet. It usually takes a few seconds." = "Les KAS envoyés n’apparaissent pas encore sur cette adresse. Cela prend en général quelques secondes.";
 "Add %@ More" = "Ajouter %@ de plus";
+"Combine Coins" = "Fusionner les pièces";
+"Merges its coins into one and gives the extra KAS back." = "Fusionne ses pièces en une seule et rend le KAS en trop.";
+"Swipe up to Combine" = "Glissez vers le haut pour fusionner";
+"Coins Combined" = "Pièces fusionnées";
+"%d coins into 1" = "%d pièces en 1";
+"Every %@ coin holds %@. Combining them into one coin gives the extra KAS back to this address as regular KAS, less the network fee. Your %@ stays the same." = "Chaque pièce %@ contient %@. En les fusionnant en une seule, le KAS en trop revient à cette adresse en KAS normal, moins les frais de réseau. Vos %@ ne changent pas.";
+"Combined" = "Fusionné";
+"Back to This Address" = "Retour à cette adresse";
+"Up to %d coins combine at a time. Combine again for the rest." = "Jusqu’à %d pièces se fusionnent à la fois. Fusionnez à nouveau pour le reste.";
+"This address holds its kUSDT in one coin already." = "Cette adresse détient déjà ses kUSDT en une seule pièce.";
+"Combined Coins" = "Pièces fusionnées";
+"No %@ activity yet." = "Aucune activité %@ pour l’instant.";
+"Sends, receives and combines on this phone show here from now on." = "Les envois, réceptions et fusions faits sur ce téléphone s’afficheront ici désormais.";
