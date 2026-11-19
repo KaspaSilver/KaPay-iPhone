@@ -133,6 +133,11 @@ final class WalletManager: ObservableObject {
     }
     @Published var isLoading = true
     @Published var error: KasiaError?
+    /// Fresh change addresses a send has probed but not yet revealed (that happens only after the
+    /// submit). Request Payment reserves its fresh address outside the send queue, so it skips
+    /// these (`isFreshChangeInFlight`) rather than hand out an address a send's change is about to
+    /// land on. Only `claimFreshChangeSlot` / `releaseFreshChange` change it.
+    var inFlightChangeAddresses = Set<String>()
     /// Not @Published: nothing renders it, and each toggle published the whole WalletManager -
     /// which every tab root observes - twice per balance refresh.
     var isBalanceRefreshing = false

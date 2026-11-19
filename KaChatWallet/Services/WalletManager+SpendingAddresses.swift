@@ -477,6 +477,28 @@ extension WalletManager {
         return (index, address)
     }
 
+    /// `verifiedFreshQuantumSlot()` for a send's change, held as in flight until
+    /// `releaseFreshChange` (call it in a `defer` once the send ends, whatever its outcome). A slot
+    /// something else revealed while the probe awaited (a payment request's reservation) is passed
+    /// over for the next one. nil when no slot can be had.
+    func claimFreshChangeSlot() async -> (index: Int, address: String)? {
+        for _ in 0..<3 {
+            guard let slot = await verifiedFreshQuantumSlot() else { return nil }
+            let claimedMeanwhile = slot.index - Self.quantumIndexBase <= maxQuantumAddressIndex
+            if claimedMeanwhile || inFlightChangeAddresses.contains(slot.address) { continue }
+            inFlightChangeAddresses.insert(slot.address)
+            return slot
+        }
+        return nil
+    }
+
+    func releaseFreshChange(_ address: String?) {
+        guard let address else { return }
+        inFlightChangeAddresses.remove(address)
+    }
+
+    func isFreshChangeInFlight(_ address: String) -> Bool { inFlightChangeAddresses.contains(address) }
+
     /// Reveals and returns `count` brand-new quantum-chain (KIP-22) slots in one step - used by
     /// Request Payment's Fresh Address. They start at the first slot past the chain end that is
     /// unused on chain, and the chain end is raised to cover them before returning, so they have

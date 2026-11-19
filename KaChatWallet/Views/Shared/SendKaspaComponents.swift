@@ -623,14 +623,49 @@ struct SendStepHeader: View {
 }
 
 /// A send step's Continue: a teal capsule pinned at the bottom, full width, or beside Cancel
-/// when the step has `onCancel` (its header then leaves Cancel out).
+/// when the step has `onCancel` (its header then leaves Cancel out). With `onSecondary`, a second
+/// full-width button sits under it (Request Payment's Show Request As QR), greyed out with it.
 struct SendContinueButton: View {
     var title: LocalizedStringKey = "Continue"
     let isEnabled: Bool
     var onCancel: (() -> Void)? = nil
+    var secondaryTitle: LocalizedStringKey? = nil
+    var secondaryIcon: String? = nil
+    var onSecondary: (() -> Void)? = nil
     let action: () -> Void
 
     var body: some View {
+        VStack(spacing: 10) {
+            mainRow
+            if let secondaryTitle, let onSecondary {
+                Button {
+                    Haptics.impact(.light)
+                    onSecondary()
+                } label: {
+                    HStack(spacing: 8) {
+                        if let secondaryIcon {
+                            Image(systemName: secondaryIcon)
+                        }
+                        Text(secondaryTitle)
+                    }
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Capsule().fill(.regularMaterial))
+                    .overlay(Capsule().stroke(Color.accentColor.opacity(0.35), lineWidth: 1))
+                    .opacity(isEnabled ? 1 : 0.4)
+                }
+                .buttonStyle(.plain)
+                .disabled(!isEnabled)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private var mainRow: some View {
         HStack(spacing: 12) {
             if let onCancel {
                 Button(action: onCancel) {
@@ -658,9 +693,6 @@ struct SendContinueButton: View {
             .buttonStyle(.plain)
             .disabled(!isEnabled)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .background(.bar)
     }
 }
 
@@ -673,6 +705,10 @@ struct SendStepScreen<Content: View>: View {
     let onCancel: () -> Void
     var continueTitle: LocalizedStringKey = "Continue"
     let canContinue: Bool
+    /// A second bottom button under Continue (`SendContinueButton`'s secondary).
+    var secondaryTitle: LocalizedStringKey? = nil
+    var secondaryIcon: String? = nil
+    var onSecondary: (() -> Void)? = nil
     let onContinue: () -> Void
     @ViewBuilder let content: Content
 
@@ -685,7 +721,9 @@ struct SendStepScreen<Content: View>: View {
         .background(Color(.systemBackground))
         .safeAreaInset(edge: .bottom) {
             SendContinueButton(title: continueTitle, isEnabled: canContinue,
-                               onCancel: onBack == nil ? onCancel : nil, action: onContinue)
+                               onCancel: onBack == nil ? onCancel : nil,
+                               secondaryTitle: secondaryTitle, secondaryIcon: secondaryIcon,
+                               onSecondary: onSecondary, action: onContinue)
         }
     }
 }

@@ -112,7 +112,10 @@ Where each screen uses them:
   step screens the other way round: "Where do you want to be paid?" (Fresh Address, or Choose an
   Address with the list right on the screen: `OwnAddressList`, the list `OwnAddressPicker`'s sheet
   also shows), "How much?" on the keypad, then the review with the memo, Copy Payment Request (the
-  bottom button) and Share.
+  bottom button), Show Request As QR under it (`SendStepScreen`'s secondary button) and Share. The
+  QR (`PaymentRequestQRSheet`) is the same signed request as `kapay://pay/<linkTail>`
+  (`kapayLinkString`), so an iPhone's camera opens KaPay on Send filled in; a fresh address is
+  reserved once, so Copy, Share and the QR all match.
 - .kachat (`KachatTxSheet`, `Views/Ecosystem/KachatNamesLiveViews.swift`): an entry step when the
   action takes one (`entryQuestion`: Make an Offer and List / Change Price on the keypad,
   Transfer on the recipient card), then the review with the fee editor and swipe up
@@ -196,7 +199,12 @@ own window. A sheet picked from another sheet opens from that sheet's `onDismiss
 Every single-address page has one `AddressOptionsButton` at the top right, opening `AddressActionsSheet`:
 no View Public Key on a quantum address, no View Private Key on a Cold Storage address. The privacy cover
 has one window per scene (iPad windows). A submit that never left ("Not connected to", "Circuit
-breaker open") isn't a lost answer. `AppLog.log` cuts every address in a line to "…" and its last 8 characters (as KaChat).
+breaker open") isn't a lost answer. `AppLog.log` cuts every address in a line to "…" and its last 8 characters (as KaChat). Logs carry only a transaction id's first 12 characters (offer ids too, which hold one), so a
+diagnostics export can't be looked up on chain. A send's fresh change slot is held as in flight
+from its probe until the send ends (`WalletManager.claimFreshChangeSlot` / `releaseFreshChange`),
+and Request Payment's Fresh Address skips one that is (`isFreshChangeInFlight`), so a request never
+names an address a send's change lands on. Copy, Share and Show Request As QR ignore a second tap
+while one is still working.
 
 ## Services
 

@@ -2085,3 +2085,5 @@
 "Type the name you want" = "원하는 이름을 입력하세요";
 "See All" = "모두 보기";
 "Your Names" = "내 이름";
+"Show Request As QR" = "요청을 QR로 보기";
+"Scan it with an iPhone's camera to pay in KaPay, with everything filled in." = "iPhone 카메라로 스캔하면 모든 내용이 채워진 채로 KaPay에서 결제할 수 있습니다.";

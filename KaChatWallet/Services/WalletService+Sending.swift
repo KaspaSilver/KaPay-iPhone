@@ -94,7 +94,7 @@ extension WalletService {
                 self.dropUtxoCache()
                 throw unknown
             }
-            AppLog.log("[WalletService] Withdrawal submitted: \(txId) via \(endpoint)")
+            AppLog.log("[WalletService] Withdrawal submitted: \(txId.prefix(12)) via \(endpoint)")
             self.recordSpend(tx)
             return txId
         }
@@ -263,8 +263,11 @@ extension WalletService {
             // rotating as before; both rotate onto a fresh quantum slot now. A self-send (Compound)
             // still consolidates into the address itself, shield off.
             let isPrimary = index == WalletManager.shared.currentSpendingAddressIndex
+            // held as in flight until this send ends (`claimFreshChangeSlot`), so a payment
+            // request made meanwhile doesn't hand out the same address
+            defer { WalletManager.shared.releaseFreshChange(changeAddress) }
             if !isSelfSend, WalletManager.isQuantumIndex(index) || isPrimary {
-                if let slot = await WalletManager.shared.verifiedFreshQuantumSlot() {
+                if let slot = await WalletManager.shared.claimFreshChangeSlot() {
                     freshChangeIndex = slot.index
                     changeAddress = slot.address
                 } else if WalletManager.isQuantumIndex(index) {
@@ -361,7 +364,7 @@ extension WalletService {
             }
             do {
                 let (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false, escalateOrphan: false)
-                AppLog.log("[WalletService] Spending-address withdrawal submitted: \(txId) via \(endpoint)")
+                AppLog.log("[WalletService] Spending-address withdrawal submitted: \(txId.prefix(12)) via \(endpoint)")
                 await noteSpend(outcomeKnown: true)
                 return txId
             } catch let unknown as SendOutcomeUnknownError {

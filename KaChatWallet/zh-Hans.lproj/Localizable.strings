@@ -2084,3 +2084,5 @@
 "Type the name you want" = "输入你想要的名字";
 "See All" = "查看全部";
 "Your Names" = "你的名字";
+"Show Request As QR" = "以二维码显示请求";
+"Scan it with an iPhone's camera to pay in KaPay, with everything filled in." = "用 iPhone 相机扫描，即可在 KaPay 中付款，所有信息都已填好。";

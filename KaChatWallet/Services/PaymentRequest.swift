@@ -315,6 +315,10 @@ struct PaymentRequest: Equatable, Identifiable {
     /// The link the Copy button gives out.
     var shareURLString: String { KaChatInternalLink.paymentRequest(self).universalLinkString }
 
+    /// What Show Request As QR holds: KaPay's own scheme, so an iPhone's camera opens KaPay on
+    /// Send with everything filled in (`KaChatInternalLink.parse` reads it).
+    var kapayLinkString: String { "kapay://pay/\(linkTail)" }
+
     /// True when the address is one of this wallet's: your own request pastes as text (to send it
     /// to someone) instead of opening Send.
     ///

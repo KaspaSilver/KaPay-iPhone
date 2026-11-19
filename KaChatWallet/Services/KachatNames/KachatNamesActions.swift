@@ -699,7 +699,7 @@ final class KachatNamesActions: ObservableObject {
         )
         let (txId, _) = try await NodePoolService.shared.submitTransaction(tx)
         // a move between your own coins, not a payment
-        AppLog.log("[KachatNames] combined %d coins into one: %@", plain.count, txId)
+        AppLog.log("[KachatNames] combined %d coins into one: %@", plain.count, String(txId.prefix(12)))
         for _ in 0..<30 {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             let now = (try? await NodePoolService.shared.getUtxosByAddresses([s.address])) ?? []
@@ -953,9 +953,9 @@ final class KachatNamesActions: ObservableObject {
                 guard let self else { return }
                 do {
                     let txId = try await self.perform(.refund(o))
-                    AppLog.log("[KachatNames] returned expired offer %@ to its buyer: %@", o.id, txId)
+                    AppLog.log("[KachatNames] returned expired offer %@ to its buyer: %@", String(o.id.prefix(12)), String(txId.prefix(12)))
                 } catch {
-                    AppLog.log("[KachatNames] expired offer %@ not returned: %@", o.id, error.localizedDescription)
+                    AppLog.log("[KachatNames] expired offer %@ not returned: %@", String(o.id.prefix(12)), error.localizedDescription)
                 }
             }
         }
@@ -979,9 +979,9 @@ final class KachatNamesActions: ObservableObject {
                 self.decliningOffers.insert(o.id)
                 do {
                     let txId = try await self.perform(.decline(o))
-                    AppLog.log("[KachatNames] declined offer %@ on %@ (the name left this owner): %@", o.id, n.name, txId)
+                    AppLog.log("[KachatNames] declined offer %@ on %@ (the name left this owner): %@", String(o.id.prefix(12)), n.name, String(txId.prefix(12)))
                 } catch {
-                    AppLog.log("[KachatNames] offer %@ not declined: %@", o.id, error.localizedDescription)
+                    AppLog.log("[KachatNames] offer %@ not declined: %@", String(o.id.prefix(12)), error.localizedDescription)
                 }
             }
         }
@@ -1024,9 +1024,9 @@ final class KachatNamesActions: ObservableObject {
                 guard let self else { return }
                 do {
                     let txId = try await self.perform(.withdraw(o))
-                    AppLog.log("[KachatNames] withdrew declined offer %@ (the name changed hands): %@", o.id, txId)
+                    AppLog.log("[KachatNames] withdrew declined offer %@ (the name changed hands): %@", String(o.id.prefix(12)), String(txId.prefix(12)))
                 } catch {
-                    AppLog.log("[KachatNames] declined offer %@ not withdrawn: %@", o.id, error.localizedDescription)
+                    AppLog.log("[KachatNames] declined offer %@ not withdrawn: %@", String(o.id.prefix(12)), error.localizedDescription)
                 }
             }
         }
@@ -1326,7 +1326,7 @@ final class KachatNamesActions: ObservableObject {
         guard let u = mine.first(where: { $0.outpoint.txid == latest }) ?? mine.first else { return .gone }
         let txId = KachatNames.hex(u.outpoint.txid)
         if var q = pending.first(where: { $0.id == p.id }), q.commitTxId.lowercased() != txId {
-            AppLog.log("[KachatNames] the commit for %@ that landed is %@", p.name, txId)
+            AppLog.log("[KachatNames] the commit for %@ that landed is %@", p.name, String(txId.prefix(12)))
             q.commitTxId = txId
             upsert(q)
         }
@@ -1487,7 +1487,7 @@ final class KachatNamesActions: ObservableObject {
                 throw KachatNames.Failure("commit: a different script")
             }
             let txId = try await service.signAndSubmit(plan, privateKey: s.privateKey, env: env)
-            AppLog.log("[KachatNames] commit for %@ sent again: %@", p.name, txId)
+            AppLog.log("[KachatNames] commit for %@ sent again: %@", p.name, String(txId.prefix(12)))
             set(p) {
                 $0.commitTxIds = ($0.commitTxIds ?? [$0.commitTxId]) + [txId]
                 $0.commitTxId = txId

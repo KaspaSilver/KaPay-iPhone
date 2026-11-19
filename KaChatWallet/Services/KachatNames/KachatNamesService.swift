@@ -357,7 +357,7 @@ final class KachatNamesService: ObservableObject {
         // a node can accept it while its answer is lost and a raced node rejects it: looked up
         // by id before failing, so a retry never pays a price twice (IOS-014)
         let (txId, endpoint) = try await NodePoolService.shared.submitRpcTransaction(Self.rpcTransaction(tx), expectedTxId: expected)
-        AppLog.log("[KachatNames] submitted %@ via %@", txId, endpoint)
+        AppLog.log("[KachatNames] submitted %@ via %@", String(txId.prefix(12)), endpoint)
         guard txId.lowercased() == expected else { throw ServiceError.submitMismatch(expected: expected, got: txId) }
         return txId
     }

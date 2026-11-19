@@ -2085,3 +2085,5 @@
 "Type the name you want" = "欲しい名前を入力してください";
 "See All" = "すべて表示";
 "Your Names" = "あなたの名前";
+"Show Request As QR" = "リクエストを QR で表示";
+"Scan it with an iPhone's camera to pay in KaPay, with everything filled in." = "iPhone のカメラでスキャンすると、すべて入力済みの状態で KaPay で支払えます。";

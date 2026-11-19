@@ -1639,7 +1639,7 @@ final class KNSProfileWriteService: ObservableObject {
             )
             defer { KNSRevealRecovery.endFlow(recoveryId) }
             let (commitTxId, _) = try await nodePool.submitTransaction(commitTx, allowOrphan: false)
-            log("COMMIT_SUBMITTED field=\(key.rawValue) txId=\(commitTxId)")
+            log("COMMIT_SUBMITTED field=\(key.rawValue) txId=\(commitTxId.prefix(12))")
 
             operation.commitTxId = commitTxId
             operation.status = .submittingReveal
@@ -1656,7 +1656,7 @@ final class KNSProfileWriteService: ObservableObject {
             )
             let (revealTxId, _) = try await submitRevealWithFallback(revealTx)
             KNSRevealRecovery.finished(recoveryId)
-            log("REVEAL_SUBMITTED field=\(key.rawValue) txId=\(revealTxId)")
+            log("REVEAL_SUBMITTED field=\(key.rawValue) txId=\(revealTxId.prefix(12))")
 
             operation.revealTxId = revealTxId
             operation.status = .verifying
@@ -1672,14 +1672,14 @@ final class KNSProfileWriteService: ObservableObject {
                 timeout: 90
             )
             guard verified else {
-                log("VERIFY_TIMEOUT field=\(key.rawValue) commitTx=\(commitTxId) revealTx=\(revealTxId)")
+                log("VERIFY_TIMEOUT field=\(key.rawValue) commitTx=\(commitTxId.prefix(12)) revealTx=\(revealTxId.prefix(12))")
                 throw KasiaError.apiError("KNS profile update was submitted but verification timed out")
             }
 
             operation.status = .success
             operation.updatedAt = Date()
             inFlightOperation = nil
-            log("SUCCESS field=\(key.rawValue) commitTx=\(commitTxId) revealTx=\(revealTxId)")
+            log("SUCCESS field=\(key.rawValue) commitTx=\(commitTxId.prefix(12)) revealTx=\(revealTxId.prefix(12))")
 
             return KNSCommitRevealResult(commitTxId: commitTxId, revealTxId: revealTxId)
         } catch {
@@ -1822,10 +1822,15 @@ final class KNSDomainTransferService: ObservableObject {
         // the fresh address cannot be derived, change stays on the source and nothing rotates.
         var freshChangeIndex: Int?
         var changeAddress = fundingAddress
+        // held as in flight until this transfer ends (`claimFreshChangeSlot`), so a payment
+        // request made meanwhile doesn't hand out the same address
+        var claimedChange: String?
+        defer { walletManager.releaseFreshChange(claimedChange) }
         if let index = fromSpendingAddressIndex, index == walletManager.currentSpendingAddressIndex {
-            if let slot = await walletManager.verifiedFreshQuantumSlot() {
+            if let slot = await walletManager.claimFreshChangeSlot() {
                 freshChangeIndex = slot.index
                 changeAddress = slot.address
+                claimedChange = slot.address
             }
         }
 
@@ -1914,7 +1919,7 @@ final class KNSDomainTransferService: ObservableObject {
             }
             throw unknown
         }
-        log("COMMIT_SUBMITTED domain=\(domain) txId=\(commitTxId)")
+        log("COMMIT_SUBMITTED domain=\(domain) txId=\(commitTxId.prefix(12))")
         if let freshChangeIndex {
             // The commit is accepted and its change is already on the fresh address, so the
             // primary follows it now, whatever becomes of the reveal (`KNSRevealRecovery` retries
@@ -1935,7 +1940,7 @@ final class KNSDomainTransferService: ObservableObject {
         await report(.submittingReveal)
         let (revealTxId, _) = try await submitRevealWithFallback(revealTx)
         KNSRevealRecovery.finished(recoveryId)
-        log("REVEAL_SUBMITTED domain=\(domain) txId=\(revealTxId)")
+        log("REVEAL_SUBMITTED domain=\(domain) txId=\(revealTxId.prefix(12))")
         await report(.verifying)
 
         let verified = await verifyDomainOwnership(

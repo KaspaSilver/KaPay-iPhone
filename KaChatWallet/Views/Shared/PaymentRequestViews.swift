@@ -3,7 +3,8 @@ import SwiftUI
 // MARK: - Making one
 
 /// Request Payment, from the Wallet tab's up/down-arrow sheet: an amount, an optional memo and
-/// where it's paid - a brand-new address, or one you pick - handed out as a link (Copy or Share).
+/// where it's paid - a brand-new address, or one you pick - handed out as a link (Copy or Share)
+/// or shown as a QR (Show Request As QR).
 /// Opening it in KaPay or KaChat gives Send Kaspa with all of it filled in. Signed by the
 /// chatting address, so whoever pays sees who asked.
 struct CreatePaymentRequestView: View {
@@ -21,7 +22,7 @@ struct CreatePaymentRequestView: View {
     @State private var destination: Destination = .fresh
     /// The brand-new address reserved for this request (`reserveFreshSpendingAddresses`) - only
     /// when it's copied or shared, so opening the screen and cancelling uses none up. Once per
-    /// screen: Copy and Share both reuse it, so no two requests share an address.
+    /// screen: Copy, Share and the QR all reuse it, so no two requests share an address.
     @State private var freshAddress: String?
     /// The next brand-new address, shown before it's reserved.
     @State private var nextFreshAddress: String?
@@ -32,10 +33,16 @@ struct CreatePaymentRequestView: View {
     @State private var isWorking = false
     @State private var errorMessage: String?
     @State private var shareItem: ShareURL?
+    @State private var qrItem: QRRequest?
 
     private struct ShareURL: Identifiable {
         let url: URL
         var id: String { url.absoluteString }
+    }
+
+    private struct QRRequest: Identifiable {
+        let request: PaymentRequest
+        var id: String { request.kapayLinkString }
     }
 
     private var chattingAddress: String? { walletManager.currentWallet?.publicAddress }
@@ -85,6 +92,9 @@ struct CreatePaymentRequestView: View {
             }
             .sheet(item: $shareItem) { item in
                 PaymentRequestShareSheet(url: item.url)
+            }
+            .sheet(item: $qrItem) { item in
+                PaymentRequestQRSheet(request: item.request)
             }
         }
     }
@@ -185,7 +195,9 @@ struct CreatePaymentRequestView: View {
     private var reviewStep: some View {
         SendStepScreen(title: Text("Review"), onBack: { go(to: .amount) }, onCancel: { dismiss() },
                        continueTitle: copied ? "Copied" : "Copy Payment Request",
-                       canContinue: canMake && !isWorking) {
+                       canContinue: canMake && !isWorking,
+                       secondaryTitle: "Show Request As QR", secondaryIcon: "qrcode",
+                       onSecondary: showQR) {
             copy()
         } content: {
             ScrollView {
@@ -283,7 +295,17 @@ struct CreatePaymentRequestView: View {
             if let freshAddress {
                 address = freshAddress
             } else {
-                guard let reserved = await walletManager.reserveFreshSpendingAddresses(count: 1).first?.address else {
+                // Not one a send in flight is about to put its change on (it probed the slot but
+                // reveals it only after the submit): that one stays reserved, and the next is taken.
+                var picked: String?
+                for _ in 0..<3 {
+                    guard let candidate = await walletManager.reserveFreshSpendingAddresses(count: 1).first?.address else { break }
+                    if !walletManager.isFreshChangeInFlight(candidate) {
+                        picked = candidate
+                        break
+                    }
+                }
+                guard let reserved = picked else {
                     errorMessage = AppLocalization.string("Couldn't make a new address. Please try again.")
                     return nil
                 }
@@ -304,6 +326,8 @@ struct CreatePaymentRequestView: View {
     }
 
     private func copy() {
+        // two taps in one frame would each reserve a fresh address
+        guard !isWorking else { return }
         isWorking = true
         errorMessage = nil
         Task {
@@ -316,12 +340,94 @@ struct CreatePaymentRequestView: View {
     }
 
     private func share() {
+        // two taps in one frame would each reserve a fresh address
+        guard !isWorking else { return }
         isWorking = true
         errorMessage = nil
         Task {
             defer { isWorking = false }
             guard let request = await makeRequest(), let url = URL(string: request.shareURLString) else { return }
             shareItem = ShareURL(url: url)
+        }
+    }
+
+    /// The same signed request Copy and Share give out, as a QR to scan.
+    private func showQR() {
+        // two taps in one frame would each reserve a fresh address
+        guard !isWorking else { return }
+        isWorking = true
+        errorMessage = nil
+        Task {
+            defer { isWorking = false }
+            guard let request = await makeRequest() else { return }
+            qrItem = QRRequest(request: request)
+        }
+    }
+}
+
+/// Show Request As QR: the request as a `kapay://pay/` QR, so an iPhone's camera opens KaPay on
+/// Send with everything filled in. KaPay pays a request to a chatting address as a plain send, so
+/// that one carries the same link.
+private struct PaymentRequestQRSheet: View {
+    let request: PaymentRequest
+    @Environment(\.dismiss) private var dismiss
+    @State private var image: UIImage?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 18) {
+                    VStack(spacing: 6) {
+                        Text(verbatim: "\(request.amountText) \(KaspaUnit.symbol)")
+                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                        if !request.memo.isEmpty {
+                            Text(verbatim: request.memo)
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.top, 8)
+
+                    Group {
+                        if let image {
+                            Image(uiImage: image)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                        } else {
+                            ProgressView()
+                        }
+                    }
+                    .frame(width: 260, height: 260)
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.white)
+                    )
+
+                    Text("Scan it with an iPhone's camera to pay in KaPay, with everything filled in.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 24)
+            }
+            .navigationTitle("Payment Request")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .task {
+            image = ZeroBalanceFundingCardView.makeAddressQRCode(from: request.kapayLinkString)
         }
     }
 }

@@ -243,7 +243,7 @@ extension WalletService {
             path: "/transactions/\(txId)",
             queryItems: [URLQueryItem(name: "resolve_previous_outpoints", value: "light")]
         ) else { return nil }
-        AppLog.log("[WalletService] Kaspa REST full tx request: %@", url.absoluteString)
+        AppLog.log("[WalletService] Kaspa REST full tx request: %@", String(txId.prefix(12)))
 
         let request = Self.timedRequest(url)
         for attempt in 1...max(1, retries) {
