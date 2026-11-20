@@ -117,15 +117,6 @@ final class KeychainService {
         try deleteSensitiveData(baseKey: .seedPhrase)
     }
 
-    /// Check if seed phrase exists for current device
-    func hasSeedPhrase() -> Bool {
-        do {
-            return try loadSeedPhrase() != nil
-        } catch {
-            return false
-        }
-    }
-
     // MARK: - Nextcloud (server + app-password credentials, see NextcloudService)
     //
     // Scoped per wallet account: the key name carries the same SHA256(walletAddress).prefix(8)
@@ -190,8 +181,8 @@ final class KeychainService {
         "\(KeychainKey.nextcloudCredentials.rawValue)_\(walletHashSuffix(walletAddress))"
     }
 
-    /// First 8 bytes of SHA256(walletAddress) as hex - the identical derivation KaChat's MessageStore
-    /// uses for its per-wallet store file, so all per-wallet storage shares one suffix scheme.
+    /// First 8 bytes of SHA256(walletAddress) as hex - the suffix every per-wallet store here
+    /// shares (the same derivation KaChat uses for its per-wallet files).
     static func walletHashSuffix(_ walletAddress: String) -> String {
         let hash = SHA256.hash(data: Data(walletAddress.utf8))
         return hash.prefix(8).map { String(format: "%02x", $0) }.joined()
@@ -286,15 +277,6 @@ final class KeychainService {
 
     func deletePrivateKey() throws {
         try deleteSensitiveData(baseKey: .privateKey)
-    }
-
-    /// Check if private key exists for current device
-    func hasPrivateKey() -> Bool {
-        do {
-            return try loadPrivateKey() != nil
-        } catch {
-            return false
-        }
     }
 
     /// Whether this device holds signing material for the stored wallet. `missing` means both
@@ -406,11 +388,6 @@ final class KeychainService {
         } catch {
             return "error (\(error.localizedDescription))"
         }
-    }
-
-    /// Returns the current device identifier for diagnostics
-    func currentDeviceId() -> String? {
-        try? deviceIdentifier()
     }
 
     // MARK: - Per-Account Snapshots (Device-specific, SE-wrapped)

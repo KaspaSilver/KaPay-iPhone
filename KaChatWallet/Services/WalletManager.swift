@@ -26,11 +26,6 @@ struct SavedAccountSummary: Identifiable, Equatable, Codable {
         return "kaspa:\(publicAddress)"
     }
 
-    var shortPublicKey: String {
-        guard publicKey.count > 24 else { return publicKey }
-        return "\(publicKey.prefix(12))...\(publicKey.suffix(8))"
-    }
-
     init(alias: String, publicAddress: String, publicKey: String) {
         self.alias = alias
         self.publicAddress = publicAddress
@@ -174,30 +169,6 @@ final class WalletManager: ObservableObject {
     /// down the seed-phrase screen before the user ever saw it. Never set for `importWallet`
     /// (typing in an existing phrase needs no review step). Transient/in-memory only.
     @Published var isAwaitingSeedPhraseConfirmation = false
-
-    /// Per-wallet ("account") toggle for whether the "Setup Guide" re-entry points (the Profile
-    /// tab's "Welcome Guide" row and the "Edit KaChat Profile" screen's "Setup Guide" button) are
-    /// shown - scoped to `currentWallet?.publicAddress` rather than global `AppSettings`, mirroring
-    /// `spendingDefaultsKey` in `WalletManager+SpendingAddresses.swift`, so switching to a
-    /// different account on the same device doesn't carry the choice over. Defaults to `true`
-    /// (unset key) to match pre-existing behavior for anyone who had these guides visible before
-    /// this toggle existed.
-    var showSetupGuides: Bool {
-        get {
-            guard let key = showSetupGuidesDefaultsKey else { return true }
-            return UserDefaults.standard.object(forKey: key) as? Bool ?? true
-        }
-        set {
-            guard let key = showSetupGuidesDefaultsKey else { return }
-            UserDefaults.standard.set(newValue, forKey: key)
-            objectWillChange.send()
-        }
-    }
-
-    private var showSetupGuidesDefaultsKey: String? {
-        guard let address = currentWallet?.publicAddress else { return nil }
-        return "kachat_show_setup_guides_\(address)"
-    }
 
     private let keychainService = KeychainService.shared
     private let bip39 = BIP39.shared
@@ -702,8 +673,8 @@ final class WalletManager: ObservableObject {
     }
 
     /// Removes a saved account entry.
-    /// If the removed entry matches the locally stored wallet, local key material
-    /// and message store data are cleared as well.
+    /// Its local data goes too (`removeLocalData`), and if it is the locally stored wallet, its
+    /// key material as well.
     func removeSavedAccount(_ account: SavedAccountSummary) async {
         guard savedAccounts.contains(account) else { return }
 
@@ -849,6 +820,8 @@ final class WalletManager: ObservableObject {
             NextcloudService.shared.purgeStoredState(forWalletAddress: address)
             AddressBookManager.shared.removeAllData(forWalletAddress: address)
             GlobalNotificationCenter.removeAllData(forWalletAddress: address)
+            // kUSDT history, known coins and visibility choices, filed under the address
+            TokenWallet.shared.forgetLocalData(account: address)
             Self.removeSpendingData(forAccount: address)
             // what else this device filed under the address
             let defaults = UserDefaults.standard

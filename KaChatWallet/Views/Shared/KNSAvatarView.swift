@@ -76,12 +76,6 @@ struct KNSAvatarView: View {
         .task(id: descriptor?.cacheIdentity) {
             await loadAvatarIfNeeded()
         }
-        // Rescan Profile downloaded this picture again: show the new one
-        .onReceive(NotificationCenter.default.publisher(for: .knsProfileImageRefetched)) { note in
-            guard let identity = note.object as? String, identity == descriptor?.cacheIdentity else { return }
-            lastLoadedIdentity = nil
-            Task { await loadAvatarIfNeeded() }
-        }
     }
 
     private var fallbackAvatar: some View {
@@ -131,10 +125,6 @@ struct KNSBannerImageView: View {
     let bannerURLString: String?
     var height: CGFloat = 110
     var cornerRadius: CGFloat = 10
-    /// Show the whole banner: the full width, at the picture's own proportions (no crop).
-    /// `height` is then only the placeholder's while it loads. Shapes outside 1.5:1 to 8:1 are
-    /// held to those bounds and shown whole inside them.
-    var fitsWidth: Bool = false
 
     @State private var loadedImage: UIImage?
     @State private var isLoading = false
@@ -162,30 +152,16 @@ struct KNSBannerImageView: View {
                 //
                 // An overlay is laid out against its base's size and can never change it, so the
                 // canvas below is the only thing that decides how much room this takes.
-                if fitsWidth {
-                    // Same overlay rule; the canvas just takes the picture's proportions, so the
-                    // whole banner shows at the full width.
-                    Color.clear
-                        .aspectRatio(Self.fitRatio(loadedImage), contentMode: .fit)
-                        .frame(maxWidth: .infinity)
-                        .overlay {
-                            Image(uiImage: loadedImage)
-                                .resizable()
-                                .scaledToFit()
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                } else {
-                    Color.clear
-                        .frame(maxWidth: .infinity)
-                        .frame(height: height)
-                        .overlay {
-                            Image(uiImage: loadedImage)
-                                .resizable()
-                                .scaledToFill()
-                        }
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                }
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height)
+                    .overlay {
+                        Image(uiImage: loadedImage)
+                            .resizable()
+                            .scaledToFill()
+                    }
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             } else if KNSProfileImageDescriptor.from(raw: bannerURLString) != nil {
                 if isLoading || !didFail {
                     RoundedRectangle(cornerRadius: cornerRadius)
@@ -200,18 +176,6 @@ struct KNSBannerImageView: View {
         .task(id: KNSProfileImageDescriptor.from(raw: bannerURLString)?.cacheIdentity) {
             await loadBannerIfNeeded()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .knsProfileImageRefetched)) { note in
-            guard let identity = note.object as? String,
-                  identity == KNSProfileImageDescriptor.from(raw: bannerURLString)?.cacheIdentity else { return }
-            lastLoadedIdentity = nil
-            Task { await loadBannerIfNeeded() }
-        }
-    }
-
-    /// Width / height of the canvas for a fitted banner, held to 1.5...8.
-    private static func fitRatio(_ image: UIImage) -> CGFloat {
-        guard image.size.height > 0 else { return 3 }
-        return min(8, max(1.5, image.size.width / image.size.height))
     }
 
     @MainActor
@@ -238,145 +202,6 @@ struct KNSBannerImageView: View {
 
         loadedImage = image
         didFail = image == nil
-        lastLoadedIdentity = image == nil ? nil : descriptor.cacheIdentity
-        isLoading = false
-    }
-}
-
-struct KNSAvatarFullscreenView: View {
-    let avatarURLString: String?
-    let fallbackText: String
-    var title: String = "Avatar"
-    /// Kaspa address behind this avatar, so the placeholder falls back the same way as
-    /// everywhere else while/if the KNS image isn't available.
-    var contactAddress: String? = nil
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var loadedImage: UIImage?
-    @State private var isLoading = false
-    @State private var showShareSheet = false
-    @State private var lastLoadedIdentity: String?
-
-    private var avatarURL: URL? {
-        KNSProfileLinkBuilder.websiteURL(from: avatarURLString)
-    }
-
-    private var canShare: Bool {
-        loadedImage != nil || avatarURL != nil
-    }
-
-    private var shareItems: [Any] {
-        if let loadedImage {
-            return [loadedImage]
-        }
-        if let avatarURL {
-            return [avatarURL]
-        }
-        return []
-    }
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-
-            Group {
-                if let loadedImage {
-                    Image(uiImage: loadedImage)
-                        .resizable()
-                        .scaledToFit()
-                } else {
-                    KNSAvatarView(
-                        avatarURLString: avatarURLString,
-                        fallbackText: fallbackText,
-                        size: 220,
-                        contactAddress: contactAddress
-                    )
-                }
-            }
-            .padding(20)
-
-            if isLoading && loadedImage == nil {
-                ProgressView()
-                    .tint(.white)
-                    .scaleEffect(1.1)
-            }
-        }
-        .overlay(alignment: .top) {
-            HStack(spacing: 12) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(width: 36, height: 36)
-                        .background(Color.white.opacity(0.18))
-                        .clipShape(Circle())
-                }
-
-                Text(title)
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button {
-                    showShareSheet = true
-                } label: {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(width: 36, height: 36)
-                        .background(Color.white.opacity(0.18))
-                        .clipShape(Circle())
-                }
-                .disabled(!canShare)
-                .opacity(canShare ? 1 : 0.45)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-        }
-        .task(id: avatarURL?.absoluteString) {
-            await loadRemoteAvatarIfNeeded()
-        }
-        .sheet(isPresented: $showShareSheet) {
-            if shareItems.isEmpty {
-                EmptyView()
-            } else {
-                KNSAvatarShareSheet(activityItems: shareItems)
-            }
-        }
-    }
-
-    @MainActor
-    private func loadRemoteAvatarIfNeeded() async {
-        // The same picture the small avatar was showing: your Contacts photo comes first.
-        if let assigned = AddressBookManager.shared.photo(for: contactAddress) {
-            loadedImage = assigned
-            lastLoadedIdentity = nil
-            isLoading = false
-            return
-        }
-        guard let descriptor = KNSProfileImageDescriptor.from(raw: avatarURLString) else {
-            loadedImage = nil
-            lastLoadedIdentity = nil
-            isLoading = false
-            return
-        }
-
-        if lastLoadedIdentity == descriptor.cacheIdentity, loadedImage != nil {
-            return
-        }
-
-        if lastLoadedIdentity != descriptor.cacheIdentity {
-            loadedImage = nil
-        }
-
-        isLoading = true
-        let image = await KNSProfileImageCache.shared.image(for: descriptor)
-        guard !Task.isCancelled else { return }
-
-        loadedImage = image
         lastLoadedIdentity = image == nil ? nil : descriptor.cacheIdentity
         isLoading = false
     }
@@ -481,28 +306,6 @@ enum KNSProfileImageCacheControl {
     static func resetAfterExternalPurge() async {
         await KNSProfileImageCache.shared.resetAfterExternalPurge()
     }
-
-    /// Downloads these pictures again whatever the cache holds (User Info > Rescan Profile), then
-    /// tells every avatar and banner showing one to redraw it. Returns how many came back.
-    @discardableResult
-    static func refetch(_ urlStrings: [String]) async -> Int {
-        var fetched = 0
-        for raw in Set(urlStrings) {
-            guard let descriptor = KNSProfileImageDescriptor.from(raw: raw) else { continue }
-            if await KNSProfileImageCache.shared.forceRefetch(descriptor) { fetched += 1 }
-            let identity = descriptor.cacheIdentity
-            await MainActor.run {
-                NotificationCenter.default.post(name: .knsProfileImageRefetched, object: identity)
-            }
-        }
-        return fetched
-    }
-}
-
-extension Notification.Name {
-    /// A profile picture was downloaded again (`KNSProfileImageCacheControl.refetch`); the object
-    /// is its cache identity.
-    static let knsProfileImageRefetched = Notification.Name("KNSProfileImageRefetched")
 }
 
 /// The decoded avatars in memory, outside the actor: `NSCache` is thread-safe, and a view
@@ -529,16 +332,6 @@ private actor KNSProfileImageCache {
         KNSProfileImageMemory.cache.object(forKey: KNSProfileImageMemory.key(for: descriptor.cacheIdentity, maxPixelSize: maxPixelSize))
     }
 
-    /// A full download, no validators sent (a host may answer "not modified" to a changed picture):
-    /// the new bytes replace the old file, and every decoded variant goes. The old picture stays
-    /// when the download fails.
-    func forceRefetch(_ descriptor: KNSProfileImageDescriptor) async -> Bool {
-        await loadManifestIfNeeded()
-        downloadFailureAt.removeValue(forKey: descriptor.cacheIdentity)
-        let image = await downloadAndStore(descriptor: descriptor, existingEntry: nil, maxPixelSize: nil)
-        return image != nil
-    }
-
     /// See `KNSProfileImageCacheControl.resetAfterExternalPurge`.
     func resetAfterExternalPurge() {
         memoryCache.removeAllObjects()
@@ -561,7 +354,7 @@ private actor KNSProfileImageCache {
     }
 
     /// Row avatars (32-56pt) decode at this many pixels on the long edge; the on-disk file
-    /// stays full resolution for the banner and the fullscreen viewer, which pass `nil`.
+    /// stays full resolution for the banner and large avatars, which pass `nil`.
     static let rowThumbnailMaxPixelSize = 160
     static let mediumThumbnailMaxPixelSize = 320
 
@@ -606,14 +399,14 @@ private actor KNSProfileImageCache {
     private var manifest: [String: ManifestEntry] = [:]
 
     /// In-flight downloads keyed by cache identity: many rows showing the same avatar await one
-    /// download instead of each firing their own (mirrors `LinkPreviewService.inFlight`). The
-    /// tasks are unstructured so a row scrolling away (its `.task` gets cancelled) can't kill a
-    /// download other rows are waiting on - the bytes always land in the cache.
+    /// download instead of each firing their own. The tasks are unstructured so a row scrolling
+    /// away (its `.task` gets cancelled) can't kill a download other rows are waiting on - the
+    /// bytes always land in the cache.
     private var inFlightDownloads: [String: Task<UIImage?, Never>] = [:]
 
     /// Failed downloads retry after a cooldown instead of on every row remount - a dead avatar
-    /// URL would otherwise be re-requested on every scroll (negative-cache-with-cooldown, same
-    /// pattern as LinkPreviewService's Nextcloud probe failures). Bounded by periodic pruning.
+    /// URL would otherwise be re-requested on every scroll (a negative cache with a cooldown).
+    /// Bounded by periodic pruning.
     private var downloadFailureAt: [String: Date] = [:]
     private let downloadFailureCooldown: TimeInterval = 60
     private let maxFailureEntries = 512
@@ -1074,56 +867,6 @@ private func sha256Hex(_ data: Data) -> String {
     return digest.map { String(format: "%02x", $0) }.joined()
 }
 
-enum KNSProfileImagePrefetcher {
-    static func preload(rawURLStrings: [String], maxConcurrent: Int = 6) async {
-        let uniqueDescriptors: [KNSProfileImageDescriptor] = {
-            var seen: Set<String> = []
-            var descriptors: [KNSProfileImageDescriptor] = []
-            for raw in rawURLStrings {
-                guard let descriptor = KNSProfileImageDescriptor.from(raw: raw) else { continue }
-                guard !seen.contains(descriptor.cacheIdentity) else { continue }
-                seen.insert(descriptor.cacheIdentity)
-                descriptors.append(descriptor)
-            }
-            return descriptors
-        }()
-        guard !uniqueDescriptors.isEmpty else { return }
-
-        // A sliding window of `maxConcurrent` in-flight loads: one finishes, the next starts.
-        // The previous version sliced into batches and then awaited each item in turn, so it
-        // was fully sequential and `maxConcurrent` did nothing. Prefetch feeds long lists,
-        // so it warms the row-sized variant.
-        let concurrency = max(1, maxConcurrent)
-        let thumbnailSize = KNSProfileImageCache.rowThumbnailMaxPixelSize
-        await withTaskGroup(of: Void.self) { group in
-            var iterator = uniqueDescriptors.makeIterator()
-            var running = 0
-            while running < concurrency, let descriptor = iterator.next() {
-                group.addTask {
-                    _ = await KNSProfileImageCache.shared.image(for: descriptor, maxPixelSize: thumbnailSize)
-                }
-                running += 1
-            }
-            while await group.next() != nil {
-                guard let descriptor = iterator.next() else { continue }
-                group.addTask {
-                    _ = await KNSProfileImageCache.shared.image(for: descriptor, maxPixelSize: thumbnailSize)
-                }
-            }
-        }
-    }
-}
-
-private struct KNSAvatarShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
 enum KNSProfileLinkBuilder {
     static func websiteURL(from raw: String?) -> URL? {
         guard let value = normalizedValue(raw) else { return nil }
@@ -1133,42 +876,6 @@ enum KNSProfileLinkBuilder {
             return (scheme == "http" || scheme == "https") ? url : nil
         }
         return URL(string: "https://\(value)")
-    }
-
-    static func xURL(from raw: String?) -> URL? {
-        handleURL(
-            from: raw,
-            canonicalHost: "x.com",
-            acceptedHosts: ["x.com", "www.x.com", "twitter.com", "www.twitter.com"]
-        )
-    }
-
-    static func telegramURL(from raw: String?) -> URL? {
-        handleURL(
-            from: raw,
-            canonicalHost: "t.me",
-            acceptedHosts: ["t.me", "www.t.me", "telegram.me", "www.telegram.me"]
-        )
-    }
-
-    static func githubURL(from raw: String?) -> URL? {
-        handleURL(
-            from: raw,
-            canonicalHost: "github.com",
-            acceptedHosts: ["github.com", "www.github.com"]
-        )
-    }
-
-    static func emailURL(from raw: String?) -> URL? {
-        guard var value = normalizedValue(raw) else { return nil }
-        if value.lowercased().hasPrefix("mailto:") {
-            value = String(value.dropFirst("mailto:".count))
-        }
-        guard !value.isEmpty else { return nil }
-        var components = URLComponents()
-        components.scheme = "mailto"
-        components.path = value
-        return components.url
     }
 
     /// Discord profile links only support numeric user IDs (snowflakes).
@@ -1199,39 +906,6 @@ enum KNSProfileLinkBuilder {
         value = trimmedHandle(value)
         guard isDiscordUserID(value) else { return nil }
         return URL(string: "https://discord.com/users/\(value)")
-    }
-
-    private static func handleURL(from raw: String?, canonicalHost: String, acceptedHosts: [String]) -> URL? {
-        guard var value = normalizedValue(raw) else { return nil }
-
-        if let directURL = URL(string: value), let scheme = directURL.scheme?.lowercased() {
-            if scheme == "http" || scheme == "https" {
-                if let host = directURL.host?.lowercased(), acceptedHosts.contains(host) {
-                    guard let firstPathComponent = directURL.pathComponents.first(where: { $0 != "/" }) else {
-                        return nil
-                    }
-                    value = firstPathComponent
-                } else {
-                    return directURL
-                }
-            } else {
-                // Not a web link - shown as text, never opened (see `websiteURL`).
-                return nil
-            }
-        } else {
-            value = stripURLDecoration(value)
-            if let extracted = stripKnownHostPrefix(value, hosts: acceptedHosts) {
-                value = extracted
-            }
-        }
-
-        value = trimmedHandle(value)
-        guard !value.isEmpty else { return nil }
-
-        guard let encoded = value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
-            return nil
-        }
-        return URL(string: "https://\(canonicalHost)/\(encoded)")
     }
 
     private static func normalizedValue(_ raw: String?) -> String? {

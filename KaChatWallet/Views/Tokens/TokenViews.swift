@@ -181,62 +181,105 @@ struct BalancePagePills: View {
 
 // MARK: - Activity
 
-/// One line of a token's activity: received, sent, or what was done on Trestly's site.
+/// One line of a token's history, drawn like a transaction on a Kaspa address's page (Manage
+/// Addresses): the circled arrow, Received or Sent in its colour, the transaction id, the date
+/// and time; on the right the signed amount, the fee when this phone paid it, and the explorer
+/// mark. A tap opens the transaction in the explorer.
 struct TokenActivityRow: View {
     let token: WalletToken
     let row: TokenActivity
+    @EnvironmentObject private var settingsViewModel: SettingsViewModel
 
     var body: some View {
+        Button {
+            guard let txid = row.txid,
+                  let url = settingsViewModel.settings.kaspaExplorer.txURL(for: txid) else { return }
+            Haptics.impact(.light)
+            UIApplication.shared.open(url)
+        } label: {
+            content
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var content: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.body.weight(.semibold))
-                .foregroundColor(isIn ? .green : .accentColor)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill((isIn ? Color.green : Color.accentColor).opacity(0.15)))
+                .font(.title2)
+                .foregroundColor(tint)
+
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(tint)
                     if row.pending {
                         Text("Pending")
                             .font(.caption2.weight(.bold))
                             .foregroundColor(.orange)
                     }
                 }
-                if let counterpartyLine {
-                    Text(verbatim: counterpartyLine)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(verbatim: sign + TokenAmount.plain(row.units, token: token))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundColor(isIn ? .green : .primary)
-                    .monospacedDigit()
-                Text(row.date, format: .dateTime.month(.abbreviated).day().hour().minute())
+                Text(verbatim: row.txid ?? row.counterparty)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(row.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(verbatim: sign + TokenAmount.amount(row.units, token: token))
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(tint)
+                    .monospacedDigit()
+                if let fee = row.fee {
+                    Text(verbatim: String(format: AppLocalization.string("Fee %@"), Self.feeText(fee)))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                if row.txid != nil {
+                    Image(systemName: "arrow.up.right.square")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                }
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 
-    private var isIn: Bool { row.kind == .received || row.kind == .bridged || row.kind == .swapped }
+    /// As Kaspa's rows write a fee: four decimals, eight under 0.001 KAS.
+    static func feeText(_ sompi: UInt64) -> String {
+        let kas = Double(sompi) / 100_000_000.0
+        return (kas >= 0.001 ? String(format: "%.4f", kas) : String(format: "%.8f", kas)) + " " + KaspaUnit.symbol
+    }
+
+    /// A swap is in when it bought kUSDT, out when it sold it.
+    private var isIn: Bool {
+        row.kind == .received || row.kind == .bridged || (row.kind == .swapped && row.outgoing != true)
+    }
 
     /// A combine moves nothing in or out: no sign.
     private var sign: String { row.kind == .combined ? "" : (isIn ? "+" : "-") }
 
+    private var tint: Color {
+        switch row.kind {
+        case .received, .bridged: return .green
+        case .swapped: return isIn ? .green : .red
+        case .sent: return .red
+        case .combined: return .accentColor
+        }
+    }
+
     private var icon: String {
         switch row.kind {
-        case .received: return "arrow.down"
-        case .sent: return "arrow.up"
-        case .swapped: return "arrow.triangle.2.circlepath"
-        case .bridged: return "arrow.left.arrow.right"
+        case .received, .bridged: return "arrow.down.circle.fill"
+        case .sent: return "arrow.up.circle.fill"
+        case .swapped: return "arrow.triangle.2.circlepath.circle.fill"
         case .combined: return "arrow.triangle.merge"
         }
     }
@@ -248,17 +291,6 @@ struct TokenActivityRow: View {
         case .swapped: return "Swapped"
         case .bridged: return "Bridged In"
         case .combined: return "Combined Coins"
-        }
-    }
-
-    private var counterpartyLine: String? {
-        if row.counterparty.isEmpty { return nil }
-        switch row.kind {
-        case .combined: return String(format: AppLocalization.string("%d coins into 1"), Int(row.counterparty) ?? 2)
-        case .received: return String(format: AppLocalization.string("From %@"), row.counterparty)
-        case .sent: return String(format: AppLocalization.string("To %@"), row.counterparty)
-        case .swapped: return String(format: AppLocalization.string("KAS for %@ on %@"), token.symbol, row.counterparty)
-        case .bridged: return String(format: AppLocalization.string("From %@"), row.counterparty)
         }
     }
 }

@@ -56,6 +56,11 @@ struct TokenSendView: View {
     /// shows its exact fee, and the swipe sends it.
     @State private var prepared: KusdtTransfer.Prepared?
     @State private var isPreparing = false
+    /// Bumped by every build and by leaving the review: a build that finishes after the review
+    /// changed (Back, a new amount) is dropped, never sent (KaPost's audit, 2026-11-20).
+    @State private var prepareGeneration = 0
+    /// A build was asked for while another ran: it runs once that one ends.
+    @State private var rebuildWhenDone = false
     @State private var prepareError: String?
     @State private var sent: SentTransaction?
     /// The last submit's answer was lost: Try Again sends the same signed transaction (same id,
@@ -108,6 +113,23 @@ struct TokenSendView: View {
 
     private var amountUnits: UInt64? { TokenAmount.units(fromTyped: amountText, token: token) }
 
+    private struct BuildKey: Equatable {
+        let holdingID: String
+        let recipient: String
+        let amount: UInt64
+    }
+
+    private var buildKey: BuildKey? {
+        guard let from, let recipient, let amountUnits else { return nil }
+        return BuildKey(holdingID: from.id, recipient: recipient, amount: amountUnits)
+    }
+
+    /// The built transfer is for exactly what the review shows: only then can the swipe send it.
+    private var preparedIsCurrent: Bool {
+        guard let prepared, let key = buildKey else { return false }
+        return prepared.holding.id == key.holdingID && prepared.recipient == key.recipient && prepared.amount == key.amount
+    }
+
     private var amountTooHigh: Bool { (amountUnits ?? 0) > balance }
 
     var body: some View {
@@ -136,6 +158,7 @@ struct TokenSendView: View {
         dismissSystemKeyboard()
         // leaving the review: what it built belongs to the old amount and recipient
         if step == .review || next == .review {
+            prepareGeneration += 1
             prepared = nil
             prepareError = nil
             failureMessage = nil
@@ -299,7 +322,7 @@ struct TokenSendView: View {
             titleText: Text("Review"),
             title: "Swipe up to Send",
             isBusy: isSending,
-            isEnabled: prepared != nil && !isPreparing && amountUnits != nil && recipient != nil && from != nil && !amountTooHigh,
+            isEnabled: preparedIsCurrent && !isPreparing && !amountTooHigh,
             amountSompi: nil,
             recipient: resolvedName ?? recipient,
             sent: sent,
@@ -445,7 +468,10 @@ struct TokenSendView: View {
         }
         // not `.task`: SwiftUI can cancel a view's task while a sheet settles, which surfaced as
         // "CancellationError" mid-build; this build runs to the end either way
-        .onAppear { if prepared == nil, sent == nil, !isPreparing { Task { await prepare() } } }
+        .onAppear {
+            guard prepared == nil, sent == nil else { return }
+            if isPreparing { rebuildWhenDone = true } else { Task { await prepare() } }
+        }
         .sheet(item: $fundingRequest, onDismiss: {
             // closed by Done after the send, or swiped away (maybe after sending): look either way
             let sent = funded
@@ -487,31 +513,55 @@ struct TokenSendView: View {
     }
 
     /// Builds and signs the transfer for what's on the review (no network yet but the coin reads).
+    /// The result is kept only if nothing changed while it built (`prepareGeneration`, and the
+    /// same address, recipient and amount); a build asked for meanwhile runs once this one ends.
     private func prepare(attempt: Int = 0) async {
-        guard let from, let recipient, let amountUnits, !isPreparing else { return }
+        guard let from, let key = buildKey else { return }
+        guard !isPreparing else {
+            rebuildWhenDone = true
+            return
+        }
+        prepareGeneration += 1
+        let generation = prepareGeneration
         isPreparing = true
         prepareError = nil
-        defer { isPreparing = false }
+        var retry = false
+        func isCurrent() -> Bool { generation == prepareGeneration && buildKey == key }
         do {
-            var built = try await KusdtTransfer.prepare(holding: from, coins: tokens.coins(of: from), recipient: recipient, amount: amountUnits)
-            built.recipientLabel = resolvedName ?? AddressBookManager.shared.entry(for: recipient)?.customName
-            prepared = built
-            fundShortfall = nil
-            fundingSent = false
+            var built = try await KusdtTransfer.prepare(holding: from, coins: tokens.coins(of: from), recipient: key.recipient, amount: key.amount)
+            if isCurrent() {
+                built.recipientLabel = resolvedName ?? AddressBookManager.shared.entry(for: key.recipient)?.customName
+                prepared = built
+                fundShortfall = nil
+                fundingSent = false
+            }
         } catch KusdtTransfer.Failure.notEnoughKas(let short, let forChangeCoin) {
-            prepared = nil
-            fundShortfall = short
-            fundForChangeCoin = forChangeCoin
-            prepareError = KusdtTransfer.Failure.notEnoughKas(short: short, forChangeCoin: forChangeCoin).localizedDescription
+            if isCurrent() {
+                prepared = nil
+                fundShortfall = short
+                fundForChangeCoin = forChangeCoin
+                prepareError = KusdtTransfer.Failure.notEnoughKas(short: short, forChangeCoin: forChangeCoin).localizedDescription
+            }
         } catch let error where TokenCombineView.isCancellation(error) && attempt < 2 {
             // a lookup cut short, not a refusal: build again
-            isPreparing = false
+            retry = isCurrent()
+        } catch {
+            if isCurrent() {
+                prepared = nil
+                fundShortfall = nil
+                prepareError = error.localizedDescription
+            }
+        }
+        isPreparing = false
+        if retry {
             try? await Task.sleep(nanoseconds: 500_000_000)
             await prepare(attempt: attempt + 1)
-        } catch {
-            prepared = nil
-            fundShortfall = nil
-            prepareError = error.localizedDescription
+            return
+        }
+        // the review was reopened, or changed, while this built: build for what it shows now
+        if rebuildWhenDone {
+            rebuildWhenDone = false
+            if step == .review, sent == nil, !preparedIsCurrent { await prepare() }
         }
     }
 
@@ -533,14 +583,28 @@ struct TokenSendView: View {
         isSending = true
         Task { @MainActor in
             defer { isSending = false }
-            // a review left open a while is built again from the coins as they are now
-            if !outcomeUnknown, let built = prepared, Date().timeIntervalSince(built.preparedAt) > 120 {
-                await prepare()
-            }
-            guard let prepared else {
+            // never the build a running one is about to replace
+            while isPreparing { try? await Task.sleep(nanoseconds: 200_000_000) }
+            guard let built = prepared, preparedIsCurrent else {
                 failureMessage = prepareError ?? AppLocalization.string("The transaction couldn't be built. Nothing was sent.")
                 return
             }
+            // a review left open a while is built again from the coins as they are now, and shown
+            // again with its fee for another swipe: nothing goes out on a build nobody saw
+            if !outcomeUnknown, Date().timeIntervalSince(built.preparedAt) > 120 {
+                prepared = nil
+                await prepare()
+                while isPreparing { try? await Task.sleep(nanoseconds: 200_000_000) }
+                if let rebuilt = prepared, preparedIsCurrent, rebuilt.fee > built.fee {
+                    failureMessage = SendFeeChangedError(feeSompi: rebuilt.fee).localizedDescription
+                } else if prepared != nil, preparedIsCurrent {
+                    failureMessage = AppLocalization.string("The review was open a while, so the transaction was built again. Nothing was sent: check it and swipe again.")
+                } else {
+                    failureMessage = prepareError ?? AppLocalization.string("The transaction couldn't be built. Nothing was sent.")
+                }
+                return
+            }
+            let prepared = built
             do {
                 let txid = try await KusdtTransfer.send(prepared)
                 outcomeUnknown = false
@@ -549,9 +613,10 @@ struct TokenSendView: View {
                                        recipient: "\(TokenAmount.amount(prepared.amount, token: token)) → \(resolvedName ?? recipient ?? "")")
             } catch is SendOutcomeUnknownError {
                 outcomeUnknown = true
-                // it may have landed: its kUSDT coins leave the balances until a lookup shows them
-                // unspent, so nothing else is built on them meanwhile
-                TokenWallet.shared.noteSent(prepared)
+                // It may have landed. Its coins stay where they are (not dropped as if sent): the
+                // next send from this address spends one of them too (`KusdtTransfer.prepare`), so
+                // this one and any later one conflict and at most one lands, even after Back
+                // (audit, 2026-11-20). Try Again resends this same transaction.
                 failureMessage = AppLocalization.string("Not confirmed: the network didn't answer. It may still go through. Try Again resends the same transaction, so it can't be paid twice.")
             } catch {
                 failureMessage = error.localizedDescription

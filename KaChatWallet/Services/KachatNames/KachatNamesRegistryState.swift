@@ -380,25 +380,6 @@ extension KachatNames {
             self.link = link
         }
 
-        /// A handle typed for `platform` (with or without `@`), or a whole pasted profile link -
-        /// which may name another platform: the caller switches its picker to `.platform`.
-        static func from(platform: Platform, handle raw: String, for kind: Kind) -> SocialSource? {
-            var h = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !h.isEmpty else { return nil }
-            let lower = h.lowercased()
-            if lower.hasPrefix("http") || (h.contains(".") && h.contains("/")) {
-                return SocialSource(link: h, for: kind)
-            }
-            if h.hasPrefix("@") { h.removeFirst() }
-            let link: String
-            switch platform {
-            case .youtube, .tiktok: link = platform.prefix + h
-            case .linkedin: link = h.hasPrefix("in/") || h.hasPrefix("company/") ? "linkedin.com/\(h)" : platform.prefix + h
-            default: link = platform.prefix + h
-            }
-            return SocialSource(link: link, for: kind)
-        }
-
         /// The handle as the field shows it after `platform.prefix`.
         var displayHandle: String {
             switch platform {
@@ -1163,16 +1144,6 @@ extension KachatNames {
         }
 
         struct EventsJSON: Decodable { let events: [EventJSON]; let next: String? }
-
-        /// `GET /stats/names`, the parts the app reads: transaction counts and fees (sompi as
-        /// strings), each over 24 hours, 7 days and all time.
-        struct StatsJSON: Decodable {
-            struct Counts: Decodable { let total: UInt64; let last24h: UInt64; let last7d: UInt64 }
-            struct Fees: Decodable { let total: String; let last24h: String; let last7d: String }
-            let transactions: Counts?
-            let activity: [String: Counts]?
-            let fees: Fees?
-        }
 
         struct OfferJSON: Decodable {
             let outpoint: OutpointJSON

@@ -136,9 +136,16 @@ final class ColdStorageSendEngine {
         amountSompi: UInt64,
         feeRateSompiPerGram: UInt64,
         recipientScriptLen: Int,
-        changeScriptLen: Int
+        changeScriptLen: Int,
+        leadingOutpoint: String? = nil
     ) -> Selection? {
-        let sorted = utxos.sorted { $0.amount > $1.amount }
+        var sorted = utxos.sorted { $0.amount > $1.amount }
+        // A coin a "Not confirmed" send spent goes first, so this send and that one can't both
+        // land (`WalletService.conflictingOutpoint`, as the hot wallet's sends do).
+        if let leadingOutpoint,
+           let index = sorted.firstIndex(where: { "\($0.outpoint.transactionId):\($0.outpoint.index)" == leadingOutpoint }) {
+            sorted.insert(sorted.remove(at: index), at: 0)
+        }
         var selected: [UTXO] = []
         var totalSelected: UInt64 = 0
         var estimatedFee: UInt64 = 0
@@ -242,15 +249,27 @@ final class ColdStorageSendEngine {
             feeRate = await Self.fetchQuotedFeeRateSompiPerGram()
         }
 
+        // After a "Not confirmed" send from this address, an automatic selection leads with one
+        // of its coins, so at most one of the two can land (CLAUDE.md, Coins). A coin-control
+        // pick is the person's own and is left as it is.
+        let leadingOutpoint = WalletService.shared.conflictingOutpoint(in: spendable)
         let selectionResult: Selection?
-        if let manualUtxos, !manualUtxos.isEmpty {
+        let resolvedManual: [UTXO]? = manualUtxos.flatMap { manual -> [UTXO]? in
+            guard !manual.isEmpty else { return nil }
             let freshByOutpoint = Dictionary(
                 spendable.map { ("\($0.outpoint.transactionId):\($0.outpoint.index)", $0) },
                 uniquingKeysWith: { first, _ in first }
             )
-            let resolved = manualUtxos.compactMap { freshByOutpoint["\($0.outpoint.transactionId):\($0.outpoint.index)"] }
+            return manual.compactMap { freshByOutpoint["\($0.outpoint.transactionId):\($0.outpoint.index)"] }
+        }
+        // The review's preview without the coin to lead with (the earlier send ended after it
+        // was shown) is chosen again here, leading with it.
+        let previewMissesLead = previewed && leadingOutpoint.map { lead in
+            !(resolvedManual ?? []).contains { "\($0.outpoint.transactionId):\($0.outpoint.index)" == lead }
+        } == true
+        if let resolvedManual, !previewMissesLead {
             selectionResult = Self.buildManualSelection(
-                utxos: resolved,
+                utxos: resolvedManual,
                 amountSompi: amountSompi,
                 feeRateSompiPerGram: feeRate,
                 recipientScriptLen: recipientScript.count,
@@ -262,7 +281,8 @@ final class ColdStorageSendEngine {
                 amountSompi: amountSompi,
                 feeRateSompiPerGram: feeRate,
                 recipientScriptLen: recipientScript.count,
-                changeScriptLen: changeScript.count
+                changeScriptLen: changeScript.count,
+                leadingOutpoint: leadingOutpoint
             )
         }
         guard var selection = selectionResult else {
@@ -367,7 +387,9 @@ final class ColdStorageSendEngine {
             amountSompi: amountSompi,
             feeRateSompiPerGram: feeRateSompiPerGram,
             recipientScriptLen: Self.scriptLength(of: toAddress),
-            changeScriptLen: Self.scriptLength(of: fromAddress)
+            changeScriptLen: Self.scriptLength(of: fromAddress),
+            // the same lead the build takes, so the review shows the coins it will spend
+            leadingOutpoint: WalletService.shared.conflictingOutpoint(in: spendable)
         ) else {
             return nil
         }

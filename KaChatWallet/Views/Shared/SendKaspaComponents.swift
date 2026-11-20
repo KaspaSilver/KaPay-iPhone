@@ -1,8 +1,8 @@
 import SwiftUI
 import UIKit
 
-// The pieces every Send Kaspa screen is built from, so they look and behave the same: the 1:1
-// Wallet tab's Send Kaspa, a spending address's Send, and KasSigner's send.
+// The pieces every Send Kaspa screen is built from, so they look and behave the same: the
+// Wallet tab's Send Kaspa, a spending address's Send, and Cold Storage's (KasSigner) send.
 // Recipient on top (paste, scan a QR, names resolve), then the big amount (KAS or your currency,
 // Max), the fee and balance, the fee speed and coin control, and a slide-to-send button.
 
@@ -832,68 +832,6 @@ struct SendFeeEditorScreen: View {
                 }
                 .padding(.horizontal, 12)
             }
-        }
-    }
-}
-
-/// The amount step's From: the two pills of `SendFromSection` - Chatting Address and Choose an
-/// Address (any of your addresses; once picked, the pill shows its name) - without the address
-/// card under them, so the keypad has room. The balance it loads is the amount's Available.
-struct SendFromCompactRow: View {
-    @Binding var source: SendSource
-    /// The chosen address's balance, loaded here (nil while it loads).
-    @Binding var availableSompi: UInt64?
-    /// Opened from one address's own page: that address only, shown as the one pill.
-    var isLocked: Bool = false
-    @State private var showPicker = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Text("From")
-                .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
-                .textCase(.uppercase)
-            if isLocked {
-                SelectablePill(title: LocalizedStringKey(sourceTitle), selected: true) {}
-                    .allowsHitTesting(false)
-            } else {
-                SelectablePill(title: "Chatting Address", selected: source == .chatting) {
-                    source = .chatting
-                }
-                SelectablePill(title: chooseTitle, selected: source != .chatting) {
-                    showPicker = true
-                }
-            }
-        }
-        .sheet(isPresented: $showPicker) {
-            OwnAddressPicker(title: "Send From", selected: source.address) { picked in
-                source = picked
-            }
-        }
-        .task(id: source) {
-            availableSompi = nil
-            guard let address = source.address else { return }
-            // A failed read says nothing about the balance: left unknown, not shown as 0.
-            let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
-            guard !Task.isCancelled, let utxos else { return }
-            // what a send can spend: not coins just spent or not yet usable
-            let spendable = source == .chatting
-                ? WalletService.shared.withdrawalSpendable(utxos)
-                : WalletService.shared.unreservedUtxos(utxos)
-            availableSompi = spendable.reduce(UInt64(0)) { $0 + $1.amount }
-        }
-    }
-
-    /// "Choose an Address", or the picked address's name.
-    private var chooseTitle: LocalizedStringKey {
-        if case .spending(_, _, let label) = source { return LocalizedStringKey(label) }
-        return "Choose an Address"
-    }
-
-    private var sourceTitle: String {
-        switch source {
-        case .chatting: return AppLocalization.string("Chatting Address")
-        case .spending(_, _, let label): return label
         }
     }
 }
@@ -1936,124 +1874,14 @@ struct SelectablePill: View {
     }
 }
 
-/// The From section every send screen starts with, so it is always plain which address the
-/// Kaspa leaves from: Chatting Address (the default) or Choose an Address (any of your
-/// addresses, each marked used or unused), and the chosen address with its balance.
-struct SendFromSection: View {
-    @Binding var source: SendSource
-    /// The chosen address's balance, loaded here (nil while it loads) - the screen's Available.
-    @Binding var availableSompi: UInt64?
-    /// Opened from one address's own page (its history's Send): that address only, no choice.
-    var isLocked: Bool = false
-    @State private var showPicker = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("From")
-                .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
-                .textCase(.uppercase)
-            if !isLocked {
-                HStack(spacing: 10) {
-                    SelectablePill(title: "Chatting Address", selected: source == .chatting) {
-                        source = .chatting
-                    }
-                    SelectablePill(title: "Choose an Address", selected: source != .chatting) {
-                        showPicker = true
-                    }
-                }
-            }
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(verbatim: title)
-                        .font(.subheadline.weight(.semibold))
-                    if let address = source.address {
-                        Text(verbatim: "\(address.prefix(14))...\(address.suffix(6))")
-                            .font(.caption.monospaced())
-                            .foregroundColor(.secondary)
-                    }
-                }
-                Spacer()
-                if let availableSompi {
-                    Text(verbatim: "\(KaspaUnit.plain(availableSompi)) \(KaspaUnit.symbol)")
-                        .font(.subheadline.monospacedDigit().weight(.semibold))
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .padding(12)
-            .background(sendKaspaGlass(cornerRadius: 14))
-        }
-        .sheet(isPresented: $showPicker) {
-            OwnAddressPicker(title: "Send From", selected: source.address) { picked in
-                source = picked
-            }
-        }
-        .task(id: source) {
-            availableSompi = nil
-            guard let address = source.address else { return }
-            // A failed read says nothing about the balance: left unknown, not shown as 0.
-            let utxos = try? await NodePoolService.shared.getUtxosByAddresses([address])
-            guard !Task.isCancelled, let utxos else { return }
-            // what a send can spend: not coins just spent or not yet usable
-            let spendable = source == .chatting
-                ? WalletService.shared.withdrawalSpendable(utxos)
-                : WalletService.shared.unreservedUtxos(utxos)
-            availableSompi = spendable.reduce(UInt64(0)) { $0 + $1.amount }
-        }
-    }
-
-    private var title: String {
-        switch source {
-        case .chatting: return AppLocalization.string("Chatting Address")
-        case .spending(_, _, let label): return label
-        }
-    }
-}
-
-/// Your addresses to pick from - the chatting address, then the spending addresses (the ones
-/// Manage Addresses shows, plus hidden ones holding Kaspa) - each with its name, balance and
-/// whether it was ever used (a balance means used, else the cached answer, else a history
-/// lookup, eight at a time; "Checking" until answered, never a possibly-wrong "Unused").
-/// A send's Choose an Address, as a sheet (`OwnAddressPicker`).
-struct OwnAddressPicker: View {
-    let title: LocalizedStringKey
-    let selected: String?
-    /// The .kachat market signs its funding inputs as plain P2PK, which a quantum-safe (KIP-22)
-    /// address can't be - its picker leaves them out.
-    var excludeQuantum: Bool = false
-    let onPick: (SendSource) -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                OwnAddressList(selected: selected, excludeQuantum: excludeQuantum) { picked in
-                    onPick(picked)
-                    dismiss()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-            }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-}
-
-/// The address list itself, to sit on a screen (Request Payment's "Where do you want to be
-/// paid?") or in `OwnAddressPicker`'s sheet: the chatting address, then the spending addresses,
-/// as tappable cards with Used / Unused and the balance; the picked one has a check.
+/// Your addresses to pick from, right on a screen (Request Payment's "Where do you want to be
+/// paid?", a send's Choose an Address): the chatting address, then the spending addresses (the
+/// ones Manage Addresses shows, plus hidden ones holding Kaspa), as tappable cards with the
+/// balance and whether each was ever used (a balance means used, else the cached answer, else a
+/// history lookup, eight at a time; "Checking" until answered, never a possibly-wrong "Unused").
+/// The picked one has a check.
 struct OwnAddressList: View {
     let selected: String?
-    var excludeQuantum: Bool = false
     let onPick: (SendSource) -> Void
     @State private var entries: [SpendingAddressEntry]?
     @State private var used: [String: Bool] = [:]
@@ -2082,7 +1910,6 @@ struct OwnAddressList: View {
             let all = await WalletManager.shared.getSpendingAddressList()
             let shown = all
                 .filter { !$0.hidden || $0.balanceSompi > 0 }
-                .filter { !excludeQuantum || !$0.isQuantum }
                 .sorted { $0.index < $1.index }
             entries = shown
             await checkUsed(shown)

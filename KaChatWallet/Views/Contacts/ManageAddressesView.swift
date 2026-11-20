@@ -3,17 +3,14 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import UIKit
 
-/// Every address of this account, reached from Profile > Manage Addresses: the chatting address
+/// Every address of this account, reached from the Wallet tab's balance card: the chatting address
 /// first, then the spending addresses, each with its balance and whether it was used, a
 /// "generate new address" action, rename, QR, hide. Which address a send comes from is picked on
 /// the send screen itself (From), so there is no "primary" here.
 struct ManageAddressesView: View {
-    /// The total's value in your currency, under it (as the Wallet tab's card shows it).
-    @ObservedObject private var portfolio = PortfolioViewModel.shared
     @EnvironmentObject var walletManager: WalletManager
     @EnvironmentObject var walletService: WalletService
     @EnvironmentObject var settingsViewModel: SettingsViewModel
-    @ObservedObject private var activityNotifier = AddressActivityNotifier.shared
 
     @State private var entries: [SpendingAddressEntry] = []
     @State private var isLoading = false
@@ -43,6 +40,9 @@ struct ManageAddressesView: View {
     /// Quantum (KIP-22) rows whose key is on chain (they spent once): the shield is off for
     /// good. Seeded from the local marks, confirmed per row by the on-chain probe.
     @State private var quantumSpentAddresses: Set<String> = []
+    /// The on-chain shield checks of the last load: cancelled by the next load and when the
+    /// screen goes, so they don't pile up behind repeated reloads.
+    @State private var shieldTask: Task<Void, Never>?
     /// The bulk show/hide checklist, reached from the Address Actions sheet - it is one of this
     /// account's address actions, so it lives with the others rather than as an unlabelled
     /// checklist glyph in the toolbar. Same placement as Cold Storage.
@@ -145,6 +145,7 @@ struct ManageAddressesView: View {
         .task {
             await reloadEntriesAndWait()
         }
+        .onDisappear { shieldTask?.cancel() }
         // Live own-address receive detected (AddressActivityNotifier) - refresh balances so
         // the screen reflects the funds without a manual pull.
         .onReceive(NotificationCenter.default.publisher(for: .ownAddressActivity)) { _ in
@@ -208,20 +209,7 @@ struct ManageAddressesView: View {
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
 
-        // This account's own switch (cold-storage accounts have theirs in their menu): the
-        // spending addresses' receives, not every address the wallet watches.
-        Toggle(isOn: $activityNotifier.spendingReceiveNotificationsEnabled) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Notify on receive")
-                    .font(.subheadline.weight(.semibold))
-                Text("When a spending address receives Kaspa from someone else.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-        .tint(.accentColor)
-        .listRowSeparator(.hidden)
-        .onAppear { activityNotifier.reloadSpendingSwitchForCurrentWallet() }
+        // "Notify on receive" for the spending addresses lives in Settings > Notifications.
 
         if let wallet = walletManager.currentWallet {
             chattingAddressRow(wallet)
@@ -300,7 +288,7 @@ struct ManageAddressesView: View {
                     Text(verbatim: "\(wallet.publicAddress.prefix(14))...\(wallet.publicAddress.suffix(6))")
                         .font(.system(.subheadline, design: .monospaced))
                         .foregroundColor(.primary)
-                    Text(verbatim: "\(formatKasExact(wallet.balanceSompi ?? 0)) \(KaspaUnit.symbol)")
+                    Text(verbatim: "\(KaspaUnit.groupedExact(wallet.balanceSompi ?? 0)) \(KaspaUnit.symbol)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                     Text("Used")
@@ -346,7 +334,7 @@ struct ManageAddressesView: View {
                     Text(entry.shortAddress)
                         .font(.system(.subheadline, design: .monospaced))
                         .foregroundColor(.primary)
-                    Text(verbatim: "\(formatKasExact(entry.balanceSompi)) \(KaspaUnit.symbol)")
+                    Text(verbatim: "\(KaspaUnit.groupedExact(entry.balanceSompi)) \(KaspaUnit.symbol)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                     HStack(spacing: 6) {
@@ -407,45 +395,10 @@ struct ManageAddressesView: View {
         (walletManager.currentWallet?.balanceSompi ?? 0) + entries.reduce(0) { $0 + $1.balanceSompi }
     }
 
+    /// The total in the same card as an address's own page (`AddressBalanceCard`), with its worth
+    /// in your currency on mainnet.
     private var accountSummary: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Total Balance")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                HStack(spacing: 10) {
-                    Image("KaspaLogo")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 30, height: 30)
-                        .clipShape(Circle())
-                        .accessibilityHidden(true)
-                    Text(verbatim: "\(formatKasExact(totalBalanceSompi)) \(KaspaUnit.symbol)")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                }
-                if let fiat = totalFiatText {
-                    Text(verbatim: fiat)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
-        .onAppear { portfolio.refreshSpotPriceIfStale() }
-    }
-
-    /// What the total is worth in your currency, like the Wallet tab's card. Testnet coins aren't
-    /// worth anything, so there's none there.
-    private var totalFiatText: String? {
-        guard AppSettings.load().networkType == .mainnet,
-              let price = portfolio.currentPriceUsd, price > 0 else { return nil }
-        return formatFiatAmount(Double(totalBalanceSompi) / 100_000_000.0 * price, currency: portfolio.currentCurrency, decimals: 4)
+        KaspaAddressBalanceCard(label: AppLocalization.string("Total Balance"), sompi: totalBalanceSompi)
     }
 
     /// The floating glass button behind "Address Actions", like the Wallet tab's send / receive one.
@@ -667,6 +620,10 @@ struct ManageAddressesView: View {
     /// the persisted snapshot. setSpendingAddressHidden re-verifies primary/zero-balance
     /// server-side and returns false if the address can't be hidden.
     private func hideAddress(_ entry: SpendingAddressEntry) {
+        if TokenWallet.shared.listedSpendingIndices().contains(entry.index) {
+            showToast(AppLocalization.string("This address is on your kUSDT list, so it stays here. Hide it from Manage kUSDT first."))
+            return
+        }
         Task {
             let ok = await walletManager.setSpendingAddressHidden(index: entry.index, hidden: true)
             guard ok else {
@@ -682,6 +639,21 @@ struct ManageAddressesView: View {
             Haptics.success()
             showToast("Address hidden. Re-enable it in Address Visibility.")
         }
+    }
+
+    /// Every address Manage kUSDT lists is shown here too (owner's call, 2026-11-20): one hidden
+    /// here (Hide, Hide All, an older choice) is shown again, and stays checked in Address Visibility.
+    private func showKusdtListedAddresses() async {
+        let tokens = TokenWallet.shared
+        await tokens.refreshIfStale()
+        let listed = tokens.listedSpendingIndices()
+        var changed = false
+        for (i, entry) in entries.enumerated() where entry.hidden && listed.contains(entry.index) {
+            guard await walletManager.setSpendingAddressHidden(index: entry.index, hidden: false) else { continue }
+            if i < entries.count, entries[i].index == entry.index { entries[i].hidden = false }
+            changed = true
+        }
+        if changed { walletManager.storeSpendingAddressListCache(entries) }
     }
 
     /// Instant sync after the Address Visibility sheet closes: stamp the stored hidden
@@ -752,13 +724,16 @@ struct ManageAddressesView: View {
         // answer go on the probe list; a failed earlier probe keeps its last known everUsed
         // (from the cached snapshot / previous load) instead of resetting to false.
         let previousUsed = Dictionary(entries.map { ($0.address, $0.everUsed) }, uniquingKeysWith: { first, _ in first })
+        // The stored used list read once for the whole load, not once per row.
+        let cachedUsed = walletService.cachedSpendingAddressUsedStates(baseEntries.map(\.address))
         var toProbe: [SpendingAddressEntry] = []
+        var newlyFunded: [String] = []
         var merged = baseEntries.map { entry -> SpendingAddressEntry in
             var updated = entry
             if entry.balanceSompi > 0 {
                 updated.everUsed = true
-                walletService.markSpendingAddressUsed(entry.address)
-            } else if let cached = walletService.cachedSpendingAddressUsedState(entry.address) {
+                if cachedUsed[entry.address] != true { newlyFunded.append(entry.address) }
+            } else if let cached = cachedUsed[entry.address] {
                 updated.everUsed = cached
             } else {
                 updated.everUsed = previousUsed[entry.address] ?? false
@@ -766,23 +741,34 @@ struct ManageAddressesView: View {
             }
             return updated
         }
+        walletService.markSpendingAddressesUsed(newlyFunded)
         merged.sort { $0.index < $1.index }
         entries = merged
-        // Every not-yet-confirmed row shows "Checking" from the first frame and clears the
-        // moment its OWN probe lands below - not when the whole sweep ends.
+        // Every not-yet-confirmed row shows "Checking" from the first frame and clears as the
+        // probes below land - not when the whole sweep ends. A hidden row isn't probed (nobody
+        // sees its badge): it stays unknown, and Generate gives it its own probe before
+        // recycling it.
         unknownUsedAddresses = Set(toProbe.map(\.address))
         isLoading = false
+        await showKusdtListedAddresses()
+        // after the kUSDT step, which may have shown some again
+        let shownNow = Set(entries.filter { !$0.hidden }.map(\.address))
+        toProbe.removeAll { !shownNow.contains($0.address) }
 
-        // Quantum shields: local spend marks at once, then the chain's word per row for spends
-        // made on another device or before a restore (a spent mark is permanent - a revealed
-        // key cannot be unrevealed).
+        // Quantum shields: local spend marks at once, then the chain's word per shown row for
+        // spends made on another device or before a restore (a spent mark is permanent - a
+        // revealed key cannot be unrevealed).
+        shieldTask?.cancel()
         quantumSpentAddresses = Set(merged.filter { $0.isQuantum }.map { $0.address.lowercased() }
             .filter { WalletManager.shared.isQuantumAddressSpentLocally($0) })
-        let shieldCandidates = merged.filter { $0.isQuantum && !quantumSpentAddresses.contains($0.address.lowercased()) }
+        let shieldCandidates = entries.filter {
+            $0.isQuantum && !$0.hidden && !quantumSpentAddresses.contains($0.address.lowercased())
+        }
         if !shieldCandidates.isEmpty {
-            Task {
+            shieldTask = Task {
                 for entry in shieldCandidates {
-                    if await walletService.quantumAddressSpentState(entry.address) == true {
+                    guard !Task.isCancelled else { return }
+                    if await walletService.quantumAddressSpentState(entry.address) == true, !Task.isCancelled {
                         quantumSpentAddresses.insert(entry.address.lowercased())
                     }
                 }
@@ -801,6 +787,20 @@ struct ManageAddressesView: View {
         toProbe.sort { $0.index < $1.index }
         let concurrencyLimit = 8
         var pending = toProbe.makeIterator()
+        // Answers are written in batches (every `flushEvery` answers, and at the end), not one by
+        // one: each write to `entries` re-sorted and redrew the whole List.
+        let flushEvery = concurrencyLimit
+        var answered: [String: Bool] = [:]
+        func flushAnswers() {
+            guard !answered.isEmpty else { return }
+            var updated = entries
+            for i in updated.indices {
+                if let used = answered[updated[i].address] { updated[i].everUsed = used }
+            }
+            entries = updated
+            unknownUsedAddresses.subtract(answered.keys)
+            answered = [:]
+        }
         await withTaskGroup(of: (String, Bool?).self) { group in
             for _ in 0..<concurrencyLimit {
                 guard let entry = pending.next() else { break }
@@ -813,11 +813,9 @@ struct ManageAddressesView: View {
                     return
                 }
                 if let used {
-                    if let position = entries.firstIndex(where: { $0.address == address }) {
-                        entries[position].everUsed = used
-                    }
-                    unknownUsedAddresses.remove(address)
+                    answered[address] = used
                     AppLog.log("[ManageAddresses] everUsed check address=…%@ used=%@", String(address.suffix(8)), used ? "true" : "false")
+                    if answered.count >= flushEvery { flushAnswers() }
                 }
                 // A failed probe stays in unknownUsedAddresses: the badge keeps showing
                 // "Checking" (never a possibly-wrong "Unused") and pull to refresh retries.
@@ -826,6 +824,8 @@ struct ManageAddressesView: View {
                 }
             }
         }
+        guard !Task.isCancelled else { return }
+        flushAnswers()
 
         guard !Task.isCancelled else { return }
         // Persist the freshly-loaded snapshot so the NEXT open paints instantly from cache.
@@ -995,11 +995,6 @@ struct ManageAddressesView: View {
         }
     }
 
-    /// All eight decimals, the thousands grouped ("1,234.50000000").
-    private func formatKasExact(_ sompi: UInt64) -> String {
-        KaspaUnit.groupedExact(sompi)
-    }
-
     private func showToast(_ message: String, style: ToastStyle = .success) {
         let token = UUID()
         toastToken = token
@@ -1013,16 +1008,6 @@ struct ManageAddressesView: View {
                 }
             }
         }
-    }
-
-    private func glassBackground(cornerRadius: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(.regularMaterial)
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
-            )
-            .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 5)
     }
 }
 
@@ -1043,9 +1028,8 @@ struct ContainsDomainTag: View {
 }
 
 /// Scoped withdraw dialog for a single spending address — change stays on that same address
-/// (no rotation), unlike the rotate-on-send behavior of the primary. Widened
-/// from `private` so ContactsView.swift's Profile-tab "Spending Address" dropdown can reuse it
-/// for the primary spending address rather than duplicating this whole flow.
+/// (no rotation), unlike the rotate-on-send behavior of the primary. Manage Addresses' Compound
+/// UTXOs is its one use.
 struct SpendingAddressWithdrawView: View {
     let entry: SpendingAddressEntry
     /// Pre-fills the recipient with `entry.address` itself (a self-send) and auto-fills Max, for
@@ -1210,7 +1194,8 @@ struct SpendingAddressWithdrawView: View {
     private var review: some View {
             SwipeUpToSendScrollView(
                 screenTitle: isCompoundMode ? "Compound UTXOs"
-                    : "Send Kaspa from Address #\(WalletManager.addressNumber(forIndex: source.index))",
+                    : String(format: AppLocalization.string("Send Kaspa from Address #%lld"), locale: AppLocalization.locale,
+                             WalletManager.addressNumber(forIndex: source.index)),
                 onCancel: { dismiss() },
                 title: isCompoundMode ? "Swipe up to Consolidate" : "Swipe up to Send",
                 isBusy: isSending,
@@ -1828,21 +1813,6 @@ private struct SpendingAddressPrivateKeyView: View {
         }
     }
 
-    /// Sensitive copy: hard 30s system expiration + localOnly (no Universal Clipboard sync);
-    /// the asyncAfter wipe is an in-app belt-and-suspenders clear (see SettingsView's twin).
-    private func copySensitiveToClipboard(_ value: String) {
-        UIPasteboard.general.setItems(
-            [["public.utf8-plain-text": value]],
-            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(30)]
-        )
-        let copiedValue = value
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-            if UIPasteboard.general.string == copiedValue {
-                UIPasteboard.general.string = ""
-            }
-        }
-    }
-
     private func showToast(_ message: String) {
         let token = UUID()
         toastToken = token
@@ -1916,21 +1886,13 @@ struct SpendingAddressTransactionHistoryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 2) {
-                Text("Balance")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text(verbatim: "\(formatKasExact(entry.balanceSompi)) \(KaspaUnit.symbol)")
-                    .font(.title3.weight(.semibold))
-            }
-            .padding(.top, 12)
+            KaspaAddressBalanceCard(label: entry.displayLabel, sompi: entry.balanceSompi)
 
             // The app's tab look (`UnderlineTabBar`), not a segmented control.
             UnderlineTabBar(
                 tabs: Tab.allCases.map { (tab: $0, title: tabLabel($0)) },
                 selection: $selectedTab
             )
-            .padding(.top, 4)
 
             switch selectedTab {
             case .transactions:
@@ -2209,7 +2171,7 @@ struct SpendingAddressTransactionHistoryView: View {
                         .fontWeight(.bold)
                         .foregroundColor(.accentColor)
                 }
-                Text(verbatim: "\(formatKasExact(utxo.amount)) \(KaspaUnit.symbol)")
+                Text(verbatim: "\(KaspaUnit.groupedExact(utxo.amount)) \(KaspaUnit.symbol)")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 Text("\(utxo.outpoint.transactionId):\(utxo.outpoint.index)")
@@ -2277,7 +2239,7 @@ struct SpendingAddressTransactionHistoryView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 if let info {
-                    Text(verbatim: "\(info.isOutgoing ? "-" : "+")\(formatKasExact(info.amountSompi)) \(KaspaUnit.symbol)")
+                    Text(verbatim: "\(info.isOutgoing ? "-" : "+")\(KaspaUnit.groupedExact(info.amountSompi)) \(KaspaUnit.symbol)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(info.isOutgoing ? .red : .green)
@@ -2296,11 +2258,6 @@ struct SpendingAddressTransactionHistoryView: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    /// All eight decimals, the thousands grouped ("1,234.50000000").
-    private func formatKasExact(_ sompi: UInt64) -> String {
-        KaspaUnit.groupedExact(sompi)
     }
 
     private func loadTransactions() async {
@@ -2323,7 +2280,7 @@ struct SpendingAddressTransactionHistoryView: View {
 // MARK: - Bulk address visibility (toolbar checklist on Manage Addresses)
 
 /// Address Visibility: first a card per chain - Quantum Addresses and Non-Quantum Addresses -
-/// then that chain's checklist (owner's design, 2026-10-21). One pager over raw indices could
+/// drawn like Connection Settings' cards, then that chain's checklist (owner's design, 2026-10-21). One pager over raw indices could
 /// never reach the quantum chain, which starts at `quantumIndexBase`. Hide All covers both.
 private struct SpendingAddressVisibilityView: View {
     @EnvironmentObject var walletManager: WalletManager
@@ -2336,12 +2293,11 @@ private struct SpendingAddressVisibilityView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
+                VStack(spacing: 12) {
                     chainCard(quantum: true)
                     chainCard(quantum: false)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
+                .padding()
             }
             .navigationTitle("Address Visibility")
             .navigationBarTitleDisplayMode(.inline)
@@ -2364,7 +2320,9 @@ private struct SpendingAddressVisibilityView: View {
         }
     }
 
-    /// A square tile: the chain, and how many of its addresses Manage Addresses shows.
+    /// A card like Connection Settings' (`ConnectionSettingsView.connectionCard`): the chain's icon
+    /// in its circle, its name, how many of its addresses Manage Addresses shows, what they hold,
+    /// and the chevron.
     private func chainCard(quantum: Bool) -> some View {
         let chain = entries.filter { $0.isQuantum == quantum }
         // The Chatting Address is the legacy list's always-shown #0.
@@ -2375,44 +2333,50 @@ private struct SpendingAddressVisibilityView: View {
         return NavigationLink {
             AddressVisibilityChainList(quantum: quantum, entries: $entries, isLoading: isLoading)
         } label: {
-            Color.clear
-                .aspectRatio(1, contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .overlay {
-                    VStack(spacing: 8) {
-                        Image(systemName: quantum ? "shield.fill" : "circle.grid.2x2.fill")
-                            .font(.scaled(size: 26, weight: .medium))
-                            .foregroundStyle(Color.accentColor)
-                        Text(quantum ? "Quantum Addresses" : "Non-Quantum Addresses")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundColor(.primary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.8)
-                        if isLoading {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Text("\(shown) of \(chain.count + chattingRows) shown")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text(verbatim: KaspaUnit.amount(balance))
-                                .font(.caption.weight(.semibold))
-                                .foregroundColor(balance > 0 ? .accentColor : .secondary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                        }
+            HStack(spacing: 14) {
+                Image(systemName: quantum ? "shield.fill" : "circle.grid.2x2.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundColor(.accentColor)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(Color.accentColor.opacity(0.15)))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(quantum ? "Quantum Addresses" : "Non-Quantum Addresses")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    if isLoading {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Text("\(shown) of \(chain.count + chattingRows) shown")
+                            .font(.caption.monospaced())
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
-                    .padding(.horizontal, 8)
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(.regularMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(Color.white.opacity(0.15), lineWidth: 0.8)
-                        )
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Spacer(minLength: 8)
+                if !isLoading {
+                    Text(verbatim: KaspaUnit.amount(balance))
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(balance > 0 ? .accentColor : .secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.regularMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 18))
         }
         .buttonStyle(.plain)
     }
@@ -2425,7 +2389,12 @@ private struct SpendingAddressVisibilityView: View {
     /// Every revealed address hidden, both chains: the list starts from nothing.
     private func hideAll() {
         walletManager.hideAllSpendingAddresses()
-        entries = entries.map { var e = $0; e.hidden = true; return e }
+        // what Manage kUSDT lists stays shown here too
+        let listed = TokenWallet.shared.listedSpendingIndices()
+        entries = entries.map { var e = $0; e.hidden = !listed.contains(e.index); return e }
+        Task {
+            for index in listed { _ = await walletManager.setSpendingAddressHidden(index: index, hidden: false) }
+        }
     }
 }
 
@@ -2444,6 +2413,8 @@ private struct AddressVisibilityChainList: View {
     let quantum: Bool
     @Binding var entries: [SpendingAddressEntry]
     let isLoading: Bool
+    /// "This address is on your kUSDT list", after a tap on such a row.
+    @State private var showKusdtNote = false
     /// Lazily-filled history results for zero-balance addresses (address -> ever used).
     @State private var usedByAddress: [String: Bool] = [:]
     /// Pager: 50 addresses per page, endless - pages past the revealed set derive future
@@ -2458,6 +2429,9 @@ private struct AddressVisibilityChainList: View {
     /// transiently failed), which is why tapping the next page appeared to load nothing.
     /// `rebuildPage()` derives the whole page through one shared change-key derivation instead.
     @State private var pageEntries: [SpendingAddressEntry] = []
+    /// Manage kUSDT's addresses (`TokenWallet.listedSpendingIndices`), read once per page
+    /// rebuild rather than once per row on every redraw.
+    @State private var kusdtListed: Set<Int> = []
 
     var body: some View {
         Group {
@@ -2489,6 +2463,11 @@ private struct AddressVisibilityChainList: View {
                 pagerBar
             }
             .navigationTitle(quantum ? "Quantum Addresses" : "Non-Quantum Addresses")
+            .alert("Shown for kUSDT", isPresented: $showKusdtNote) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("This address is on your kUSDT list, so it stays here. Hide it from Manage kUSDT first.")
+            }
             .navigationBarTitleDisplayMode(.inline)
             .onAppear { rebuildPage() }
             .onChange(of: page) { _ in rebuildPage() }
@@ -2500,6 +2479,7 @@ private struct AddressVisibilityChainList: View {
     /// (`spendingAddresses(inRange:)` - single seed decrypt for the whole page). Unrevealed
     /// rows render unchecked.
     private func rebuildPage() {
+        kusdtListed = TokenWallet.shared.listedSpendingIndices()
         let byIndex = Dictionary(uniqueKeysWithValues: entries.map { ($0.index, $0) })
         let start = (quantum ? WalletManager.quantumIndexBase : 0) + page * pageSize
         let range = start..<(start + pageSize)
@@ -2588,7 +2568,8 @@ private struct AddressVisibilityChainList: View {
         let funded = entry.balanceSompi > 0
         // Every row toggles both ways - funded ones too (Hide All starts the list over).
         let visible = !entry.hidden
-        let locked = false
+        // on Manage kUSDT's list: it stays shown here
+        let locked = visible && kusdtListed.contains(entry.index)
         return HStack(spacing: 10) {
             Image(systemName: visible ? "checkmark.circle.fill" : "circle")
                 .font(.scaled(size: 20))
@@ -2655,6 +2636,11 @@ private struct AddressVisibilityChainList: View {
     }
 
     private func toggle(_ entry: SpendingAddressEntry) {
+        if !entry.hidden, kusdtListed.contains(entry.index) {
+            Haptics.impact(.light)
+            showKusdtNote = true
+            return
+        }
         Task {
             // Per chain: a quantum slot (1,000,000+) must not hide that a legacy row lies past the
             // legacy bound - the row would only be unhidden and the bound never extended.

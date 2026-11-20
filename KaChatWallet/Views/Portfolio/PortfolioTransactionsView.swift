@@ -177,7 +177,7 @@ struct PortfolioTransactionsView<Header: View>: View {
         }
         .toast(message: toastMessage, style: toastStyle)
         .alert(
-            "Delete \(selectedIDs.count) Transaction\(selectedIDs.count == 1 ? "" : "s")?",
+            selectedIDs.count == 1 ? LocalizedStringKey("Delete 1 Transaction?") : "Delete \(selectedIDs.count) Transactions?",
             isPresented: $showDeleteSelectedConfirm
         ) {
             Button("Delete", role: .destructive) {

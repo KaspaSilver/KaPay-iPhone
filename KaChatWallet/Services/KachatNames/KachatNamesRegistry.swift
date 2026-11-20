@@ -735,105 +735,6 @@ final class KachatNamesRegistry: ObservableObject {
         return Array(try readChainState().events.reversed().prefix(200))
     }
 
-
-    /// A count or amount over the last 24 hours, the last 7 days and all time.
-    struct Totals: Equatable {
-        var last24h: UInt64
-        var last7d: UInt64
-        var total: UInt64
-    }
-
-    /// How many .kachat transactions there were and what they paid, across the registry - for
-    /// the market's Activity page. An indexer reports both (`GET /stats/names`:
-    /// fees = what each transaction paid miners, the registry's price included, since that is
-    /// how the price is paid). Read from the chain instead, the walker counts its events and
-    /// prices each registration, extension and renewal at the registry's fixed prices.
-    /// `fees` is nil where they can't be worked out (an indexer too old to record them).
-    func activityTotals() async throws -> (transactions: Totals, fees: Totals?) {
-        let m = try await prepare()
-        if case .indexer(let base) = source {
-            // `/names/activity/stats` first: a proxy may send /stats/* to a server without the
-            // names module (mainnet today). Neither answering, the activity feed is counted.
-            var stats: KachatNames.IndexerAPI.StatsJSON?
-            if let j: KachatNames.IndexerAPI.StatsJSON = try? await Self.get(base, "/names/activity/stats") {
-                stats = j
-            } else if let j: KachatNames.IndexerAPI.StatsJSON = try? await Self.get(base, "/stats/names") {
-                stats = j
-            } else {
-                do {
-                    return Self.totals(of: try await allIndexerEvents(base), params: m.params)
-                } catch {
-                    guard Self.indexerIsDown(error), indexerOutageConfirmed() else { throw error }
-                    failOverToChain(after: error)
-                }
-            }
-            if let j = stats {
-                let fees = j.fees.flatMap { f -> Totals? in
-                    guard let t = UInt64(f.total), let d = UInt64(f.last24h), let w = UInt64(f.last7d) else { return nil }
-                    return Totals(last24h: d, last7d: w, total: t)
-                }
-                if let t = j.transactions {
-                    return (Totals(last24h: t.last24h, last7d: t.last7d, total: t.total), fees)
-                }
-                // an indexer from before `transactions`: the per-kind figures, added up
-                let kinds = (j.activity ?? [:]).values
-                return (Totals(last24h: kinds.reduce(0) { $0 + $1.last24h },
-                               last7d: kinds.reduce(0) { $0 + $1.last7d },
-                               total: kinds.reduce(0) { $0 + $1.total }), fees)
-            }
-        }
-        return Self.totals(of: try readChainState().events, params: m.params)
-    }
-
-    /// Every registry event an indexer's `/names/activity` holds, newest first, page by page
-    /// (at most 50 pages of 200).
-    private func allIndexerEvents(_ base: String) async throws -> [KachatNames.Event] {
-        var events: [KachatNames.Event] = []
-        var cursor: String?
-        for _ in 0..<50 {
-            var path = "/names/activity?length=200"
-            if let cursor { path += "&cursor=\(cursor)" }
-            let page: KachatNames.IndexerAPI.EventsJSON = try await Self.get(base, path)
-            events += page.events.map(\.event)
-            guard let next = page.next, !next.isEmpty, !page.events.isEmpty else { break }
-            cursor = next
-        }
-        return events
-    }
-
-    /// Counts and prices registry events (`activityTotals` without an indexer's figures), one per
-    /// transaction: registrations, extensions and renewals at the registry's fixed prices.
-    static func totals(of events: [KachatNames.Event], params: KachatNames.Params,
-                       nowMs: Int64 = KachatNames.nowMs()) -> (transactions: Totals, fees: Totals?) {
-        let d1 = nowMs - 86_400_000
-        let d7 = nowMs - 7 * 86_400_000
-        var at: [String: Int64] = [:]
-        var paid: [String: UInt64] = [:]
-        for e in events {
-            at[e.txId] = max(at[e.txId] ?? 0, e.at ?? 0)
-            guard let name = e.name, let years = e.years, years > 0 else { continue }
-            let length = name.utf8.count
-            switch e.op {
-            case "register":
-                paid[e.txId, default: 0] += params.registerCost(forLength: length, years: years)
-            case "extend", "renew":
-                paid[e.txId, default: 0] += params.renewPrice(forLength: length) * UInt64(years)
-            default:
-                break
-            }
-        }
-        var transactions = Totals(last24h: 0, last7d: 0, total: 0)
-        var fees = Totals(last24h: 0, last7d: 0, total: 0)
-        for (tx, time) in at {
-            let fee = paid[tx] ?? 0
-            transactions.total += 1
-            fees.total += fee
-            if time > d7 { transactions.last7d += 1; fees.last7d += fee }
-            if time > d1 { transactions.last24h += 1; fees.last24h += fee }
-        }
-        return (transactions, fees)
-    }
-
     /// The fixed prices (registry v4, baked into the pinned templates): sompi for a name's first
     /// period, and for every further one, by length 1, 2, 3, 4, 5+ bytes. nil until a manifest loads.
     var registerPrices: [UInt64]? { service.manifest?.params.registerPrices }
@@ -1367,13 +1268,6 @@ final class KachatSocialImageResolver: ObservableObject {
         KachatProfileCache.remove(Self.cacheFile)
     }
 
-    /// The stored answer for `source`, however old - read only, no lookup started. The profile
-    /// editor's preview rows use it: a Form rebuilds rows on scroll, and one scrolled back in
-    /// must show its answer again at once instead of debouncing and looking it up afresh.
-    func cachedProfile(_ source: KachatNames.SocialSource) -> KachatNames.SocialProfile? {
-        entries[source.link]?.profile
-    }
-
     /// The cached profile for `link`, starting a lookup when there is none or it is stale.
     /// Views read this in `body`; the published cache re-renders them when the lookup lands.
     func profile(for link: String?) -> KachatNames.SocialProfile? {
@@ -1392,32 +1286,12 @@ final class KachatSocialImageResolver: ObservableObject {
         return entry?.profile
     }
 
-    /// Looks these profile links up again now, whatever the cache holds (User Info > Rescan
-    /// Profile): an avatar, banner or bio changed on the platform shows at once. Returns the
-    /// fresh answers by link.
-    func rescan(_ links: [String?]) async -> [String: KachatNames.SocialProfile] {
-        var answers: [String: KachatNames.SocialProfile] = [:]
-        for link in Set(links.compactMap { $0 }) {
-            guard let source = KachatNames.SocialSource(link: link, for: .avatar) else { continue }
-            unreachableAt[source.link] = nil
-            if let profile = await resolve(source, maxAge: 0).profile { answers[link] = profile }
-        }
-        return answers
-    }
-
     /// What a lookup came back with.
     enum Lookup: Equatable {
         /// The platform answered (possibly with nothing: taken down, account gone).
         case answered(KachatNames.SocialProfile)
         /// It couldn't be reached in time; the last answer this device had, if any.
         case unreachable(KachatNames.SocialProfile?)
-
-        var profile: KachatNames.SocialProfile? {
-            switch self {
-            case .answered(let p): return p
-            case .unreachable(let p): return p
-            }
-        }
     }
 
     /// Hard limit for one lookup, every request and fallback included: a preview never spins
@@ -1425,7 +1299,7 @@ final class KachatSocialImageResolver: ObservableObject {
     /// first source can't use up the time the next one needs.
     private static let deadline: UInt64 = 20_000_000_000
 
-    /// Looks the profile up now (the editor's preview), sharing a lookup in flight.
+    /// Looks the profile up now, sharing a lookup in flight.
     @discardableResult
     func resolve(_ source: KachatNames.SocialSource, maxAge: TimeInterval = 300) async -> Lookup {
         let key = source.link

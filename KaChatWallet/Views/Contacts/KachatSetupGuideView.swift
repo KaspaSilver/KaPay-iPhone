@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// The .kachat names guide: claim a name, how a name works, make it your name, keep it. Opened
-/// from Wallet > Help. About the name only - an avatar, banner and bio are not part of a name
-/// (they are the address's profile, set in KaChat or KaPost).
+/// from Settings > Help.
 struct KachatSetupGuideView: View {
     let onClose: () -> Void
 

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The app's frosted card. Every other place that draws one has its own file-private copy of
-/// this; this file needs one too because it is not in any of them.
-private func glassBackground(cornerRadius: CGFloat) -> some View {
+/// The app's frosted card, with a soft shadow (the Send Kaspa pieces use `sendKaspaGlass`,
+/// the same card without one).
+func glassBackground(cornerRadius: CGFloat) -> some View {
     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         .fill(.regularMaterial)
         .overlay(

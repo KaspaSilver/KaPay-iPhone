@@ -12,13 +12,7 @@ actor NodeSelector {
     /// Reference DAA score (median of good nodes)
     private var referenceDaaScore: UInt64?
 
-    /// Last time reference was updated
-    private var referenceUpdatedAt: Date?
-
     // MARK: - Configuration
-
-    /// How often to refresh the reference DAA score
-    private let referenceRefreshInterval: TimeInterval = 300  // 5 minutes
 
     /// DAA delta window (in "seconds worth" of blocks at 10 bps)
     private let daaDeltaWindow: UInt64 = 100  // ~10 seconds worth
@@ -31,45 +25,6 @@ actor NodeSelector {
     init(registry: NodeRegistry, epochMonitor: NetworkEpochMonitor) {
         self.registry = registry
         self.epochMonitor = epochMonitor
-    }
-
-    // MARK: - Reference DAA Score
-
-    /// Update reference DAA score from current good nodes
-    func updateReferenceDaaScore() async {
-        let nodes = await registry.allRecords()
-
-        // Get DAA scores from active/verified nodes that are synced
-        let scores = nodes
-            .filter { $0.state == .active || $0.state == .verified }
-            .filter { $0.profile.isSynced == true }
-            .compactMap { $0.profile.virtualDaaScore }
-            .sorted()
-
-        guard scores.count >= 3 else {
-            // Not enough nodes for reliable median
-            return
-        }
-
-        // Use median
-        referenceDaaScore = scores[scores.count / 2]
-        referenceUpdatedAt = Date()
-
-        AppLog.log("[NodeSelector] Updated reference DAA: %llu (from %d nodes)",
-              referenceDaaScore ?? 0, scores.count)
-    }
-
-    /// Set reference DAA from external source (e.g., api.kaspa.org)
-    func setReferenceDaaScore(_ score: UInt64) {
-        referenceDaaScore = score
-        referenceUpdatedAt = Date()
-        AppLog.log("[NodeSelector] Set external reference DAA: %llu", score)
-    }
-
-    /// Whether reference needs refresh
-    var needsReferenceRefresh: Bool {
-        guard let updatedAt = referenceUpdatedAt else { return true }
-        return Date().timeIntervalSince(updatedAt) > referenceRefreshInterval
     }
 
     // MARK: - Node Selection
@@ -109,27 +64,6 @@ actor NodeSelector {
         .sorted { $0.1 > $1.1 }  // Higher score = better
 
         // Return top N
-        return Array(scored.prefix(count).map(\.0))
-    }
-
-    /// Pick best nodes, preferring non-seed nodes but falling back to seeds if needed
-    func pickBestWithSeedFallback(
-        for op: OperationClass,
-        count: Int = 1,
-        excluding: Set<String> = []
-    ) async -> [Endpoint] {
-        let nodes = await registry.allRecords()
-        refreshReferenceDaaScore(from: nodes)
-        let network = await registry.network
-
-        // Filter and score all nodes equally (no special treatment for seeds)
-        let capable = nodes.filter { !excluding.contains($0.endpoint.key) && $0.canHandle(op) }
-        let scored: [(Endpoint, Double)] = withoutStaleNodes(capable, for: op, network: network)
-            .map { record in
-                (record.endpoint, score(record, for: op))
-            }
-            .sorted { $0.1 > $1.1 }
-
         return Array(scored.prefix(count).map(\.0))
     }
 
@@ -281,22 +215,11 @@ actor NodeSelector {
 // MARK: - Convenience Extensions
 
 extension NodeSelector {
-    /// Pick a single best node for an operation
-    func pickOne(for op: OperationClass, excluding: Set<String> = []) async -> Endpoint? {
-        let results = await pickBest(for: op, count: 1, excluding: excluding)
-        return results.first
-    }
-
     /// Pick primary and standby nodes for subscription
     func pickPrimaryAndStandby(for op: OperationClass) async -> (primary: Endpoint, standby: Endpoint?)? {
         let results = await pickBest(for: op, count: 2)
         guard let primary = results.first else { return nil }
         let standby = results.count > 1 ? results[1] : nil
         return (primary, standby)
-    }
-
-    /// Pick nodes for broadcast (e.g., submit tx to multiple nodes)
-    func pickForBroadcast(count: Int = 3) async -> [Endpoint] {
-        await pickBest(for: .submitTransaction, count: count)
     }
 }

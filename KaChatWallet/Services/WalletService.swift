@@ -107,9 +107,6 @@ final class WalletService: ObservableObject {
 
     /// Sends run one at a time, so two never pick the same inputs.
     var outgoingTxTail: Task<Void, Never>?
-    var cachedUtxos: [UTXO] = []
-    var cachedUtxosTimestamp: Date?
-    let utxoCacheInterval: TimeInterval = 20
     /// Coins a send from this app has just spent, by outpoint, and until when they stay out: the
     /// node goes on listing them until that spend is in a block, so the next send, Max or fee
     /// would otherwise pick them again and be refused.
@@ -221,8 +218,6 @@ final class WalletService: ObservableObject {
         isUtxoSubscribed = false
         hasEverBeenSubscribed = false
         hasCompletedInitialSync = false
-        cachedUtxos = []
-        cachedUtxosTimestamp = nil
         reservedOutpoints = [:]
         unknownOutcomeOutpoints = [:]
         queuedUtxoNotifications = []

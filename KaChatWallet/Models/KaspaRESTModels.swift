@@ -181,7 +181,8 @@ extension KaspaFullTransactionResponse {
         guard let fee = feeSompi else { return nil }
         let kas = Double(fee) / 100_000_000.0
         let text = kas >= 0.001 ? String(format: "%.4f", kas) : String(format: "%.8f", kas)
-        return "Fee \(text) \(KaspaUnit.symbol)"
+        // "Fee %@" in the chosen language, as kUSDT's history rows say it
+        return String(format: AppLocalization.string("Fee %@"), "\(text) \(KaspaUnit.symbol)")
     }
 
     func direction(for address: String) -> (isOutgoing: Bool, amountSompi: UInt64)? {

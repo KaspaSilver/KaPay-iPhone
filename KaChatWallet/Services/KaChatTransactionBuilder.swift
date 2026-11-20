@@ -2,22 +2,10 @@ import Foundation
 import CryptoKit
 import P256K
 
-/// Builds Kaspa transactions for Kasia messaging protocol
+/// Builds and signs the wallet's Kaspa transactions: inputs, change, fee and storage mass.
 struct KasiaTransactionBuilder {
 
     // Kaspa constants
-    /// A sizing reference, no longer a rule. This was the floor every output and every change
-    /// had to clear, standing in for KIP-9 storage mass: an output of this size carved from a
-    /// large input costs C / amount = 50,000 grams, half the standard budget, so it was a safe
-    /// worst case. But storage mass is not a per-output minimum - it charges the change in the
-    /// UTXO set's harmonic cost, outputs minus inputs - and the same 0.198 KAS output spent
-    /// from a 0.2 KAS input costs 500 grams. Treating the worst case as the rule meant a wallet
-    /// whose only coin was a received handshake could neither accept it nor reply, and change
-    /// under this figure on any payment went to the miners as fee.
-    ///
-    /// Validity is decided by `fitsStorageMass` now, everywhere a transaction is built.
-    static let dustThreshold: UInt64 = 20_000_000 // 0.2 KAS
-
     /// The most a payment may fold into its fee when its change cannot stand as an output.
     /// A change output is only ever too small for storage mass below about 0.1 KAS (its own
     /// harmonic term is C / change), so a larger remainder that does not fit means the
@@ -682,7 +670,7 @@ struct KasiaTransactionBuilder {
             }
 
             // Keep the change whenever this transaction's own storage mass allows it (see
-            // `storageMass`). The flat `> dustThreshold` rule here handed up to 0.2 KAS of a
+            // `storageMass`). A flat 0.2 KAS dust floor here once handed up to 0.2 KAS of a
             // user's change to the miners as fee whenever it fell under the floor - money gone,
             // not a rounding error - for change the network would have accepted. Too little left
             // to pay for a change output at all (a Max send) still goes on to the no-change try.
@@ -1346,7 +1334,8 @@ struct KasiaTransactionBuilder {
     /// no mass commitment, payload included; all integers little-endian, `var_bytes` = u64
     /// length + bytes. The id is the digest's bytes in order - not reversed. Verified against
     /// a real KaChat self-send on chain (`f28587d7…`) and checked on every submit (see
-    /// `KaPostsAPIClient.submitPayloadTx`). Every transaction the app builds is version 0.
+    /// `NodePoolService.submitRpcTransaction(_:expectedTxId:)`). Every transaction the app builds
+    /// is version 0.
     static func computeTransactionId(_ tx: KaspaRpcTransaction) -> String {
         var hasher = Blake2b(digestLength: 32, key: "TransactionID".data(using: .utf8))
         func le<T: FixedWidthInteger>(_ value: T) -> Data {

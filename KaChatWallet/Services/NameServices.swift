@@ -38,16 +38,6 @@ enum NameServiceTLD: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Where a person gets one of these names today.
-    var websiteURL: URL? {
-        switch self {
-        case .kas: return URL(string: "https://app.knsdomains.org")
-        case .k: return URL(string: "https://dotk.name")
-        case .kaspa: return URL(string: "https://kaspaname.com")
-        case .kachat: return nil
-        }
-    }
-
     /// The read API this app calls for the service, shown in Connection Settings > Domains.
     /// nil for `.kas` (KNS has its own setting there) and `.kachat` (not live).
     func apiBaseURL(for network: NetworkType) -> String? {
@@ -55,16 +45,6 @@ enum NameServiceTLD: String, CaseIterable, Identifiable {
         case .k: return network == .mainnet ? "https://api.dotk.name/v1" : "https://api-tn10.dotk.name/v1"
         case .kaspa: return network == .mainnet ? "https://kaspaname.com/v1" : nil
         case .kas, .kachat: return nil
-        }
-    }
-
-    /// The site's name as people know it, for "Get a .kas domain at knsdomains.org".
-    var websiteName: String? {
-        switch self {
-        case .kas: return "knsdomains.org"
-        case .k: return "dotk.name"
-        case .kaspa: return "kaspaname.com"
-        case .kachat: return nil
         }
     }
 

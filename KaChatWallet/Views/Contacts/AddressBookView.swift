@@ -457,12 +457,10 @@ enum AddressBookEditResult: Equatable {
     case saved, removed
 }
 
-/// Add or edit one entry. With an `address` it edits that address's entry (or adds it, with
-/// `suggestedName` filled in - User Info's "Add to Address Book"); without one the address is
-/// typed, pasted or scanned.
+/// Add or edit one entry. With an `address` it edits that address's entry (or adds one for it);
+/// without one the address is typed, pasted or scanned.
 struct AddressBookEntryEditor: View {
     let address: String?
-    var suggestedName: String = ""
     let onDone: (AddressBookEditResult) -> Void
 
     @ObservedObject private var book = AddressBookManager.shared
@@ -657,8 +655,6 @@ struct AddressBookEntryEditor: View {
                 if let current = existing {
                     name = current.name
                     note = current.note
-                } else {
-                    name = suggestedName
                 }
             }
         }

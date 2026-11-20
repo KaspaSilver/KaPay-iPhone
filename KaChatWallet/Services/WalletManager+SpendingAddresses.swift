@@ -310,10 +310,6 @@ extension WalletManager {
         spendingAddress(at: currentSpendingAddressIndex)
     }
 
-    func currentSpendingPrivateKey() -> Data? {
-        spendingPrivateKey(at: currentSpendingAddressIndex)
-    }
-
     /// Derives the shared "change" node (m/44'/111111'/1'/0) once, for reuse across every index
     /// in a range - `spendingAddress(at:)`/`spendingPrivateKey(at:)` above each redo the expensive
     /// parts (Secure Enclave seed-phrase decrypt, PBKDF2-2048 mnemonic-to-seed, 4 HMAC-SHA512
@@ -563,36 +559,6 @@ extension WalletManager {
         currentWallet?.publicAddress == owner || savedAccounts.contains { $0.publicAddress == owner }
     }
 
-    /// "Generate New Spending Address" - a SEQUENCE, not a single answer: every press yields
-    /// the NEXT fresh address, forever. The chosen index is the lowest one that is truly
-    /// unused (zero balance, no on-chain history, not the primary, never offered to a contact
-    /// as a payment-pool reservation) AND currently hidden - i.e. not already sitting in the
-    /// Manage Addresses list. Recycling un-hides it. An index that is already visible is never
-    /// picked (that was the old stall: the lowest unused index, once revealed, satisfied every
-    /// check again on the next press, so Generate kept returning the same row and appeared to
-    /// stop working). When no hidden unused index remains, the chain extends by one past the
-    /// all-time max, which is always safe. A probe failure (used-ness unknown) skips that
-    /// index rather than recycling it. Returns the chosen index.
-    ///
-    /// Side-effect free: nothing is un-hidden or revealed here - the caller reveals the index
-    /// (`revealSpendingAddress(at:)`) only when the address is really handed out. Past the
-    /// revealed range it answers the next index without extending the chain.
-    func lowestUnusedSpendingAddress() async -> Int {
-        let entries = await getSpendingAddressList().sorted { $0.index < $1.index }
-        for entry in entries {
-            guard entry.hidden else { continue } // already visible - the user has it; move on
-            if entry.isCurrent { continue }
-            if entry.balanceSompi > 0 { continue }
-            // Recycle only on a CONFIRMED-unused probe; nil (probe failed) skips the index -
-            // extending the chain below is always safe, recycling an unknown one is not.
-            let usedState = await WalletService.shared.spendingAddressUsedState(entry.address)
-            if usedState == false {
-                return entry.index
-            }
-        }
-        return maxSpendingAddressIndex + 1
-    }
-
     /// Which index the Receive QR is currently handing out. Persisted per wallet, and entirely
     /// separate from the primary: receiving and spending are different jobs, and the QR must not
     /// change which address a payment comes out of.
@@ -666,8 +632,13 @@ extension WalletManager {
         return chosen.address
     }
 
-    /// `lowestUnusedSpendingAddress`, on the regular (legacy, P2PK) chain only: the lowest hidden
-    /// regular slot confirmed unused (recycling un-hides it), else one past the chain's end.
+    /// The next fresh regular (legacy, P2PK) address - a SEQUENCE, not a single answer: the lowest
+    /// hidden regular slot confirmed unused (zero balance, no on-chain history, not the primary),
+    /// recycling it (the caller un-hides it), else one past the chain's end, which is always
+    /// safe. An index already visible is never picked: the lowest unused index, once revealed,
+    /// would satisfy every check again and Generate would keep returning the same row. A probe
+    /// failure (used-ness unknown) skips that index rather than recycling it. Side-effect free:
+    /// the caller reveals the index (`revealSpendingAddress(at:)`) only when it's handed out.
     func lowestUnusedRegularAddress() async -> Int {
         let entries = await getSpendingAddressList().filter { !$0.isQuantum }.sorted { $0.index < $1.index }
         for entry in entries {
@@ -679,22 +650,6 @@ extension WalletManager {
             }
         }
         return maxSpendingAddressIndex + 1
-    }
-
-    /// `lowestUnusedSpendingAddress`, on the quantum chain: the lowest hidden quantum slot that
-    /// is confirmed unused (recycling un-hides it), else one past the chain's end - which is
-    /// always safe.
-    func lowestUnusedQuantumAddress() async -> Int {
-        let entries = await getSpendingAddressList().filter { $0.isQuantum }.sorted { $0.index < $1.index }
-        for entry in entries {
-            guard entry.hidden else { continue }
-            if entry.isCurrent { continue }
-            if entry.balanceSompi > 0 { continue }
-            if await WalletService.shared.spendingAddressUsedState(entry.address) == false {
-                return entry.index
-            }
-        }
-        return await verifiedFreshQuantumIndex()
     }
 
     // MARK: - Quantum spent-state (the shield)
@@ -907,8 +862,6 @@ extension WalletManager {
         return out
     }
 
-    private static var ownAddressSetCache: (key: String, set: Set<String>)?
-
     /// Hides (or shows) a spending address in Manage Addresses. Any address can be hidden -
     /// funded ones too: the person can start the list over from nothing (Address Visibility >
     /// Hide All). Nothing is lost: Profile's Manage Addresses total still counts hidden
@@ -961,22 +914,14 @@ extension WalletManager {
         let hidden = hiddenSpendingIndices
         let labels = spendingLabels
 
-        var addressesByIndex: [Int: String] = [:]
-        if let changeKey = spendingChangeKey() {
-            for index in 0...maxIndex {
-                if let address = spendingAddress(at: index, changeKey: changeKey) {
-                    addressesByIndex[index] = address
-                }
-            }
-        }
+        // Cache first: the addresses are deterministic and almost always already derived, so the
+        // chain keys (a Keychain read, a Secure Enclave decrypt and PBKDF2 each) are only worked
+        // out when some index is missing - not on every Manage Addresses load and From list.
+        var addressesByIndex = spendingAddresses(inRange: 0..<(max(0, maxIndex) + 1))
         let quantumMax = maxQuantumAddressIndex
-        if quantumMax >= 0, let chainKey = quantumChainKey() {
-            for quantumIndex in 0...quantumMax {
-                let index = Self.quantumIndexBase + quantumIndex
-                if let address = quantumAddress(at: index, chainKey: chainKey) {
-                    addressesByIndex[index] = address
-                }
-            }
+        if quantumMax >= 0 {
+            let quantum = spendingAddresses(inRange: Self.quantumIndexBase..<(Self.quantumIndexBase + quantumMax + 1))
+            addressesByIndex.merge(quantum) { current, _ in current }
         }
 
         var balanceByAddress: [String: UInt64] = [:]
@@ -1013,14 +958,58 @@ extension WalletManager {
         let foundCount: Int
     }
 
+    /// What a sweep does with an address it finds that the person hid.
+    enum SpendingDiscoveryReveal {
+        /// Manage Addresses' Discover Addresses (and a restore): everything found holding
+        /// something is shown, hidden or not - the person asked to look.
+        case all
+        /// The Wallet tab's pull to refresh (`AddressScan`): only slots past the revealed range
+        /// are shown. A pull happens all the time, so it must not undo the person's own Hide.
+        case newOnly
+    }
+
     /// Swept whatever the gaps, so a run of empty addresses can never end the scan early.
     static let spendingDeepScanFloor = 1000
+    /// Past the floor the bulk-activity sweep goes on this many indices at a time, while a
+    /// window still shows activity.
+    static let spendingScanWindowPastFloor = 200
     /// Hard stop, so the scan always terminates.
     static let maxSpendingScanIndex = 5000
     /// Addresses per bulk UTXO request.
     static let spendingScanBatchSize = 100
     /// KNS has no bulk endpoint, so domain ownership is only probed this far in.
     static let spendingKnsProbeDepth = 200
+    /// Name-ownership questions in flight at once. Each one is several services' requests, and
+    /// two hundred of them fired together got the slower services to rate-limit the burst.
+    private static let nameCheckConcurrency = 6
+
+    /// Addresses the name services said own nothing, this session (Manage Addresses' Discover,
+    /// the restore and every pull share the sweep, and an address asked about a minute ago
+    /// doesn't need asking again). Never kept past the app's life: a name can be bought later.
+    private static var addressesOwningNoName: Set<String> = []
+
+    /// One sweep per account at a time, shared by everyone who asks for one (the pull to
+    /// refresh, Discover Addresses, a restore): a second caller waits for the running sweep
+    /// instead of starting another over the same thousand addresses. Keyed by account, so a
+    /// sweep still running for an account just switched away from never holds up the new one.
+    fileprivate final class SpendingSweepRun {
+        var task: Task<SpendingSweepResult, Never>?
+        var observers: [UUID: @MainActor (SpendingDiscoveryProgress) -> Void] = [:]
+        var latest: SpendingDiscoveryProgress?
+
+        @MainActor func report(_ progress: SpendingDiscoveryProgress) {
+            latest = progress
+            for observer in observers.values { observer(progress) }
+        }
+    }
+
+    fileprivate struct SpendingSweepResult {
+        let owner: String
+        /// Every index found holding something, both chains.
+        let matched: Set<Int>
+    }
+
+    private static var spendingSweeps: [String: SpendingSweepRun] = [:]
 
     /// Scan for spending addresses worth surfacing. Extends `maxSpendingAddressIndex` to cover
     /// the highest match. Returns how many addresses were FOUND, not the new bound.
@@ -1033,6 +1022,10 @@ extension WalletManager {
     /// The walk starts at index 0, never at the stored high-water mark, because the answer
     /// CHANGES: an address that was empty last month can hold a balance today, and a scan starting
     /// past it would never look again.
+    ///
+    /// `reveal`: whether a hidden address that turns out to hold something is shown again
+    /// (`SpendingDiscoveryReveal`). A caller that joins a sweep already running gets that
+    /// sweep's answer, with its own `reveal` applied to it.
     ///
     /// ## Why this is not a gap-limit walk any more
     ///
@@ -1049,18 +1042,63 @@ extension WalletManager {
     /// something is still turning up, and stops for good at `maxSpendingScanIndex`.
     @discardableResult
     func discoverSpendingAddresses(
+        reveal: SpendingDiscoveryReveal = .all,
         gapLimit: Int = 60,
         onProgress: (@MainActor (SpendingDiscoveryProgress) -> Void)? = nil
     ) async -> Int {
-        // The sweep belongs to the account it started for (IOS-107, owner's choice): its address
-        // and chain nodes are taken now, and every derivation and write below goes to that
-        // account even if another one is active by the time an await returns. Results are
-        // dropped only if the account was removed meanwhile.
-        guard let account = spendingSweepAccount() else { return 0 }
+        guard let owner = currentWallet?.publicAddress else { return 0 }
+        let run: SpendingSweepRun
+        if let running = Self.spendingSweeps[owner] {
+            run = running
+        } else {
+            // The sweep belongs to the account it started for (IOS-107, owner's choice): its
+            // address and chain nodes are taken now, and every derivation and write goes to that
+            // account even if another one is active by the time an await returns.
+            guard let account = spendingSweepAccount() else { return 0 }
+            let started = SpendingSweepRun()
+            Self.spendingSweeps[owner] = started
+            started.task = Task { @MainActor in
+                let result = await self.runSpendingSweep(account: account, gapLimit: gapLimit) { progress in
+                    started.report(progress)
+                }
+                if Self.spendingSweeps[owner] === started { Self.spendingSweeps[owner] = nil }
+                return result
+            }
+            run = started
+        }
 
+        let observerID = UUID()
+        if let onProgress {
+            run.observers[observerID] = onProgress
+            if let latest = run.latest { onProgress(latest) }
+        }
+        guard let task = run.task else { return 0 }
+        let result = await task.value
+        run.observers[observerID] = nil
+
+        if reveal == .all, !result.matched.isEmpty, accountStillSaved(result.owner) {
+            // Anything found gets un-hidden. A previously-hidden address that now holds a balance
+            // or a domain would otherwise be found and then dropped straight back out of the
+            // list, which reads as the scan not finding it at all.
+            let storedHidden = hiddenIndices(owner: result.owner)
+            let hidden = storedHidden.subtracting(result.matched)
+            if hidden != storedHidden { setHiddenIndices(hidden, owner: result.owner) }
+        }
+        return result.matched.count
+    }
+
+    /// The sweep itself, both chains, for `account`. Shows only slots past each chain's revealed
+    /// range; the hidden flags of revealed slots are the caller's business (`reveal`).
+    private func runSpendingSweep(
+        account: SpendingSweepAccount,
+        gapLimit: Int,
+        report: @MainActor (SpendingDiscoveryProgress) -> Void
+    ) async -> SpendingSweepResult {
+        let empty = SpendingSweepResult(owner: account.owner, matched: [])
         var lastMatchIndex = -1
-        var matchCount = 0
         var matchedIndices: Set<Int> = []
+
+        report(SpendingDiscoveryProgress(checkingIndex: 0, foundCount: 0))
 
         // The balances were already batched; KNS was not. It was asked about the first two hundred
         // addresses ONE AT A TIME, and a KNS lookup measures a third to two thirds of a second -
@@ -1069,17 +1107,27 @@ extension WalletManager {
         // `AddressActivityService` answers "was this address ever used" for the whole window in a
         // handful of requests, so balances and KNS are both asked only about the addresses the
         // chain says were actually touched. Neither a balance nor a domain can sit on an address
-        // that has never been touched, so the filter loses nothing.
-        let window = 0..<Self.spendingDeepScanFloor
-        let derivedWindow = sweepAddresses(inRange: window, account: account)
-        let orderedWindow = window.compactMap { index in derivedWindow[index].map { (index, $0) } }
-        if let onProgress {
-            let snapshot = SpendingDiscoveryProgress(checkingIndex: 0, foundCount: 0)
-            await MainActor.run { onProgress(snapshot) }
-        }
-
-        if !orderedWindow.isEmpty,
-           let activity = await AddressActivityService.lastActivity(for: orderedWindow.map { $0.1 }) {
+        // that has never been touched, so the filter loses nothing. The first window is the
+        // floor; after it, windows of `spendingScanWindowPastFloor` while one still shows any
+        // activity, up to `maxSpendingScanIndex`.
+        var windowStart = 0
+        var bulkAnswered = false
+        while windowStart < Self.maxSpendingScanIndex {
+            let windowEnd = windowStart == 0
+                ? Self.spendingDeepScanFloor
+                : min(windowStart + Self.spendingScanWindowPastFloor, Self.maxSpendingScanIndex)
+            let window = windowStart..<windowEnd
+            guard sweepAccountStillSaved(account) else { return empty }
+            let derivedWindow = sweepAddresses(inRange: window, account: account)
+            let orderedWindow = window.compactMap { index in derivedWindow[index].map { (index, $0) } }
+            guard !orderedWindow.isEmpty,
+                  let activity = await AddressActivityService.lastActivity(for: orderedWindow.map { $0.1 }) else {
+                if bulkAnswered {
+                    AppLog.log("[WalletManager] Spending discovery: bulk activity unavailable at %d, stopping", windowStart)
+                }
+                break
+            }
+            bulkAnswered = true
             let touched = orderedWindow.filter { activity[$0.1] != nil }
 
             var funded: Set<String> = []
@@ -1087,30 +1135,20 @@ extension WalletManager {
                let utxos = try? await NodePoolService.shared.getUtxosByAddresses(touched.map { $0.1 }) {
                 funded = Set(utxos.map { $0.address })
             }
-            if let onProgress {
-                let snapshot = SpendingDiscoveryProgress(checkingIndex: touched.last?.0 ?? 0, foundCount: funded.count)
-                await MainActor.run { onProgress(snapshot) }
-            }
-
             let knsCandidates = touched.filter { $0.0 < Self.spendingKnsProbeDepth && !funded.contains($0.1) }
-            var domainOwners: Set<String> = []
-            if !knsCandidates.isEmpty {
-                domainOwners = await withTaskGroup(of: String?.self) { group -> Set<String> in
-                    for (_, address) in knsCandidates {
-                        group.addTask { await NameServicesClient.shared.ownsAnyName(address) ? address : nil }
-                    }
-                    var owners: Set<String> = []
-                    for await owner in group { if let owner { owners.insert(owner) } }
-                    return owners
-                }
-            }
+            let domainOwners = await addressesOwningNames(knsCandidates.map { $0.1 })
 
             for (i, address) in touched where funded.contains(address) || domainOwners.contains(address) {
                 lastMatchIndex = max(lastMatchIndex, i)
-                matchCount += 1
                 matchedIndices.insert(i)
             }
-        } else {
+            report(SpendingDiscoveryProgress(checkingIndex: touched.last?.0 ?? windowEnd - 1, foundCount: matchedIndices.count))
+            // A window with no activity at all ends the chain: nothing past it was ever used.
+            guard !touched.isEmpty else { break }
+            windowStart = windowEnd
+        }
+
+        if !bulkAnswered {
             // The configured REST server does not serve /addresses/active, or could not be
             // reached. Fall back to the batched sweep this replaced.
             AppLog.log("%@", "[WalletManager] Spending discovery: bulk activity unavailable, using the batched sweep")
@@ -1122,12 +1160,9 @@ extension WalletManager {
 
                 let upper = min(index + Self.spendingScanBatchSize, Self.maxSpendingScanIndex)
                 let batch = index..<upper
-                if let onProgress {
-                    let snapshot = SpendingDiscoveryProgress(checkingIndex: index, foundCount: matchCount)
-                    await MainActor.run { onProgress(snapshot) }
-                }
+                report(SpendingDiscoveryProgress(checkingIndex: index, foundCount: matchedIndices.count))
 
-                guard sweepAccountStillSaved(account) else { return 0 }
+                guard sweepAccountStillSaved(account) else { return empty }
                 let derived = sweepAddresses(inRange: batch, account: account)
                 if derived.isEmpty { break }
 
@@ -1137,20 +1172,16 @@ extension WalletManager {
                     break
                 }
                 let funded = Set(utxos.map { $0.address })
+                let knsCandidates = batch.compactMap { i -> String? in
+                    guard i < Self.spendingKnsProbeDepth, let address = derived[i], !funded.contains(address) else { return nil }
+                    return address
+                }
+                let domainOwners = await addressesOwningNames(knsCandidates)
 
                 for i in batch {
                     guard let address = derived[i] else { continue }
-                    let matches: Bool
-                    if funded.contains(address) {
-                        matches = true
-                    } else if i < Self.spendingKnsProbeDepth {
-                        matches = await NameServicesClient.shared.ownsAnyName(address)
-                    } else {
-                        matches = false
-                    }
-                    if matches {
+                    if funded.contains(address) || domainOwners.contains(address) {
                         lastMatchIndex = i
-                        matchCount += 1
                         matchedIndices.insert(i)
                         consecutiveMisses = 0
                     } else {
@@ -1166,22 +1197,19 @@ extension WalletManager {
         // time - and this loop can now be hundreds of indices long.
         guard sweepAccountStillSaved(account) else {
             AppLog.log("%@", "[WalletManager] Discovery dropped: its account was removed during the sweep")
-            return 0
+            return empty
         }
         let previousMax = legacyMaxIndex(owner: account.owner)
         let storedHidden = hiddenIndices(owner: account.owner)
         var hidden = storedHidden
-        // Anything the scan matched gets un-hidden. A previously-hidden address that now holds a
-        // balance or a domain would otherwise be found and then dropped straight back out of the
-        // list, which reads as the scan not finding it at all - and hiding is a tidying choice
-        // about empty addresses, not a decision that should outrank a balance.
-        hidden.subtract(matchedIndices)
         if lastMatchIndex > previousMax {
             // Hide the empty indices the new bound sweeps in, exactly as `revealSpendingAddress`
             // does. The scan reaches a thousand addresses deep now, so a match at index 291 would
-            // otherwise raise the bound and flood Manage Addresses with 290 empty rows.
-            for i in (previousMax + 1)..<lastMatchIndex where !matchedIndices.contains(i) {
-                hidden.insert(i)
+            // otherwise raise the bound and flood Manage Addresses with 290 empty rows. A match
+            // past the old bound is new to the list, so it's shown whatever an old flag says;
+            // one inside it keeps the person's choice unless the caller reveals everything.
+            for i in (previousMax + 1)...lastMatchIndex {
+                if matchedIndices.contains(i) { hidden.remove(i) } else { hidden.insert(i) }
             }
         }
         if hidden != storedHidden {
@@ -1195,9 +1223,35 @@ extension WalletManager {
             await raiseLegacyMaxIndex(lastMatchIndex, owner: account.owner)
         }
 
-        matchCount += await discoverQuantumAddresses(account: account)
+        matchedIndices.formUnion(await discoverQuantumAddresses(account: account))
+        return SpendingSweepResult(owner: account.owner, matched: matchedIndices)
+    }
 
-        return matchCount
+    /// Which of `addresses` own a name on any service (`NameServicesClient.ownsAnyName`), at
+    /// most `nameCheckConcurrency` asked at a time, skipping those already known this session
+    /// to own none.
+    private func addressesOwningNames(_ addresses: [String]) async -> Set<String> {
+        let toAsk = addresses.filter { !Self.addressesOwningNoName.contains($0) }
+        guard !toAsk.isEmpty else { return [] }
+        let limit = Self.nameCheckConcurrency
+        let (owners, none) = await withTaskGroup(of: (String, Bool).self) { group -> (Set<String>, Set<String>) in
+            var pending = toAsk.makeIterator()
+            for _ in 0..<limit {
+                guard let address = pending.next() else { break }
+                group.addTask { (address, await NameServicesClient.shared.ownsAnyName(address)) }
+            }
+            var owners: Set<String> = []
+            var none: Set<String> = []
+            while let (address, owns) = await group.next() {
+                if owns { owners.insert(address) } else { none.insert(address) }
+                if let next = pending.next() {
+                    group.addTask { (next, await NameServicesClient.shared.ownsAnyName(next)) }
+                }
+            }
+            return (owners, none)
+        }
+        Self.addressesOwningNoName.formUnion(none)
+        return owners
     }
 
     /// How many quantum slots one step of the restore sweep looks at. The sweep keeps stepping
@@ -1206,14 +1260,14 @@ extension WalletManager {
     static let quantumScanFloor = 200
     static let quantumScanLimit = 10_000
 
-    /// The quantum chain's restore sweep: funded slots are shown again, and the chain's end is
-    /// set past every slot that EVER saw activity - not only funded ones - so a restored wallet
-    /// never hands out an already-used (possibly key-revealed) slot as fresh change or a fresh
-    /// receive address (IOS-101). Returns how many funded slots it found.
-    @discardableResult
-    private func discoverQuantumAddresses(account: SpendingSweepAccount) async -> Int {
+    /// The quantum chain's restore sweep: funded slots past the chain's end are shown, and the
+    /// chain's end is set past every slot that EVER saw activity - not only funded ones - so a
+    /// restored wallet never hands out an already-used (possibly key-revealed) slot as fresh
+    /// change or a fresh receive address (IOS-101). Returns the funded slots it found; whether a
+    /// hidden one inside the old end is shown again is the caller's `reveal`.
+    private func discoverQuantumAddresses(account: SpendingSweepAccount) async -> Set<Int> {
         // same account rule as the legacy sweep (IOS-107)
-        guard account.chainKey != nil, sweepAccountStillSaved(account) else { return 0 }
+        guard account.chainKey != nil, sweepAccountStillSaved(account) else { return [] }
         let base = Self.quantumIndexBase
         var start = 0
         var matched: [Int] = []
@@ -1239,28 +1293,27 @@ extension WalletManager {
             }
             guard activity != nil, !touched.isEmpty else { break }
             start += Self.quantumScanFloor
-            guard sweepAccountStillSaved(account) else { return 0 }
+            guard sweepAccountStillSaved(account) else { return [] }
         }
         if let highestFunded = matched.max() {
             highestUsed = max(highestUsed, highestFunded - base)
         }
-        guard highestUsed >= 0, sweepAccountStillSaved(account) else { return 0 }
+        guard highestUsed >= 0, sweepAccountStillSaved(account) else { return [] }
 
         let storedHidden = hiddenIndices(owner: account.owner)
         var hidden = storedHidden
-        hidden.subtract(matched)
         let previousMax = quantumMaxIndex(owner: account.owner)
         if highestUsed > previousMax {
             let fundedSet = Set(matched)
-            for index in (base + previousMax + 1)...(base + highestUsed) where !fundedSet.contains(index) {
-                hidden.insert(index)
+            for index in (base + previousMax + 1)...(base + highestUsed) {
+                if fundedSet.contains(index) { hidden.remove(index) } else { hidden.insert(index) }
             }
             setMaxQuantumAddressIndex(highestUsed, owner: account.owner)
         }
         if hidden != storedHidden {
             setHiddenIndices(hidden, owner: account.owner)
         }
-        return matched.count
+        return Set(matched)
     }
 
 }
@@ -1324,9 +1377,13 @@ enum DerivedAddressStore {
         let pending = dirty
         dirty = []
         for key in pending {
-            guard let set = sets[key], let url = fileURL(key),
-                  let data = try? JSONEncoder().encode(set) else { continue }
-            ioQueue.async { write(data, to: url) }
+            guard let set = sets[key], let url = fileURL(key) else { continue }
+            // Encoded on the io queue, from a copy: a set of thousands of addresses took long
+            // enough to encode that doing it here hitched the main thread mid-scroll.
+            ioQueue.async {
+                guard let data = try? JSONEncoder().encode(set) else { return }
+                write(data, to: url)
+            }
         }
     }
 

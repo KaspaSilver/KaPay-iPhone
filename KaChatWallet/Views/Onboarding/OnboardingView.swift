@@ -95,7 +95,8 @@ struct OnboardingView: View {
             )) {
                 if let account = pendingRemovalAccount {
                     DeleteAccountSheet(
-                        confirmSubtitle: "Deletes \(account.displayAlias) (\(account.shortPublicAddress)) and its local data from this device.",
+                        confirmSubtitle: String(format: AppLocalization.string("Deletes %@ (%@) and its local data from this device."),
+                                                locale: AppLocalization.locale, account.displayAlias, account.shortPublicAddress),
                         notBackedUp: AccountBackupStatus.shared.isPending(account.publicAddress)
                     ) {
                         DeviceAuth.authenticate(reason: AppLocalization.string("Confirm deleting this account")) {

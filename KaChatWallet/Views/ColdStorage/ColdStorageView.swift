@@ -347,16 +347,6 @@ struct ColdStorageListView: View {
     }
 }
 
-private func glassBackground(cornerRadius: CGFloat) -> some View {
-    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        .fill(.regularMaterial)
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 0.8)
-        )
-        .shadow(color: Color.black.opacity(0.12), radius: 10, x: 0, y: 5)
-}
-
 // MARK: - Detail
 
 /// Address list for one Cold Storage account. Funded addresses sort to the top (newest index
@@ -618,7 +608,7 @@ struct ColdStorageDetailView: View {
                 Text("Total Balance")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text(verbatim: "\(formatKasExact(totalBalanceSompi)) \(KaspaUnit.symbol)")
+                Text(verbatim: "\(KaspaUnit.groupedExact(totalBalanceSompi)) \(KaspaUnit.symbol)")
                     .font(.title2)
                     .fontWeight(.bold)
             }
@@ -837,7 +827,7 @@ struct ColdStorageDetailView: View {
                     Text(entry.shortAddress)
                         .font(.system(.subheadline, design: .monospaced))
                         .foregroundColor(.primary)
-                    Text(verbatim: "\(formatKasExact(entry.balanceSompi)) \(KaspaUnit.symbol)")
+                    Text(verbatim: "\(KaspaUnit.groupedExact(entry.balanceSompi)) \(KaspaUnit.symbol)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                     HStack(spacing: 6) {
@@ -1013,18 +1003,16 @@ struct ColdStorageDetailView: View {
             // The count is addresses that hold a balance or a KNS domain - say so, rather than
             // "used", which is what the old high-water-mark number implied and was not.
             let summary = discovered == 0
-                ? "No addresses with a balance or domain found."
-                : "Found \(discovered) address\(discovered == 1 ? "" : "es") with a balance or domain."
+                ? AppLocalization.string("No addresses with a balance or domain found.")
+                : discovered == 1
+                    ? AppLocalization.string("Found 1 address with a balance or domain.")
+                    : String(format: AppLocalization.string("Found %lld addresses with a balance or domain."),
+                             locale: AppLocalization.locale, discovered)
             discoverySummary = summary
             // Closed the sheet and carried on? Then the summary above has nowhere to render, so
             // say it here instead of finishing silently.
             if !showAddressActions { showToast(summary) }
         }
-    }
-
-    /// All eight decimals, the thousands grouped ("1,234.50000000").
-    private func formatKasExact(_ sompi: UInt64) -> String {
-        KaspaUnit.groupedExact(sompi)
     }
 
     private func showToast(_ message: String) {
@@ -2049,7 +2037,10 @@ struct CoinControlView: View {
                         }
                     } footer: {
                         if !selectedKeys.isEmpty {
-                            Text(verbatim: "Selected: \(formatKas(selectedTotalSompi)) \(KaspaUnit.symbol) (\(selectedKeys.count) UTXO\(selectedKeys.count == 1 ? "" : "s"))")
+                            let amount = "\(formatKas(selectedTotalSompi)) \(KaspaUnit.symbol)"
+                            Text(verbatim: selectedKeys.count == 1
+                                 ? String(format: AppLocalization.string("Selected: %@ (1 UTXO)"), locale: AppLocalization.locale, amount)
+                                 : String(format: AppLocalization.string("Selected: %@ (%lld UTXOs)"), locale: AppLocalization.locale, amount, selectedKeys.count))
                         }
                     }
                 }
@@ -2159,7 +2150,7 @@ struct ColdStorageAddressTransactionHistoryView: View {
                 Text("Balance")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text(verbatim: "\(formatKasExact(entry.balanceSompi)) \(KaspaUnit.symbol)")
+                Text(verbatim: "\(KaspaUnit.groupedExact(entry.balanceSompi)) \(KaspaUnit.symbol)")
                     .font(.title3.weight(.semibold))
             }
             .padding(.top, 12)
@@ -2417,7 +2408,7 @@ struct ColdStorageAddressTransactionHistoryView: View {
                         .fontWeight(.bold)
                         .foregroundColor(.accentColor)
                 }
-                Text(verbatim: "\(formatKasExact(utxo.amount)) \(KaspaUnit.symbol)")
+                Text(verbatim: "\(KaspaUnit.groupedExact(utxo.amount)) \(KaspaUnit.symbol)")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                 Text("\(utxo.outpoint.transactionId):\(utxo.outpoint.index)")
@@ -2473,7 +2464,7 @@ struct ColdStorageAddressTransactionHistoryView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 if let info {
-                    Text(verbatim: "\(info.isOutgoing ? "-" : "+")\(formatKasExact(info.amountSompi)) \(KaspaUnit.symbol)")
+                    Text(verbatim: "\(info.isOutgoing ? "-" : "+")\(KaspaUnit.groupedExact(info.amountSompi)) \(KaspaUnit.symbol)")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(info.isOutgoing ? .red : .green)
@@ -2492,11 +2483,6 @@ struct ColdStorageAddressTransactionHistoryView: View {
             }
         }
         .padding(.vertical, 4)
-    }
-
-    /// All eight decimals, the thousands grouped ("1,234.50000000").
-    private func formatKasExact(_ sompi: UInt64) -> String {
-        KaspaUnit.groupedExact(sompi)
     }
 
     private func loadTransactions() async {

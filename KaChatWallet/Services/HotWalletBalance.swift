@@ -16,6 +16,12 @@ final class HotWalletBalance: ObservableObject {
     /// Only the newest read counts: an older one finishing late can't put an old figure back.
     private var readGeneration = 0
     private var activityTask: Task<Void, Never>?
+    /// The read in flight, shared: every tab's top bar, the Wallet tab and the activity refresh
+    /// ask at once, and each used to start its own read and throw away the others' (the
+    /// generation check), so the loops in `refreshUntilKnown` kept each other a dash.
+    private var inFlight: (id: UUID, account: String, startedAt: Date, task: Task<Void, Never>)?
+    /// When funds last moved (`noteActivity`): a read that started before it may not show them.
+    private var lastActivityAt = Date.distantPast
 
     /// Each tab's top bar asks when it appears; this keeps tab switches from reading each time.
     /// Arriving funds refresh at once.
@@ -54,9 +60,29 @@ final class HotWalletBalance: ObservableObject {
             spending = nil
             lastReadAt = nil
         }
-        guard address != nil else { return }
+        guard let address else { return }
         if !force, let lastReadAt, Date().timeIntervalSince(lastReadAt) < Self.minReadInterval { return }
 
+        // Join the read already running for this account rather than start another, unless funds
+        // moved after it started: then its figure may be from before, and one more read follows.
+        while let current = inFlight, current.account == address {
+            await current.task.value
+            if current.startedAt >= lastActivityAt { return }
+            if inFlight?.id == current.id { inFlight = nil }
+        }
+
+        let id = UUID()
+        let task = Task { @MainActor in
+            await self.read(for: address)
+            if self.inFlight?.id == id { self.inFlight = nil }
+        }
+        inFlight = (id, address, Date(), task)
+        await task.value
+    }
+
+    /// One read of every spending address, in one call. A failed read keeps what it last knew.
+    private func read(for address: String) async {
+        let walletManager = WalletManager.shared
         let all = walletManager.allSpendingAddresses()
         guard !all.isEmpty else { return }
         readGeneration += 1
@@ -66,7 +92,10 @@ final class HotWalletBalance: ObservableObject {
             return
         }
         guard generation == readGeneration, walletManager.currentWallet?.publicAddress == address else { return }
-        spending = utxos.reduce(UInt64(0)) { $0 + $1.amount }
+        let total = utxos.reduce(UInt64(0)) { $0 + $1.amount }
+        // Published only when it changed: every top bar and the Wallet tab redraw on a write,
+        // and most reads find the same figure.
+        if spending != total { spending = total }
         lastReadAt = Date()
     }
 
@@ -85,6 +114,7 @@ final class HotWalletBalance: ObservableObject {
 
     /// One transaction can bring several UTXO changes: they make one read.
     private func noteActivity() {
+        lastActivityAt = Date()
         activityTask?.cancel()
         activityTask = Task {
             try? await Task.sleep(nanoseconds: 500_000_000)

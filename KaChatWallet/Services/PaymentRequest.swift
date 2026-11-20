@@ -4,7 +4,9 @@ import P256K
 
 // MARK: - Internal KaChat links
 
-/// A KaChat link the wallet opens: someone's profile, or a request to be paid.
+/// A KaChat link the wallet reads: a request to be paid, which opens Send Kaspa, or someone's
+/// profile, which is parsed (so it's recognized as ours) but has no screen in KaPay and opens
+/// nothing (`KaChatLinkRouter.open`).
 ///
 /// Wire contract, shared with the Android client (both platforms emit AND accept both forms):
 ///
@@ -19,7 +21,7 @@ import P256K
 /// Everything a pasted link carries is attacker-controlled, so `parse` re-validates it from
 /// scratch rather than trusting the URL's text. KaChat's post and room links open nothing here.
 enum KaChatInternalLink: Equatable {
-    /// Someone's KaChat profile: opens their User Info (yours too, for your own link).
+    /// Someone's KaChat profile. Parsed, but KaPay has no profile screen: it opens nothing.
     case profile(address: String)
     /// A request to be paid: opens Send Kaspa with the address, amount and memo filled in
     /// (`PaymentRequest`).
@@ -29,16 +31,8 @@ enum KaChatInternalLink: Equatable {
     /// KaChat-iPhone).
     static let universalLinkHost = "kachat.app"
 
-    /// The custom-scheme form of the link.
-    var shareLinkString: String {
-        switch self {
-        case .profile(let address): return "kachat://profile/\(address)"
-        case .paymentRequest(let request): return "kachat://pay/\(request.linkTail)"
-        }
-    }
-
-    /// The https twin of `shareLinkString` - survives apps that strip unknown schemes, and
-    /// falls back to the web/App Store for people who don't have KaChat installed.
+    /// The https form of the link - survives apps that strip unknown schemes, and falls back to
+    /// the web/App Store for people who don't have KaChat installed.
     var universalLinkString: String {
         switch self {
         case .profile(let address):

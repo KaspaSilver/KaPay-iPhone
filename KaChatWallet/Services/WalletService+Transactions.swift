@@ -212,22 +212,6 @@ extension WalletService {
         return HistoryFetchResult(transactions: allTransactions, complete: true)
     }
 
-    /// A KIP-22 (quantum address) spend of a P2SH input: the signature script is exactly
-    /// `0x41 <64-byte sig> <sighash byte>` then the canonical push of the 34-byte redeem
-    /// `0x20 <x-only key> 0xac` (101 bytes in all), and the redeem hashes to the input's own
-    /// P2SH address. Anything else spending P2SH (the registry's reveal, bond, gap and offer
-    /// covenants) is a contract.
-    nonisolated static func isKip22Spend(_ input: KaspaFullTxInput) -> Bool {
-        guard let hex = input.signatureScript, hex.count == 202,
-              let script = Data(hexString: hex) else { return false }
-        let b = [UInt8](script)
-        guard b.count == 101, b[0] == 0x41, b[66] == 0x22, b[67] == 0x20, b[100] == 0xac else { return false }
-        let redeem = Data(b[67...100])
-        guard let address = input.previousOutpointAddress?.lowercased(), !address.isEmpty,
-              let expected = KachatNamesService.p2shAddress(script: KachatNames.Codec.p2shScript(redeem)) else { return false }
-        return expected.lowercased() == address
-    }
-
     /// A pay-to-script-hash address (`kaspa:p...` / `kaspatest:p...`): a contract.
     nonisolated static func isScriptAddress(_ address: String?) -> Bool {
         guard let address, !address.isEmpty, let parsed = KaspaAddress(address: address.lowercased()) else { return false }

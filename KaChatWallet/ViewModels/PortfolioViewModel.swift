@@ -2,7 +2,6 @@ import Combine
 import Foundation
 import UIKit
 import SwiftUI
-import WidgetKit
 
 @MainActor
 final class PortfolioViewModel: ObservableObject {
@@ -32,7 +31,6 @@ final class PortfolioViewModel: ObservableObject {
     @Published private(set) var marketCapRank: Int?
     @Published private(set) var priceHistory: [PricePoint] = []
     @Published private(set) var priceRangeDays: Int = 1
-    @Published var scrubbedPricePoint: PricePoint?
     /// Portfolio's eye button: every amount on the screen reads as dots - the KAS price stays.
     /// Persisted, so a hidden portfolio stays hidden across launches.
     @Published var valuesHidden: Bool = UserDefaults.standard.bool(forKey: "kachat_portfolio_values_hidden") {
@@ -59,8 +57,6 @@ final class PortfolioViewModel: ObservableObject {
     /// confirmed via on-device repro: the Transactions tab kept showing the previous portfolio's
     /// ledger after tapping a different portfolio card.
     private var portfolioSwitchCancellable: AnyCancellable?
-    private var widgetSnapshotCancellable: AnyCancellable?
-    private var portfolioListCancellable: AnyCancellable?
 
     /// Per-range (days -> history) cache. Re-selecting an already-fetched range applies
     /// instantly with no network call, and (more importantly) avoids hitting CoinGecko's
@@ -151,19 +147,6 @@ final class PortfolioViewModel: ObservableObject {
         let scoped = transactions.filter { $0.portfolioId == portfolioId }
         let history = Self.computeValueHistory(transactions: scoped, priceHistory: sevenDayPriceHistory)
         return Self.computeTodayChange(valueHistory: history)
-    }
-
-    /// The active portfolio's move across the SELECTED chart range, for the Value chart header.
-    var valueRangeChange: (amount: Double, percent: Double)? {
-        Self.computeRangeChange(valueHistory)
-    }
-
-    /// The KAS price move across the SELECTED chart range, for the price chart header.
-    ///
-    /// At 1D this is computed from the same series the chart draws rather than reusing
-    /// CoinGecko's `priceChange24h`, so the number and the line can never disagree.
-    var priceRangeChange: (amount: Double, percent: Double)? {
-        Self.computeRangeChange(priceHistory)
     }
 
     // MARK: - Charts against a pair
@@ -381,25 +364,6 @@ final class PortfolioViewModel: ObservableObject {
             .dropFirst()
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
-                Task { @MainActor [weak self] in
-                    self?.publishWidgetSnapshot()
-                }
-            }
-        widgetSnapshotCancellable = $transactions
-            .dropFirst()
-            .debounce(for: .seconds(1), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.publishWidgetSnapshot()
-                }
-            }
-        portfolioListCancellable = PortfolioManager.shared.$portfolios
-            .dropFirst()
-            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    self?.publishWidgetSnapshot()
-                }
             }
         settingsObserver = NotificationCenter.default.addObserver(
             forName: .settingsDidChange,
@@ -472,7 +436,6 @@ final class PortfolioViewModel: ObservableObject {
                 guard let self, !Task.isCancelled, self.currentCurrency == currency else { return }
                 if let result = await self.coinGecko.getCurrentPrice(currency: currency) {
                     self.applyPrice(result, currency: currency)
-                    self.publishWidgetSnapshot()
                     return
                 }
             }
@@ -489,7 +452,6 @@ final class PortfolioViewModel: ObservableObject {
             guard let self else { return }
             if let result = await self.coinGecko.getCurrentPrice(currency: currency) {
                 self.applyPrice(result, currency: currency)
-                self.publishWidgetSnapshot()
             } else {
                 self.ensurePriceLoaded()
             }
@@ -560,10 +522,6 @@ final class PortfolioViewModel: ObservableObject {
                 self.marketCap = stats.marketCap
                 self.marketCapRank = stats.rank
             }
-            // Cold-launch path: this is the refresh MainTabView's warm-up triggers, so the
-            // widget store must publish here too (refreshPriceAsync's publish only covers
-            // pull-to-refresh).
-            self.publishWidgetSnapshot()
         }
         cancelPriceHistoryTasks()
         priceHistoryCache.removeAll()
@@ -601,13 +559,11 @@ final class PortfolioViewModel: ObservableObject {
             let sevenDays = Self.downsample(Self.cut(base, toDays: 7))
             if sevenDays.count >= 2 {
                 sevenDayPriceHistory = sevenDays
-                publishWidgetSnapshot()
                 return
             }
         }
         if let persisted = readPersistedHistory(days: 7, currency: currency) {
             sevenDayPriceHistory = persisted.points
-            publishWidgetSnapshot()
             if !force, Date().timeIntervalSince(persisted.fetchedAt) < Self.historyCacheTTL {
                 return
             }
@@ -630,7 +586,6 @@ final class PortfolioViewModel: ObservableObject {
             guard let self, !Task.isCancelled, self.priceHistoryEpoch == epoch, !result.isEmpty else { return }
             self.persistHistory(result, days: 7, currency: currency)
             self.sevenDayPriceHistory = result
-            self.publishWidgetSnapshot()
         }
     }
 
@@ -664,89 +619,6 @@ final class PortfolioViewModel: ObservableObject {
         let result = await history
         if !result.isEmpty {
             applyBaseHistory(result, base: base, currency: currency)
-        }
-        publishWidgetSnapshot()
-    }
-
-    // MARK: - Home Screen widget snapshot
-
-    /// Mirror of the widget extension's types - keys MUST stay in sync.
-    private struct PortfolioWidgetSnapshot: Codable {
-        let portfolioName: String
-        let currentValue: Double
-        let changeAmount: Double?
-        let changePercent: Double?
-        let kasPrice: Double
-        let priceChange24hPercent: Double?
-        let kasUnits: Double
-        let currencySymbol: String
-        let currencyCode: String
-        let updatedAt: Date
-        /// Last-24h KAS price curve (downsampled) for the medium widget's sparkline.
-        let sparkline24h: [Double]
-    }
-
-    private struct PortfolioWidgetStore: Codable {
-        struct Entry: Codable {
-            let id: String
-            let name: String
-        }
-        /// Portfolio id (uuidString) -> snapshot, for the widget's per-portfolio selection.
-        let snapshots: [String: PortfolioWidgetSnapshot]
-        /// Portfolio list for the widget's Edit menu.
-        let portfolios: [Entry]
-        /// The app's currently active portfolio - the widget's default when unconfigured.
-        let activeId: String?
-    }
-
-    private static func widgetCurrencySymbol(for currency: AppCurrency) -> String {
-        if currency == .bitcoin { return "\u{20BF}" }
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currency.code
-        return formatter.currencySymbol ?? currency.code
-    }
-
-    /// Writes the ACTIVE portfolio's current numbers into the app group for the Home Screen
-    /// widget, then asks WidgetKit to refresh. Called after every price refresh and (debounced)
-    /// after any transactions change.
-    func publishWidgetSnapshot() {
-        guard let defaults = UserDefaults(suiteName: "group.com.kachat.wallet") else { return }
-        let price = currentPriceUsd ?? 0
-        let symbol = Self.widgetCurrencySymbol(for: currentCurrency)
-        // 24h sparkline from the stable 7-day history (hourly granularity), downsampled.
-        let dayAgo = Date().addingTimeInterval(-24 * 3600)
-        let dayPoints = sevenDayPriceHistory.filter { $0.timestamp >= dayAgo }.map(\.value)
-        let stride = max(1, dayPoints.count / 40)
-        let sparkline = dayPoints.enumerated().compactMap { $0.offset % stride == 0 ? $0.element : nil }
-        var snapshots: [String: PortfolioWidgetSnapshot] = [:]
-        var entries: [PortfolioWidgetStore.Entry] = []
-        for portfolio in PortfolioManager.shared.portfolios {
-            let value = currentValue(for: portfolio.id)
-            let change = todayChange(for: portfolio.id)
-            snapshots[portfolio.id.uuidString] = PortfolioWidgetSnapshot(
-                portfolioName: portfolio.name,
-                currentValue: value,
-                changeAmount: change?.amount,
-                changePercent: change?.percent,
-                kasPrice: price,
-                priceChange24hPercent: priceChange24h,
-                kasUnits: price > 0 ? value / price : 0,
-                currencySymbol: symbol,
-                currencyCode: currentCurrency.code,
-                updatedAt: Date(),
-                sparkline24h: sparkline
-            )
-            entries.append(PortfolioWidgetStore.Entry(id: portfolio.id.uuidString, name: portfolio.name))
-        }
-        let store = PortfolioWidgetStore(
-            snapshots: snapshots,
-            portfolios: entries,
-            activeId: PortfolioManager.shared.activePortfolioId?.uuidString
-        )
-        if let data = try? JSONEncoder().encode(store) {
-            defaults.set(data, forKey: "kachat_portfolio_widget_store")
-            WidgetCenter.shared.reloadTimelines(ofKind: "KaChatPortfolioWidgetV2")
         }
     }
 
@@ -784,20 +656,6 @@ final class PortfolioViewModel: ObservableObject {
         let cutoff = Date().addingTimeInterval(-Double(days) * 86_400)
         guard let firstInside = base.firstIndex(where: { $0.timestamp >= cutoff }) else { return base }
         return Array(base[max(0, firstInside - 1)...])
-    }
-
-    func cyclePriceRange() {
-        let next: Int
-        switch priceRangeDays {
-        case 1: next = 7
-        case 7: next = 30
-        case 30: next = 90
-        case 90: next = Self.yearToDateDays
-        case Self.yearToDateDays: next = 365
-        case 365: next = 0
-        default: next = 1
-        }
-        setPriceRangeDays(next)
     }
 
     // MARK: - Persistent price-history cache (10-minute TTL)
@@ -945,7 +803,6 @@ final class PortfolioViewModel: ObservableObject {
             if sevenDays.count >= 2 {
                 persistHistory(sevenDays, days: 7, currency: currency)
                 sevenDayPriceHistory = sevenDays
-                publishWidgetSnapshot()
             }
         }
     }

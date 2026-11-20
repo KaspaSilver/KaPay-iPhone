@@ -703,15 +703,42 @@ final class NodePoolService: ObservableObject {
     private func settleUnknownOutcome(of rpcTransaction: Protowire_RpcTransaction, held: [String]) {
         WalletService.shared.releaseOutpoints(held)
         WalletService.shared.rememberUnknownOutcome(Self.outpointKeys(of: rpcTransaction))
-        WalletService.shared.dropUtxoCache()
     }
 
     /// Nothing went out: the coins go back, unless the node said they're already spent (gone
     /// either way, and the node goes on listing them for a while).
+    ///
+    /// Only the coins the node named stay held. kaspad names the outpoint it found spent
+    /// ("output (txid, 1) already spent by transaction … in the memory pool"; the Go node's
+    /// "(txid: 1)"), and the transaction's other coins are still good: holding them all for ten
+    /// minutes left an address's balance unspendable for no reason. A "spent" rejection that
+    /// names none of this transaction's coins (other wordings, a node that doesn't say which)
+    /// keeps them all held, as before: releasing a spent coin would let the next send pick it
+    /// and fail the same way, while holding a good one only delays it ten minutes.
     private func releaseUnlessSpent(_ held: [String], after error: Error) {
         let message = error.localizedDescription.lowercased()
-        guard !message.contains("spent"), !message.contains("double spend") else { return }
-        WalletService.shared.releaseOutpoints(held)
+        guard message.contains("spent") || message.contains("double spend") else {
+            WalletService.shared.releaseOutpoints(held)
+            return
+        }
+        let named = Self.outpointsNamed(in: message)
+        let spent = held.filter { named.contains($0.lowercased()) }
+        guard !spent.isEmpty else { return }
+        WalletService.shared.releaseOutpoints(held.filter { !spent.contains($0) })
+    }
+
+    /// "txid:index" keys of the outpoints a node's message names: a 64-hex transaction id
+    /// followed by its output index, as "(txid, 1)", "(txid: 1)" or "txid:1".
+    private static func outpointsNamed(in message: String) -> Set<String> {
+        guard let regex = try? NSRegularExpression(pattern: "([0-9a-f]{64})\\s*[:,]\\s*([0-9]+)") else { return [] }
+        let range = NSRange(message.startIndex..., in: message)
+        var keys: Set<String> = []
+        for match in regex.matches(in: message, range: range) {
+            guard let txRange = Range(match.range(at: 1), in: message),
+                  let indexRange = Range(match.range(at: 2), in: message) else { continue }
+            keys.insert("\(message[txRange]):\(message[indexRange])")
+        }
+        return keys
     }
 
     private func submitTransactionUnrecorded(_ transaction: KaspaRpcTransaction, allowOrphan: Bool, escalateOrphan: Bool) async throws -> (txId: String, endpoint: String) {

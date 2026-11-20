@@ -53,6 +53,10 @@ struct SettingsView: View {
                 settingsCategoryRow("Diagnostics", icon: "stethoscope", tint: .accentColor) {
                     DiagnosticsSettingsPage()
                 }
+                // Moved here from the Wallet tab's top right (owner's call, 2026-11-20).
+                settingsCategoryRow("Help", icon: "questionmark.circle", tint: .accentColor) {
+                    SettingsHelpPage()
+                }
                 settingsCategoryRow("Notifications", icon: "bell.badge", tint: .accentColor) {
                     NotificationsHubPage()
                 }
@@ -906,12 +910,26 @@ struct AppSettingsView: View {
     }
 }
 
+/// Settings > Help: the Wallet tab's Help (the .kachat Names Guide, the kUSDT Guide, …), with the
+/// .kachat guide's full-screen cover owned here.
+struct SettingsHelpPage: View {
+    @State private var showKachatSetupGuide = false
+
+    var body: some View {
+        ProfileHelpView(onKNSSetupGuide: { showKachatSetupGuide = true })
+            .fullScreenCover(isPresented: $showKachatSetupGuide) {
+                KachatSetupGuideView { showKachatSetupGuide = false }
+            }
+    }
+}
+
 /// Settings > Notifications: push on or off, the own-address receive-activity toggle (see
 /// AddressActivityNotifier), and the sound/vibration it and every foreground banner use - all on
 /// one page.
 struct NotificationsHubPage: View {
     @EnvironmentObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var pushManager: PushNotificationManager
+    @ObservedObject private var activityNotifier = AddressActivityNotifier.shared
 
     @State private var isEnablingPush = false
     @State private var notificationPermissionDenied = false
@@ -953,6 +971,18 @@ struct NotificationsHubPage: View {
                     .onChange(of: settingsViewModel.settings.addressActivityNotificationsEnabled) { _ in
                         settingsViewModel.saveSettings()
                     }
+
+                // The current account's spending-address switch (cold-storage accounts have
+                // theirs in their menu); it used to sit at the top of Manage Addresses.
+                Toggle(isOn: $activityNotifier.spendingReceiveNotificationsEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Notify on receive")
+                        Text("When a spending address receives Kaspa from someone else.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .onAppear { activityNotifier.reloadSpendingSwitchForCurrentWallet() }
             }
 
             Section {
@@ -1432,24 +1462,6 @@ struct SeedPhraseView: View {
             seedPhrase = try KeychainService.shared.loadSeedPhrase()
         } catch {
             self.error = error.localizedDescription
-        }
-    }
-
-    /// Copies sensitive material (the private key hex) to the clipboard with a hard 30s system
-    /// expiration and `localOnly` (never syncs to other devices via Universal Clipboard/Handoff).
-    /// The system honors `expirationDate` even if the app is suspended before it elapses; the
-    /// asyncAfter wipe below is a belt-and-suspenders in-app clear that also fires at 30s when
-    /// nothing else has overwritten the clipboard in the meantime.
-    private func copySensitiveToClipboard(_ value: String) {
-        UIPasteboard.general.setItems(
-            [["public.utf8-plain-text": value]],
-            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(30)]
-        )
-        let copiedValue = value
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
-            if UIPasteboard.general.string == copiedValue {
-                UIPasteboard.general.string = ""
-            }
         }
     }
 
@@ -2094,45 +2106,50 @@ struct ConnectionSettingsView: View {
         return true
     }
 
-    private enum NodeChoice: Hashable {
-        case automatic
-        case defaultNode
-        case saved(String)
-        /// A trusted node address that's currently active but matches neither the default nor any
-        /// saved address book entry (e.g. a one-off address typed into the field below) - shown so
-        /// the picker always reflects the real current state instead of misrepresenting it.
-        case custom(String)
-    }
+    private var nodeChoiceSelection: NodeChoice { NodeChoice.current(settingsViewModel.settings) }
 
-    private var normalizedDefaultAddress: String {
-        AppSettings.defaultTrustedNodeAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func applyNodeChoice(_ choice: NodeChoice) {
+        trustedNodeValidationError = settingsViewModel.applyTrustedNode(choice.address)
     }
+}
 
-    private var nodeChoiceSelection: NodeChoice {
-        let normalizedTrustedAddress = settingsViewModel.settings.trustedNodeAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalizedTrustedAddress.isEmpty {
+/// The Kaspa Node picker's choices, shared by Connection Settings and the connection status
+/// sheet's quick access.
+private enum NodeChoice: Hashable {
+    case automatic
+    case defaultNode
+    case saved(String)
+    /// A trusted node address that's currently active but matches neither the default nor any
+    /// saved address book entry (e.g. a one-off address typed into Connection Settings) - shown so
+    /// the picker always reflects the real current state instead of misrepresenting it as
+    /// "Automatic Scan".
+    case custom(String)
+
+    /// What the settings are using now.
+    static func current(_ settings: AppSettings) -> NodeChoice {
+        let trusted = settings.trustedNodeAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trusted.isEmpty {
             return .automatic
         }
-        if normalizedTrustedAddress == normalizedDefaultAddress {
+        if trusted == AppSettings.defaultTrustedNodeAddress.trimmingCharacters(in: .whitespacesAndNewlines) {
             return .defaultNode
         }
-        if let match = settingsViewModel.settings.savedNodeAddresses.first(where: {
-            $0.address.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedTrustedAddress
+        if let match = settings.savedNodeAddresses.first(where: {
+            $0.address.trimmingCharacters(in: .whitespacesAndNewlines) == trusted
         }) {
             return .saved(match.address)
         }
-        return .custom(normalizedTrustedAddress)
+        return .custom(trusted)
     }
 
-    private func applyNodeChoice(_ choice: NodeChoice) {
-        let address: String
-        switch choice {
-        case .automatic: address = ""
-        case .defaultNode: address = AppSettings.defaultTrustedNodeAddress
-        case .saved(let addr): address = addr
-        case .custom(let addr): address = addr
+    /// The trusted node address to apply ("" for automatic).
+    var address: String {
+        switch self {
+        case .automatic: return ""
+        case .defaultNode: return AppSettings.defaultTrustedNodeAddress
+        case .saved(let addr): return addr
+        case .custom(let addr): return addr
         }
-        trustedNodeValidationError = settingsViewModel.applyTrustedNode(address)
     }
 }
 
@@ -2148,39 +2165,7 @@ struct KaspaNodeQuickAccessSections: View {
     @EnvironmentObject var settingsViewModel: SettingsViewModel
     var onToast: (String, ToastStyle) -> Void
 
-    private enum NodeChoice: Hashable {
-        case automatic
-        case defaultNode
-        case saved(String)
-        /// A trusted node address that's currently active but matches neither the default nor any
-        /// saved address book entry (e.g. entered as free text in Settings > Connection Settings) -
-        /// shown so the picker always reflects the real current state instead of silently
-        /// misrepresenting it as "Automatic Scan".
-        case custom(String)
-    }
-
-    private var normalizedTrustedAddress: String {
-        settingsViewModel.settings.trustedNodeAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var normalizedDefaultAddress: String {
-        AppSettings.defaultTrustedNodeAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var selection: NodeChoice {
-        if normalizedTrustedAddress.isEmpty {
-            return .automatic
-        }
-        if normalizedTrustedAddress == normalizedDefaultAddress {
-            return .defaultNode
-        }
-        if let match = settingsViewModel.settings.savedNodeAddresses.first(where: {
-            $0.address.trimmingCharacters(in: .whitespacesAndNewlines) == normalizedTrustedAddress
-        }) {
-            return .saved(match.address)
-        }
-        return .custom(normalizedTrustedAddress)
-    }
+    private var selection: NodeChoice { NodeChoice.current(settingsViewModel.settings) }
 
     var body: some View {
         Section {
@@ -2219,14 +2204,7 @@ struct KaspaNodeQuickAccessSections: View {
     }
 
     private func apply(_ choice: NodeChoice) {
-        let address: String
-        switch choice {
-        case .automatic: address = ""
-        case .defaultNode: address = AppSettings.defaultTrustedNodeAddress
-        case .saved(let addr): address = addr
-        case .custom(let addr): address = addr
-        }
-        if let error = settingsViewModel.applyTrustedNode(address) {
+        if let error = settingsViewModel.applyTrustedNode(choice.address) {
             onToast(error, .error)
         } else {
             onToast(choice == .automatic ? "Automatic scan enabled." : "Node updated.", .success)
@@ -2767,15 +2745,6 @@ struct ConnectionStatusDetailView: View {
         }
     }
 
-    private func formatDistance(_ km: Double) -> String {
-        if km < 100 {
-            return "\(Int(km)) km"
-        } else {
-            let thousands = km / 1000
-            return String(format: "%.1fk km", thousands)
-        }
-    }
-
     private func formatDate(_ date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
@@ -2996,15 +2965,6 @@ private struct ConnectionNodeRow: View {
         formatter.groupingSeparator = ","
         return formatter.string(from: NSNumber(value: daa)) ?? "\(daa)"
     }
-
-    private func formatDistance(_ km: Double) -> String {
-        if km < 100 {
-            return "\(Int(km))km"
-        } else {
-            let thousands = km / 1000
-            return String(format: "%.1fk km", thousands)
-        }
-    }
 }
 
 // MARK: - All Nodes Row (Compact)
@@ -3102,15 +3062,14 @@ private struct AllNodesRow: View {
             return .red
         }
     }
+}
 
-    private func formatDistance(_ km: Double) -> String {
-        if km < 100 {
-            return "\(Int(km))km"
-        } else {
-            let thousands = km / 1000
-            return String(format: "%.1fk km", thousands)
-        }
+/// A node's distance for the node lists: "85 km", "540 km", then "1.2k km" from 1,000 km.
+private func formatDistance(_ km: Double) -> String {
+    if km < 1000 {
+        return "\(Int(km)) km"
     }
+    return String(format: "%.1fk km", km / 1000)
 }
 
 #Preview {

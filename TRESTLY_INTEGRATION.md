@@ -22,6 +22,28 @@ kUSDT Wallet 1.0.0).
 KaPay does not bridge or redeem, so you don't need WalletConnect or any EVM wallet support for
 KaPay users.
 
+## Status on trestly.io (checked 2026-11-20)
+
+Trestly shipped their side in the trestly.io build deployed 2026-11-20 14:39 GMT
+(`assets/index-CcfCphDl.js`). We read that build and loaded `/swap` at 375 pt with a stand-in
+provider named KaPay (Trestly's own test-vector address, `send` and `redeem` refused):
+
+| Ask | On trestly.io |
+|---|---|
+| 1. Any `window.kusdt` | Done. Any object with a `request` function is a wallet. The site also listens for `kusdt#initialized` and `kusdt:announceProvider` (detail `{provider, info}`), and dispatches `kusdt:requestProvider`. On a phone it doesn't wait: no provider at load means none. The stand-in turned "kUSDT Wallet needs a computer" into Connect Wallet. |
+| 2. Methods a wallet refuses | Done. Supported methods come from `provider.methods`, then `info.methods` (an array, or `{methods}`), then a `kusdt_capabilities` call. A 4200 on send, redeem, swap or pool marks it unsupported, and the page says so by the wallet's name ("KaPay does not support bridging back to USDT. You can still swap kUSDT for KAS, or bridge USDT to Kaspa.", and lines for swap, add and remove). |
+| 3. Phone layout | Done. `/swap`, `/pool` and `/portfolio` have no sideways scroll at 375 pt; the risk notice (Terms checkbox, "I understand the risk", "Not now") fits and can be dismissed. Only the Terms checkbox itself is under 44 pt. |
+| 4. Naming itself | Done. `info.name` (40 characters at most), `rdns` (128) and `icon` (a `data:image/png`, jpeg, webp, gif or svg+xml URL up to 256 KB). A provider with no name and no rdns, or `isKusdtWallet: true`, is treated as Trestly's extension. |
+| 5. Staying in step | A promise, nothing to check. kusdt-open has no commits after `b70707c` (2026-11-15). |
+
+Not there yet: **testnet.trestly.io** still serves the 2026-11-14 build (`assets/index-BTNfbKIP.js`)
+without any of this. Not checked: connecting past the risk notice (accepting the Terms is the user's
+call) and a real swap, which waits for KaPay's provider.
+
+What KaPay's provider must do for this build: exist at document start, list its methods on
+`window.kusdt.methods` (and `info.methods`), answer `kusdt_capabilities` with the same list, and
+dispatch `kusdt:announceProvider` again whenever the page dispatches `kusdt:requestProvider`.
+
 ## What KaPay does with kUSDT today
 
 KaPay is a self-custody Kaspa wallet. Its kUSDT support is built on kusdt-open and follows your
@@ -58,10 +80,9 @@ wallet's rules wherever there's a choice.
 
 ## How KaPay opens trestly.io
 
-- **Entry points.** In KaPay, Manage kUSDT > options > **Open Trestly** (or an address's own page >
-  Open Trestly With This Address). The user first picks **one address** to work with: the Chatting
-  Address, any regular address holding kUSDT, or a fresh one. Only that address is ever shown to
-  the site.
+- **Entry point.** KaPay's Wallet tab > **Swap Stablecoins** > kUSDT. The user then picks **one
+  address** to work with: the Chatting Address, any regular address holding kUSDT, or a fresh one. Only
+  that address is ever shown to the site.
 - **Where it opens.** A full-screen in-app browser on `https://trestly.io/swap`
   (`https://testnet.trestly.io/swap` on testnet), since swapping is what most users come for first.
   From there your own menu works as usual.
@@ -105,7 +126,14 @@ every transaction itself; the page never sees a key, as with your extension.
 
 **Status.** Balances, sends and the in-app browser are live in KaPay's TestFlight builds. The
 provider above is the next step on our side (stage 3). The site loads in KaPay today but can't
-connect until it ships. The answers above are what we're building to, and we'll send a TestFlight
+connect until it ships. Update 2026-11-20: the provider is built, in TestFlight with KaPay's next
+build. `kusdt_swap`, `kusdt_addLiquidity` and `kusdt_removeLiquidity` run **your own wallet code**:
+kusdt-open `wallet/extension/src/kusdt` at `b70707c`, bundled unchanged and pinned by hash, beside the
+pinned WebAssembly, with the same steps as your `screens/Approve.tsx` (quote, KaPay's native approval,
+then `swap` / `addLiquidity` / `removeLiquidity`, requoting as `QuoteChanged` says). Its node client
+uses the public resolvers as yours does. A new release of that code means a KaPay update, so please
+tell us when one ships. It will also set `window.kusdt.methods` and `info.methods` to the methods
+it answers, as trestly.io now reads them. The answers above are what we're building to, and we'll send a TestFlight
 build to test against.
 
 ## What needs to change on trestly.io

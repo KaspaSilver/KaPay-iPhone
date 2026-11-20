@@ -18,23 +18,6 @@ enum KaspaRequestType: Hashable {
     case getCurrentNetwork
     case getMempoolEntry
     case getFeeEstimate
-
-    /// The expected response type for this request
-    var responseCase: String {
-        switch self {
-        case .getInfo: return "getInfoResponse"
-        case .getUtxosByAddresses: return "getUtxosByAddressesResponse"
-        case .submitTransaction: return "submitTransactionResponse"
-        case .notifyUtxosChanged: return "notifyUtxosChangedResponse"
-        case .notifyBlockAdded: return "notifyBlockAddedResponse"
-        case .getPeerAddresses: return "getPeerAddressesResponse"
-        case .getConnectedPeerInfo: return "getConnectedPeerInfoResponse"
-        case .getBlockDagInfo: return "getBlockDagInfoResponse"
-        case .getCurrentNetwork: return "getCurrentNetworkResponse"
-        case .getMempoolEntry: return "getMempoolEntryResponse"
-        case .getFeeEstimate: return "getFeeEstimateResponse"
-        }
-    }
 }
 
 // MARK: - Pending Request
@@ -47,18 +30,12 @@ struct PendingRequest {
     /// itself stays registered until its response or timeout, so the FIFO-by-type matching in
     /// `handleResponse` is undisturbed; only the waiting caller is gone.
     var continuation: CheckedContinuation<Protowire_KaspadMessage, Error>?
-    let sentAt: Date
-    let timeout: TimeInterval
     var timeoutTask: Task<Void, Never>
     /// The caller has had its timeout; the entry stays for `lateResponseGrace` to absorb the
     /// node's late answer (see `handleTimeout`).
     var timedOut = false
     /// The connection it was sent on: once that stream is gone no late answer can come.
     var generation = 0
-
-    var isExpired: Bool {
-        Date().timeIntervalSince(sentAt) > timeout
-    }
 }
 
 // MARK: - Connection State
@@ -69,10 +46,6 @@ enum ConnectionState: Equatable {
     case connecting
     case connected
     case reconnecting
-
-    var isUsable: Bool {
-        self == .connected
-    }
 }
 
 // MARK: - Circuit Breaker
@@ -215,18 +188,8 @@ actor GRPCStreamConnection {
     /// Notification handlers
     private var notificationHandlers: [UUID: NotificationHandler] = [:]
 
-    /// Latency EWMA (for health tracking)
-    private var latencyEwma = EWMA()
-
-    /// Consecutive successes/failures
-    private var consecutiveSuccesses: Int = 0
-    private var consecutiveFailures: Int = 0
-
     /// How long a timed-out request keeps its type's slot, waiting for the node's late answer.
     private let lateResponseGrace: TimeInterval = 5
-
-    /// Connection timestamp
-    private var connectedAt: Date?
 
     /// Bumped on every (re)connect attempt and every `disconnect()`, so it also tells a gRPC
     /// callback whether the stream it came from is still the current one. A gRPC stream's
@@ -287,15 +250,6 @@ actor GRPCStreamConnection {
 
     var isConnected: Bool {
         state == .connected
-    }
-
-    var connectionDuration: TimeInterval? {
-        guard let connected = connectedAt else { return nil }
-        return Date().timeIntervalSince(connected)
-    }
-
-    var averageLatencyMs: Double? {
-        latencyEwma.value
     }
 
     var isCircuitOpen: Bool {
@@ -377,7 +331,6 @@ actor GRPCStreamConnection {
             // The breaker and reconnectAttempts are left alone until the node really answers
             // (handleResponse): a connection that opens says nothing about a stream it refuses.
             state = .connected
-            connectedAt = Date()
             lastActivityAt = Date()
 
             // Suppress noisy connection logs
@@ -491,7 +444,6 @@ actor GRPCStreamConnection {
         // Only mark as disconnected, but don't cancel pending requests
         // They will timeout naturally if no response arrives
         state = .disconnected
-        connectedAt = nil
         stream = nil
 
         // ClientConnection (unlike `stream`, the bidi RPC layered on top of it) is a
@@ -573,7 +525,6 @@ actor GRPCStreamConnection {
         // Before the first await, so a stream close landing during it can't look like an
         // unexpected drop and schedule a reconnect. The new generation ends any connect under way.
         state = .disconnected
-        connectedAt = nil
         reconnectAttempts = 0
         connectionGeneration += 1
 
@@ -599,11 +550,6 @@ actor GRPCStreamConnection {
         }
 
         AppLog.log("[GRPCStream] Disconnected from %@", endpoint.key)
-    }
-
-    /// Check if connection should be attempted (circuit breaker)
-    func shouldAttempt() -> Bool {
-        circuitBreaker.checkState()
     }
 
     // MARK: - Request/Response
@@ -656,7 +602,6 @@ actor GRPCStreamConnection {
         requestIdCounter += 1
         let requestId = requestIdCounter
 
-        let startTime = Date()
         let generation = connectionGeneration
 
         // Cancellation stops the CALLER waiting; it does not touch the wire. Responses are
@@ -684,8 +629,6 @@ actor GRPCStreamConnection {
                     id: requestId,
                     type: type,
                     continuation: continuation,
-                    sentAt: startTime,
-                    timeout: timeout,
                     timeoutTask: timeoutTask
                 )
                 pendingRequests[requestId] = pending
@@ -790,13 +733,7 @@ actor GRPCStreamConnection {
         // Cancel timeout task
         pending.timeoutTask.cancel()
 
-        // Calculate latency
-        let latencyMs = Date().timeIntervalSince(pending.sentAt) * 1000
-        latencyEwma.update(sample: latencyMs, alpha: 0.25)
-
         // Record success
-        consecutiveSuccesses += 1
-        consecutiveFailures = 0
         circuitBreaker.recordSuccess()
         lastActivityAt = Date()
 
@@ -829,8 +766,6 @@ actor GRPCStreamConnection {
         }
 
         // Record failure
-        consecutiveSuccesses = 0
-        consecutiveFailures += 1
         circuitBreaker.recordFailure()
 
         pending.continuation?.resume(throwing: KasiaError.networkError("Request timeout"))
@@ -876,8 +811,6 @@ actor GRPCStreamConnection {
         releaseTypeSlot(pending.type)
 
         // Record failure
-        consecutiveSuccesses = 0
-        consecutiveFailures += 1
         circuitBreaker.recordFailure()
 
         // Check if the error indicates the stream is dead (AlreadyComplete, closed, etc.)
@@ -900,7 +833,6 @@ actor GRPCStreamConnection {
     /// Mark connection as disconnected and clean up stream resources
     private func markDisconnected() {
         state = .disconnected
-        connectedAt = nil
 
         // Clean up stale stream
         stream?.sendEnd(promise: nil)
@@ -985,28 +917,11 @@ actor GRPCStreamConnection {
         notificationHandlers.removeValue(forKey: id)
     }
 
-    // MARK: - Health Metrics
-
-    /// Get current health metrics
-    func getHealthMetrics() -> (latencyMs: Double?, consecutiveSuccesses: Int, consecutiveFailures: Int) {
-        (latencyEwma.value, consecutiveSuccesses, consecutiveFailures)
-    }
-
-    /// Reset health metrics (e.g., on epoch change)
-    func resetHealthMetrics() {
-        latencyEwma.reset()
-        consecutiveSuccesses = 0
-        consecutiveFailures = 0
-    }
+    // MARK: - Circuit Breaker
 
     /// Reset the circuit breaker (call after confirmed successful communication)
     func resetCircuitBreaker() {
         circuitBreaker.reset()
-    }
-
-    /// Check circuit breaker state without mutating
-    var circuitBreakerState: CircuitBreaker.State {
-        circuitBreaker.state
     }
 }
 
@@ -1184,20 +1099,9 @@ actor GRPCConnectionPool {
         connections.removeAll()
     }
 
-    /// Get all active connections
-    func allConnections() -> [GRPCStreamConnection] {
-        Array(connections.values)
-    }
-
     /// Get current connection count
     func connectionCount() -> Int {
         connections.count
-    }
-
-    /// Check if endpoint has an established connection
-    func hasActiveConnection(for endpoint: Endpoint) async -> Bool {
-        guard let conn = connections[endpoint.key] else { return false }
-        return await conn.isConnected
     }
 
     /// Get endpoints with active connections

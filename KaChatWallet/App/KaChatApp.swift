@@ -100,13 +100,7 @@ struct KaChatApp: App {
 
     @MainActor
     private func handleScenePhaseChange(to newPhase: ScenePhase) {
-        // Covered the moment the app stops being the thing in front (the switcher, a system
-        // prompt, a call), uncovered when it is again.
-        if newPhase == .active {
-            PrivacyCoverWindow.hide()
-        } else {
-            PrivacyCoverWindow.show()
-        }
+        // No privacy cover over the App Switcher (owner's call, 2026-11-19): the app shows as it is.
         switch newPhase {
         case .background:
             if settingsViewModel.settings.backgroundFetchEnabled {
@@ -475,6 +469,8 @@ extension Notification.Name {
     static let openPortfolio = Notification.Name("openPortfolio")
     /// A token's Manage screen (a "Received kUSDT" notification): `TokenRoute.pending` names it.
     static let openToken = Notification.Name("openToken")
+    /// Done in Trestly's in-app browser: everything over the Wallet tab closes, back to its top.
+    static let trestlyDone = Notification.Name("trestlyDone")
     /// A `.kachat` name notification was tapped: the name is in `KachatDeepLink.pendingName`.
     static let openKachatName = Notification.Name("openKachatName")
     static let openColdStorage = Notification.Name("openColdStorage")
@@ -482,79 +478,3 @@ extension Notification.Name {
     static let openOwnAddress = Notification.Name("openOwnAddress")
 }
 
-/// Puts `PrivacyCoverView` in a window of its own above the app. An overlay on the root view sat
-/// underneath presented sheets, which is where the 12 or 24 words and private keys are shown.
-@MainActor
-private enum PrivacyCoverWindow {
-    /// One cover per window scene: on iPad and Mac the app can have several windows open, and
-    /// each one is snapshotted (as KaChat).
-    private static var windows: [UIWindow] = []
-    private static var sceneObservers: [NSObjectProtocol] = []
-
-    /// The app's `scenePhase` stays active while any window is, so a window that goes to the
-    /// background beside an active one is only heard about from its own scene.
-    static func observeScenes() {
-        guard sceneObservers.isEmpty else { return }
-        let center = NotificationCenter.default
-        sceneObservers = [
-            center.addObserver(forName: UIScene.willDeactivateNotification, object: nil, queue: .main) { note in
-                guard let scene = note.object as? UIWindowScene else { return }
-                MainActor.assumeIsolated { cover(scene) }
-            },
-            center.addObserver(forName: UIScene.didActivateNotification, object: nil, queue: .main) { note in
-                guard let scene = note.object as? UIWindowScene else { return }
-                MainActor.assumeIsolated { uncover(scene) }
-            },
-        ]
-    }
-
-    private static func cover(_ scene: UIWindowScene) {
-        guard !windows.contains(where: { $0.windowScene === scene }) else { return }
-        let cover = UIWindow(windowScene: scene)
-        cover.windowLevel = .alert + 1
-        // the app's appearance (Settings' choice), which its own windows carry
-        cover.overrideUserInterfaceStyle = scene.windows.first?.overrideUserInterfaceStyle ?? .unspecified
-        cover.rootViewController = UIHostingController(rootView: PrivacyCoverView())
-        cover.isHidden = false
-        windows.append(cover)
-    }
-
-    private static func uncover(_ scene: UIWindowScene) {
-        windows.filter { $0.windowScene === scene }.forEach { $0.isHidden = true }
-        windows.removeAll { $0.windowScene === scene }
-    }
-
-    static func show() {
-        observeScenes()
-        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.forEach(cover)
-    }
-
-    /// Only the windows that are in front again: another may still be in the background.
-    static func hide() {
-        observeScenes()
-        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            .filter { $0.activationState == .foregroundActive }
-            .forEach(uncover)
-    }
-}
-
-/// What the App Switcher and a system prompt see instead of the app's contents.
-private struct PrivacyCoverView: View {
-    /// The app's appearance (Settings' choice, or the system's): the logo follows it.
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        ZStack {
-            // Solid: large words can still be read through a light blur.
-            Color(.systemBackground)
-            // The wallet's own logo, rounded like its app icon: the dark-mode icon (near-black
-            // tile, `tools/make_logo.py ... dark`) when the app is dark, the white one otherwise.
-            Image(colorScheme == .dark ? "KaChatWalletLogoDark" : "KaChatWalletLogo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 72, height: 72)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-        .ignoresSafeArea()
-    }
-}

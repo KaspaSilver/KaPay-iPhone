@@ -84,16 +84,10 @@ extension WalletService {
             try self.checkFeeAgainstReview(tx, spending: spendable, expectedFeeSompi: expectedFeeSompi)
 
             AppLog.log("[WalletService] Submitting withdrawal via RPC manager...")
-            let txId: String
-            let endpoint: String
-            do {
-                (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false, escalateOrphan: false)
-            } catch let unknown as SendOutcomeUnknownError {
-                // No hold on its coins: a resend, or the next send, spends one of the same ones
-                // (`conflictingOutpoint`), so at most one can land.
-                self.dropUtxoCache()
-                throw unknown
-            }
+            // An unknown outcome (`SendOutcomeUnknownError`) puts no hold on its coins: a resend,
+            // or the next send, spends one of the same ones (`conflictingOutpoint`), so at most
+            // one can land.
+            let (txId, endpoint) = try await rpcManager.submitTransaction(tx, allowOrphan: false, escalateOrphan: false)
             AppLog.log("[WalletService] Withdrawal submitted: \(txId.prefix(12)) via \(endpoint)")
             self.recordSpend(tx)
             return txId
@@ -342,7 +336,7 @@ extension WalletService {
                 // block. Not when the outcome is unknown: a resend must pick the same coins, and
                 // the next send spends one of them (`conflictingOutpoint`), so that at most one
                 // of the two can land.
-                if outcomeKnown { self.recordSpend(tx) } else { self.dropUtxoCache() }
+                if outcomeKnown { self.recordSpend(tx) }
                 // the session's "never used" answer for these is out of date now
                 self.markSpendingAddressUsed(fromAddress)
                 if let changeAddress { self.markSpendingAddressUsed(changeAddress) }
@@ -447,9 +441,8 @@ extension WalletService {
         return (amount, chunk)
     }
 
-    /// Estimates the total fee for a spending-address withdrawal. Calls NodePoolService
-    /// directly rather than fetchUtxosWithFallback, whose single-address UTXO cache would
-    /// return the wrong address's data when estimating for anything but the identity address.
+    /// Estimates the total fee for a spending-address withdrawal, from that address's own UTXOs
+    /// (asked of NodePoolService).
     func estimateSpendingAddressWithdrawalFee(index: Int, toAddress: String, amountSompi: UInt64, manualUtxos: [UTXO]? = nil, extraFeeSompi: UInt64 = 0, availableUtxos: [UTXO] = [], virtualDaaScore: UInt64? = nil) async throws -> SendFeeEstimate {
         guard amountSompi > 0 else { throw KasiaError.networkError("Amount is zero") }
         guard let fromAddress = WalletManager.shared.spendingAddress(at: index) else {
@@ -615,9 +608,8 @@ extension WalletService {
         return Array(spendable.sorted { $0.amount > $1.amount }.prefix(KasiaTransactionBuilder.maxInputsPerTransaction))
     }
 
-    /// What a send from the chatting address may spend, fetched fresh rather than from the
-    /// 20-second `fetchUtxosWithFallback` cache, and with the send's own filter, so the estimate
-    /// and the send agree.
+    /// What a send from the chatting address may spend, fetched fresh and with the send's own
+    /// filter, so the estimate and the send agree.
     /// What a plain send from the chatting address may spend out of `utxos`: confirmed, not mining
     /// rewards, and not just spent by this app (`unreservedUtxos`). Compound, the send's Available
     /// and Coin Control count the same coins the send does.
@@ -643,16 +635,10 @@ extension WalletService {
         return utxos.filter { reservedOutpoints[Self.outpointKey($0.outpoint)] == nil }
     }
 
-    /// After a send, or one whose outcome is unknown: its inputs stay out of the next send, Max
-    /// and fee for `spentOutpointHold`, and the UTXO cache, which still lists them, is dropped.
+    /// After a send: its inputs stay out of the next send, Max and fee for `spentOutpointHold`
+    /// (not after an unknown outcome, whose coins a resend must pick again).
     func recordSpend(_ tx: KaspaRpcTransaction) {
         reserveOutpoints(tx.inputs.map { Self.outpointKey($0.previousOutpoint) })
-    }
-
-    /// The UTXO cache still lists coins a send may have spent.
-    func dropUtxoCache() {
-        cachedUtxos = []
-        cachedUtxosTimestamp = nil
     }
 
     /// `recordSpend` for outpoints given as "txid:index" (any transaction `NodePoolService`
@@ -662,7 +648,6 @@ extension WalletService {
         for key in keys {
             reservedOutpoints[key] = until
         }
-        dropUtxoCache()
     }
 
     /// Holds a submit's coins while it is out, so a send running alongside can't pick them too.
@@ -728,6 +713,34 @@ extension WalletService {
         return nil
     }
 
+    /// `cachedSpendingAddressUsedState` for a whole list, reading the stored used list once
+    /// rather than once per address (Manage Addresses' load asks about every row). Addresses
+    /// with no cached answer are left out.
+    func cachedSpendingAddressUsedStates(_ addresses: [String]) -> [String: Bool] {
+        let used = Set(UserDefaults.standard.array(forKey: Self.usedAddressCacheKey) as? [String] ?? [])
+        var states: [String: Bool] = [:]
+        for address in addresses {
+            if used.contains(address) {
+                states[address] = true
+            } else if Self.sessionUnusedAddresses.contains(address) {
+                states[address] = false
+            }
+        }
+        return states
+    }
+
+    /// `markSpendingAddressUsed` for several addresses, in one read and at most one write.
+    func markSpendingAddressesUsed(_ addresses: [String]) {
+        guard !addresses.isEmpty else { return }
+        Self.sessionUnusedAddresses.subtract(addresses)
+        var updated = UserDefaults.standard.array(forKey: Self.usedAddressCacheKey) as? [String] ?? []
+        let known = Set(updated)
+        let added = addresses.filter { !known.contains($0) }
+        guard !added.isEmpty else { return }
+        updated.append(contentsOf: Set(added))
+        UserDefaults.standard.set(updated, forKey: Self.usedAddressCacheKey)
+    }
+
     /// Marks an address confirmed-used without a probe — e.g. it holds a balance right now,
     /// which proves history. "Used" is monotonic, so persisting this is always safe and makes
     /// every future launch answer instantly even after the balance is swept back to zero.
@@ -778,24 +791,6 @@ extension WalletService {
 
     func updateWalletBalanceIfNeeded(address: String, utxos: [UTXO]) {
         WalletManager.shared.updateBalanceIfCurrentWallet(address: address, utxos: utxos)
-    }
-
-    /// Fetch UTXOs with automatic fallback - tries gRPC if connected, otherwise uses REST API
-    /// This is useful for fee estimation where we don't want to block waiting for gRPC connection
-    func fetchUtxosWithFallback(for address: String) async throws -> [UTXO] {
-        // Check cache first
-        if let timestamp = cachedUtxosTimestamp,
-           Date().timeIntervalSince(timestamp) < utxoCacheInterval,
-           !cachedUtxos.isEmpty {
-            return cachedUtxos
-        }
-
-        // getUtxosByAddresses already has REST fallback built in
-        let utxos = try await NodePoolService.shared.getUtxosByAddresses([address])
-        updateWalletBalanceIfNeeded(address: address, utxos: utxos)
-        cachedUtxos = utxos
-        cachedUtxosTimestamp = Date()
-        return utxos
     }
 }
 

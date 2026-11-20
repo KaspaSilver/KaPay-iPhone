@@ -143,13 +143,27 @@ struct TokenCombineView: View {
         isSending = true
         Task { @MainActor in
             defer { isSending = false }
-            if !outcomeUnknown, let built = prepared, Date().timeIntervalSince(built.preparedAt) > 120 {
-                await prepare()
-            }
-            guard let prepared else {
+            // never the build a running one is about to replace
+            while isPreparing { try? await Task.sleep(nanoseconds: 200_000_000) }
+            guard let built = prepared else {
                 failureMessage = prepareError ?? AppLocalization.string("The transaction couldn't be built. Nothing was sent.")
                 return
             }
+            // a review left open a while is built again and shown again for another swipe: nothing
+            // goes out on a build nobody saw (KaPost's audit, 2026-11-20)
+            if !outcomeUnknown, Date().timeIntervalSince(built.preparedAt) > 120 {
+                prepared = nil
+                await prepare()
+                if let rebuilt = prepared, rebuilt.fee > built.fee {
+                    failureMessage = SendFeeChangedError(feeSompi: rebuilt.fee).localizedDescription
+                } else if prepared != nil {
+                    failureMessage = AppLocalization.string("The review was open a while, so the transaction was built again. Nothing was sent: check it and swipe again.")
+                } else {
+                    failureMessage = prepareError ?? AppLocalization.string("The transaction couldn't be built. Nothing was sent.")
+                }
+                return
+            }
+            let prepared = built
             do {
                 let txid = try await KusdtTransfer.send(prepared)
                 outcomeUnknown = false
@@ -157,7 +171,7 @@ struct TokenCombineView: View {
                 sent = SentTransaction(txId: txid, amountSompi: nil, recipient: nil)
             } catch is SendOutcomeUnknownError {
                 outcomeUnknown = true
-                TokenWallet.shared.noteSent(prepared)
+                // its coins stay put: the next combine or send from them conflicts with this one
                 failureMessage = AppLocalization.string("Not confirmed: the network didn't answer. It may still go through. Try Again resends the same transaction, so it can't be paid twice.")
             } catch {
                 failureMessage = error.localizedDescription

@@ -63,8 +63,8 @@ enum ColdStorageError: LocalizedError {
 /// Manages watch-only "cold storage" accounts imported via kpub extended public key
 /// (e.g. exported from a KasSigner hardware device). Storage here is intentionally
 /// separate from WalletManager/KeychainService — a kpub contains no private key or
-/// mnemonic material, so it needs neither Secure Enclave wrapping nor the per-wallet
-/// message store machinery used for the app's spending wallet.
+/// mnemonic material, so it needs none of the Secure Enclave wrapping used for the app's
+/// spending wallet.
 @MainActor
 final class ColdStorageManager: ObservableObject {
     static let shared = ColdStorageManager()
@@ -426,7 +426,7 @@ final class ColdStorageManager: ObservableObject {
     }
 
     /// "Generate More Addresses" - a SEQUENCE, not a single answer (mirrors
-    /// WalletManager.lowestUnusedSpendingAddress): every press yields the NEXT fresh address,
+    /// WalletManager.lowestUnusedRegularAddress): every press yields the NEXT fresh address,
     /// forever. The chosen index is the lowest one that is truly unused (zero balance, no
     /// on-chain history) AND currently hidden - i.e. not already sitting in the visible list.
     /// Recycling un-hides it. An index that is already visible is never picked (that was the

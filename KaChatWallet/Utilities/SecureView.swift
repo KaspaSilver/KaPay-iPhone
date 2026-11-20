@@ -43,3 +43,21 @@ struct SecureView<Content: View>: View {
             }
     }
 }
+
+/// Copies sensitive material (a private key, the words) to the clipboard with a hard 30s system
+/// expiration and `localOnly` (never syncs to other devices via Universal Clipboard/Handoff).
+/// The system honors `expirationDate` even if the app is suspended before it elapses; the
+/// asyncAfter wipe below is a belt-and-suspenders in-app clear that also fires at 30s when
+/// nothing else has overwritten the clipboard in the meantime.
+func copySensitiveToClipboard(_ value: String) {
+    UIPasteboard.general.setItems(
+        [["public.utf8-plain-text": value]],
+        options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(30)]
+    )
+    let copiedValue = value
+    DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+        if UIPasteboard.general.string == copiedValue {
+            UIPasteboard.general.string = ""
+        }
+    }
+}

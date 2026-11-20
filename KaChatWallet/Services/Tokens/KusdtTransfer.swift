@@ -89,8 +89,15 @@ enum KusdtTransfer {
         let deployment = Kusdt.current
         let network = AppSettings.load().networkType == .mainnet ? "mainnet" : "testnet-10"
 
-        // 1. the coins, largest first, at most 3
-        let sorted = coins.filter { $0.state.amount > 0 }.sorted { $0.state.amount > $1.state.amount }
+        // 1. the coins, at most 3: never one a send from this app is still holding, and a "Not
+        // confirmed" send's coin first, so this send and that one conflict and at most one can land
+        // (the Kaspa rule, `WalletService.conflictingOutpoint`; audit, 2026-11-20). Then largest first.
+        let held = WalletService.shared.heldOutpointKeys()
+        let unconfirmed = WalletService.shared.unknownOutcomeKeys()
+        func key(_ c: KusdtBalances.Coin) -> String { "\(c.transactionId):\(c.index)" }
+        let sorted = coins
+            .filter { $0.state.amount > 0 && !held.contains(key($0)) }
+            .sorted { (unconfirmed.contains(key($0)) ? 1 : 0, $0.state.amount) > (unconfirmed.contains(key($1)) ? 1 : 0, $1.state.amount) }
         var picked: [KusdtBalances.Coin] = []
         var sum: UInt64 = 0
         for coin in sorted where sum < amount && picked.count < maxTokenInputs {
@@ -125,7 +132,14 @@ enum KusdtTransfer {
             let s = [UInt8](u.scriptPublicKey)
             return u.covenantId == nil && !u.isCoinbase && s.count == 34 && s[0] == 0x20 && s[33] == 0xac
         }
-        let funding = WalletService.shared.unreservedUtxos(plain).sorted { $0.amount > $1.amount }
+        let unreserved = WalletService.shared.unreservedUtxos(plain)
+        // a "Not confirmed" send's KAS coin first too, then largest first
+        let conflict = WalletService.shared.conflictingOutpoint(in: unreserved)
+        let funding = unreserved.sorted {
+            let a = "\($0.outpoint.transactionId):\($0.outpoint.index)" == conflict
+            let b = "\($1.outpoint.transactionId):\($1.outpoint.index)" == conflict
+            return a != b ? a : $0.amount > $1.amount
+        }
 
         let inputsJSON: [[String: Any]] = picked.map { coin in
             [
@@ -241,6 +255,55 @@ enum KusdtTransfer {
                 kasBack += number(output["value"]) ?? 0
             }
         }
+        // ...and what is submitted is what was checked: the transaction's own outputs, one by one,
+        // against the list checked above (the builder reports both; nothing else ties them;
+        // audit, 2026-11-20)
+        guard let sentOutputs = transaction["outputs"] as? [[String: Any]], sentOutputs.count == builtOutputs.count else {
+            throw Failure.checkFailed
+        }
+        for (sent, checked) in zip(sentOutputs, builtOutputs) {
+            guard number(sent["value"]) == number(checked["value"]),
+                  ((sent["scriptPublicKey"] as? String) ?? "").lowercased() == ((checked["scriptPublicKey"] as? String) ?? "").lowercased() else {
+                throw Failure.checkFailed
+            }
+        }
+        // and it spends exactly the coins picked here plus funding of this address
+        guard let sentInputs = transaction["inputs"] as? [[String: Any]] else { throw Failure.checkFailed }
+        let sentOutpoints = Set(sentInputs.compactMap { i -> String? in
+            guard let o = i["previousOutpoint"] as? [String: Any], let id = o["transactionId"] as? String else { return nil }
+            return "\(id.lowercased()):\(number(o["index"]) ?? UInt64.max)"
+        })
+        let pickedOutpoints = Set(picked.map { "\($0.transactionId.lowercased()):\($0.index)" })
+        guard sentOutpoints.count == sentInputs.count, pickedOutpoints.isSubset(of: sentOutpoints) else { throw Failure.checkFailed }
+        // every other input is one of this address's KAS coins handed to the builder, and the fee
+        // is worked out here from what goes in and out, not taken from the builder's word
+        // (KaPost's audit, 2026-11-20)
+        var amountByOutpoint: [String: UInt64] = [:]
+        for coin in picked { amountByOutpoint["\(coin.transactionId.lowercased()):\(coin.index)"] = coin.kasSompi }
+        for coin in funding { amountByOutpoint["\(coin.outpoint.transactionId.lowercased()):\(coin.outpoint.index)"] = coin.amount }
+        var totalIn: UInt64 = 0
+        for key in sentOutpoints {
+            guard let amount = amountByOutpoint[key] else { throw Failure.checkFailed }
+            let (sum, overflow) = totalIn.addingReportingOverflow(amount)
+            guard !overflow else { throw Failure.checkFailed }
+            totalIn = sum
+        }
+        var totalOut: UInt64 = 0
+        let covenant = Kusdt.hex(deployment.covenantId)
+        for (index, output) in sentOutputs.enumerated() {
+            guard let value = number(output["value"]) else { throw Failure.checkFailed }
+            let (sum, overflow) = totalOut.addingReportingOverflow(value)
+            guard !overflow else { throw Failure.checkFailed }
+            totalOut = sum
+            let boundTo = ((output["covenant"] as? [String: Any])?["covenantId"] as? String)?.lowercased()
+            // the token coins carry kUSDT's covenant; everything else (KAS back to you) none
+            guard index < outputs.count ? boundTo == covenant : boundTo == nil else { throw Failure.checkFailed }
+        }
+        guard totalIn >= totalOut, totalIn - totalOut <= maxFee else { throw Failure.feeTooHigh }
+        if totalIn - totalOut != fee {
+            AppLog.log("[kUSDT] builder fee %llu differs from inputs less outputs %llu", fee, totalIn - totalOut)
+        }
+
         let mass = number((built["mass"] as? [String: Any])?["storage"]) ?? 0
         let rpc = try rpcTransaction(transaction, storageMass: mass)
         return Prepared(txid: txid.lowercased(), fee: fee, kasToRecipient: outputs[0].value, rpc: rpc,
@@ -256,7 +319,9 @@ enum KusdtTransfer {
     /// plain KAS (less the fee, which that KAS pays: no funding needed). Built and checked like any
     /// send; `Prepared.kasBack` is what comes back. More than 3 coins take another round.
     static func prepareCombine(holding: TokenHolding, coins: [KusdtBalances.Coin]) async throws -> Prepared {
-        let largest = coins.filter { $0.state.amount > 0 }.sorted { $0.state.amount > $1.state.amount }.prefix(maxTokenInputs)
+        let held = WalletService.shared.heldOutpointKeys()
+        let largest = coins.filter { $0.state.amount > 0 && !held.contains("\($0.transactionId):\($0.index)") }
+            .sorted { $0.state.amount > $1.state.amount }.prefix(maxTokenInputs)
         guard largest.count > 1 else { throw Failure.nothingToCombine }
         let amount = largest.reduce(UInt64(0)) { $0 + $1.state.amount }
         return try await prepare(holding: holding, coins: Array(largest), recipient: holding.address, amount: amount)
@@ -295,6 +360,13 @@ enum KusdtTransfer {
     }
 
     /// A non-negative integer from a JSON number or a string of digits.
+    /// A builder number that must fit 32 bits (missing: 0); a bad answer throws instead of trapping.
+    private static func uint32(_ v: Any?) throws -> UInt32 {
+        guard let v, !(v is NSNull) else { return 0 }
+        guard let n = number(v), let small = UInt32(exactly: n) else { throw Failure.checkFailed }
+        return small
+    }
+
     private static func number(_ v: Any?) -> UInt64? {
         if let s = v as? String { return UInt64(s) }
         if let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.int64Value >= 0 { return n.uint64Value }
@@ -313,19 +385,21 @@ enum KusdtTransfer {
             throw Failure.checkFailed
         }
         var r = Protowire_RpcTransaction()
-        r.version = UInt32(version)
+        guard let version32 = UInt32(exactly: version) else { throw Failure.checkFailed }
+        r.version = version32
         r.inputs = try inputs.map { i in
             guard let op = i["previousOutpoint"] as? [String: Any],
                   let txid = op["transactionId"] as? String, let index = number(op["index"]) else { throw Failure.checkFailed }
             var input = Protowire_RpcTransactionInput()
             var outpoint = Protowire_RpcOutpoint()
             outpoint.transactionID = txid.lowercased()
-            outpoint.index = UInt32(index)
+            guard let index32 = UInt32(exactly: index) else { throw Failure.checkFailed }
+            outpoint.index = index32
             input.previousOutpoint = outpoint
             input.signatureScript = Kusdt.hex(try hexData(i["signatureScript"]))
             input.sequence = number(i["sequence"]) ?? 0
-            input.sigOpCount = UInt32(number(i["sigOpCount"]) ?? 0)
-            input.computeBudget = UInt32(number(i["computeBudget"]) ?? 0)
+            input.sigOpCount = try uint32(i["sigOpCount"])
+            input.computeBudget = try uint32(i["computeBudget"])
             return input
         }
         r.outputs = try outputs.map { o in
@@ -339,7 +413,8 @@ enum KusdtTransfer {
             output.scriptPublicKey = script
             if let c = o["covenant"] as? [String: Any] {
                 var binding = Protowire_RpcCovenantBinding()
-                binding.authorizingInput = UInt32(number(c["authorizingInput"]) ?? 0)
+                binding.authorizingInput = try uint32(c["authorizingInput"])
+                guard Int(binding.authorizingInput) < inputs.count else { throw Failure.checkFailed }
                 binding.covenantID = ((c["covenantId"] as? String) ?? "").lowercased()
                 output.covenant = binding
             }

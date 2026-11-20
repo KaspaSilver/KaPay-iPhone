@@ -130,6 +130,16 @@ struct TokenActivity: Identifiable, Codable, Equatable {
     var pending = false
     /// Which of your addresses it happened on (`TokenHolding.id`).
     var holdingID = "chatting"
+    /// The network fee (sompi), when this phone paid it (a send or Combine Coins).
+    var fee: UInt64? = nil
+    /// A swap that sold kUSDT (it went out); nil or false for one that bought it.
+    var outgoing: Bool? = nil
+
+    /// The transaction id, for a line this phone recorded ("txid:holding:kind").
+    var txid: String? {
+        let first = id.split(separator: ":").first.map(String.init) ?? ""
+        return first.count == 64 && first.allSatisfy(\.isHexDigit) ? first : nil
+    }
 }
 
 /// Where some of a token is held: the Chatting Address or one of the regular (legacy, key)
@@ -207,29 +217,92 @@ final class TokenWallet: ObservableObject {
         await refresh()
     }
 
-    /// Every address that can hold tokens, looked up: the Chatting Address and each revealed
-    /// regular spending address. Quantum addresses never hold them.
+    /// One refresh at a time (audit, 2026-11-20): a second caller for the same account waits for the
+    /// one running and, if it asked meanwhile, one more runs after it, so a follow-up is never lost
+    /// and two refreshes never overwrite each other. An account switch clears the old account's
+    /// figures at once and starts its own refresh; the old one's answer is dropped.
+    private var inFlight: (account: String, id: UUID, task: Task<Void, Never>)?
+    private var refreshAgain = false
+    /// Bumped whenever balances are applied, so a refresh that started before Discover's answer
+    /// doesn't overwrite it.
+    private var applyGeneration = 0
+
     func refresh() async {
-        guard !isRefreshing, let account = WalletManager.shared.currentWallet?.publicAddress else { return }
+        guard let account = WalletManager.shared.currentWallet?.publicAddress else { return }
+        if let running = inFlight, running.account == account {
+            refreshAgain = true
+            await running.task.value
+            return
+        }
         if account != loadedAccount {
             holdings = [:]
             coins = [:]
             pendingCoins = []
             loadedAccount = account
         }
+        let id = UUID()
+        let task = Task { @MainActor in await self.runRefresh(account: account) }
+        inFlight = (account, id, task)
+        await task.value
+        if inFlight?.id == id { inFlight = nil }
+        if refreshAgain, WalletManager.shared.currentWallet?.publicAddress == account {
+            refreshAgain = false
+            await refresh()
+        }
+    }
+
+    /// The addresses a refresh looks up (audit, 2026-11-20, privacy): the Chatting Address and only
+    /// the regular addresses that use kUSDT: holding it, listed in Manage kUSDT, hidden there while
+    /// holding it, waiting for a coin, or in its history. The rest of the account isn't sent to
+    /// Trestly's API every 90 s; Discover (Manage kUSDT, the Wallet tab's pull) looks wider.
+    private func refreshTargets(account: String) -> [(spendingIndex: Int?, address: String)] {
+        var indices = Set((holdings[WalletToken.kusdt.id] ?? []).compactMap(\.spendingIndex))
+        indices.formUnion(knownHoldingIndices(account: account))
+        indices.formUnion(shownEmptyIndices(of: .kusdt))
+        for id in hiddenHoldingIDs(of: .kusdt) { if id.hasPrefix("s"), let i = Int(id.dropFirst()) { indices.insert(i) } }
+        for coin in pendingCoins { if coin.holdingID.hasPrefix("s"), let i = Int(coin.holdingID.dropFirst()) { indices.insert(i) } }
+        for row in activity[WalletToken.kusdt.id] ?? [] {
+            if row.holdingID.hasPrefix("s"), let i = Int(row.holdingID.dropFirst()) { indices.insert(i) }
+        }
+        let manager = WalletManager.shared
+        var targets: [(spendingIndex: Int?, address: String)] = [(nil, account)]
+        for index in indices.sorted() where index <= manager.maxSpendingAddressIndex {
+            if let address = manager.spendingAddress(at: index) { targets.append((index, address)) }
+        }
+        return targets
+    }
+
+    /// The regular addresses seen holding kUSDT, kept per account on the phone, so a refresh after a
+    /// relaunch still looks them up before anything is loaded.
+    private func knownHoldingIndices(account: String) -> Set<Int> {
+        Set((UserDefaults.standard.array(forKey: "token_indices_\(account)") as? [Int]) ?? [])
+    }
+
+    private func rememberHoldingIndices(_ indices: Set<Int>, account: String) {
+        let merged = knownHoldingIndices(account: account).union(indices)
+        UserDefaults.standard.set(merged.sorted(), forKey: "token_indices_\(account)")
+    }
+
+    /// Whether this account uses kUSDT at all: anything held, listed or in its history. The 90 s
+    /// poll only runs for one that does.
+    var accountUsesTokens: Bool {
+        !(holdings[WalletToken.kusdt.id] ?? []).isEmpty || !shownEmptyIndices(of: .kusdt).isEmpty
+            || !(activity[WalletToken.kusdt.id] ?? []).isEmpty || !pendingCoins.isEmpty
+            || loadedAccount.map { !knownHoldingIndices(account: $0).isEmpty } == true
+    }
+
+    private func runRefresh(account: String) async {
         loadActivityIfNeeded(account: account)
         isRefreshing = true
         defer { isRefreshing = false }
-        let manager = WalletManager.shared
-        var targets: [(spendingIndex: Int?, address: String)] = [(nil, account)]
-        let revealed = manager.spendingAddresses(inRange: 0..<(max(0, manager.maxSpendingAddressIndex) + 1))
-        for index in revealed.keys.sorted() {
-            if let address = revealed[index] { targets.append((index, address)) }
-        }
+        let generation = applyGeneration
+        let targets = refreshTargets(account: account)
         do {
             let results = try await lookUp(targets)
             // the account may have changed while the lookups ran
             guard WalletManager.shared.currentWallet?.publicAddress == account else { return }
+            // Discover applied newer answers meanwhile: look again rather than overwrite them
+            guard applyGeneration == generation else { refreshAgain = true; return }
             let previous = coins
             apply(results, for: .kusdt)
             loadActivityIfNeeded(account: account)
@@ -274,16 +347,25 @@ final class TokenWallet: ObservableObject {
         // (not in what a send can spend), so the balance doesn't dip while the network catches up
         let landing = pendingCoins.filter { !verified.contains($0.key) && Date().timeIntervalSince($0.since) < 120 }
 
+        // coins a send from this app has just spent stay out (the node and Trestly still list them
+        // until the send is in a block): never counted again, never picked again (audit, 2026-11-20)
+        let held = WalletService.shared.heldOutpointKeys()
         var list: [TokenHolding] = []
         var byHolding: [String: [KusdtBalances.Coin]] = [:]
         for (index, result) in results {
+            let live = result.coins.filter { !held.contains(Self.outpointKey($0)) }
             let extra = landing.filter { $0.address == result.address }
-            guard !result.coins.isEmpty || !extra.isEmpty else { continue }
-            let units = result.units + extra.reduce(UInt64(0)) { $0 + $1.expected.state.amount }
+            guard !live.isEmpty || !extra.isEmpty else { continue }
+            let units = live.reduce(UInt64(0)) { $0 + $1.state.amount } + extra.reduce(UInt64(0)) { $0 + $1.expected.state.amount }
             let holding = TokenHolding(spendingIndex: index, address: result.address, units: units,
-                                       coins: result.coins.count + extra.count)
+                                       coins: live.count + extra.count)
             list.append(holding)
-            byHolding[holding.id] = result.coins
+            byHolding[holding.id] = live
+        }
+        applyGeneration += 1
+        if let account = loadedAccount {
+            let seen = Set(list.compactMap(\.spendingIndex))
+            if !seen.isSubset(of: knownHoldingIndices(account: account)) { rememberHoldingIndices(seen, account: account) }
         }
         list.sort { ($0.spendingIndex ?? -1) < ($1.spendingIndex ?? -1) }
         holdings[token.id] = list
@@ -321,6 +403,12 @@ final class TokenWallet: ObservableObject {
     }
 
     /// Whether Address Visibility has this address on Manage kUSDT's list.
+    /// The regular spending slots Manage kUSDT lists. Manage Addresses always shows these too
+    /// (owner's call, 2026-11-20): an address on the kUSDT list is never hidden from the Kaspa one.
+    func listedSpendingIndices(of token: WalletToken = .kusdt) -> Set<Int> {
+        Set(listedHoldings(of: token).compactMap(\.spendingIndex))
+    }
+
     func isListed(_ holding: TokenHolding, of token: WalletToken) -> Bool {
         guard let index = holding.spendingIndex else { return true }
         if holding.units > 0 { return !hiddenHoldingIDs(of: token).contains(holding.id) }
@@ -378,6 +466,32 @@ final class TokenWallet: ObservableObject {
         visibilityRevision += 1
     }
 
+    /// An account removed from this phone (`WalletManager.removeLocalData`: Delete Account and
+    /// the other removals): its token history, known coins and Address Visibility choices go, and
+    /// so do the balances in memory if they're that account's.
+    func forgetLocalData(account: String) {
+        let defaults = UserDefaults.standard
+        for token in tokens {
+            for kind in ["activity", "seen", "hidden", "shown"] {
+                defaults.removeObject(forKey: "token_\(kind)_\(token.id)_\(account)")
+            }
+        }
+        defaults.removeObject(forKey: "token_indices_\(account)")
+        // what Trestly's wallet code kept for this account's key (positions, known coins)
+        if let owner = Kusdt.schnorrOwner(of: account) { KusdtStoreRelay.forget(ownerHex: Kusdt.hex(owner)) }
+        if loadedAccount == account {
+            holdings = [:]
+            coins = [:]
+            pendingCoins = []
+            loadedAccount = nil
+            lastRefreshed = nil
+        }
+        if activityAccount == account {
+            activity = [:]
+            activityAccount = nil
+        }
+    }
+
     private func visibilityKey(_ kind: String, _ token: WalletToken) -> String? {
         guard let account = WalletManager.shared.currentWallet?.publicAddress else { return nil }
         return "token_\(kind)_\(token.id)_\(account)"
@@ -388,11 +502,23 @@ final class TokenWallet: ObservableObject {
     /// A kUSDT send went out (`KusdtTransfer.send`): its coins are gone from the balances at once,
     /// every output it made is known (so your own change is never announced as received), and the
     /// balances are looked up again shortly, once the node has it.
+    /// A swap made on Trestly's site from KaPay (`TrestlyProvider`): the kUSDT side, on that
+    /// address's history, then a refresh once the pool's new coins can be listed.
+    func noteSwap(token: WalletToken, spendingIndex: Int?, txid: String, units: UInt64, sold: Bool, fee: UInt64?) {
+        guard let account = WalletManager.shared.currentWallet?.publicAddress else { return }
+        let holdingID = spendingIndex.map { "s\($0)" } ?? "chatting"
+        record(TokenActivity(id: "\(txid):\(holdingID):swapped", kind: .swapped, units: units, counterparty: "Trestly",
+                             date: Date(), holdingID: holdingID, fee: fee, outgoing: sold),
+               token: token, account: account)
+    }
+
     func noteSent(_ prepared: KusdtTransfer.Prepared) {
         guard let account = WalletManager.shared.currentWallet?.publicAddress else { return }
         let spent = Set(prepared.spentCoins.map(Self.outpointKey))
         for (id, list) in coins { coins[id] = list.filter { !spent.contains(Self.outpointKey($0)) } }
         pendingCoins.removeAll { spent.contains($0.key) }
+        // noted once: a resend of the same transaction ("already known") adds nothing twice
+        pendingCoins.removeAll { $0.expected.transactionId == prepared.txid }
 
         // the coins this send made that are yours: checked on the node until Trestly lists them
         let spentUnits = prepared.spentCoins.reduce(UInt64(0)) { $0 + $1.state.amount }
@@ -416,14 +542,15 @@ final class TokenWallet: ObservableObject {
         let token = WalletToken.kusdt
         if prepared.recipient.lowercased() == prepared.holding.address.lowercased() {
             record(TokenActivity(id: "\(prepared.txid):\(prepared.holding.id):combined", kind: .combined, units: prepared.amount,
-                                 counterparty: String(prepared.spentCoins.count), date: Date(), holdingID: prepared.holding.id),
+                                 counterparty: String(prepared.spentCoins.count), date: Date(), holdingID: prepared.holding.id,
+                                 fee: prepared.fee),
                    token: token, account: account)
         } else {
             let to = ownRecipient.map { own in
                 TokenHolding(spendingIndex: own.spendingIndex, address: own.address, units: 0, coins: 0).label
             } ?? prepared.recipientLabel ?? prepared.recipient
             record(TokenActivity(id: "\(prepared.txid):\(prepared.holding.id):sent", kind: .sent, units: prepared.amount,
-                                 counterparty: to, date: Date(), holdingID: prepared.holding.id),
+                                 counterparty: to, date: Date(), holdingID: prepared.holding.id, fee: prepared.fee),
                    token: token, account: account)
             if let ownRecipient {
                 record(TokenActivity(id: "\(prepared.txid):\(ownRecipient.id):received", kind: .received, units: prepared.amount,
@@ -612,7 +739,8 @@ final class TokenWallet: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 guard UIApplication.shared.applicationState == .active,
                       WalletManager.shared.currentWallet != nil,
-                      Self.notificationsEnabled else { continue }
+                      Self.notificationsEnabled,
+                      self.accountUsesTokens else { continue }
                 await self.refreshIfStale(maxAge: 80)
             }
         }
@@ -627,6 +755,8 @@ final class TokenWallet: ObservableObject {
     func discoverHoldings(of token: WalletToken, progress: @escaping (_ checking: Int, _ found: Int) -> Void) async -> Int {
         let manager = WalletManager.shared
         guard let account = manager.currentWallet?.publicAddress else { return 0 }
+        // a refresh already running finishes first, so the two never overwrite each other
+        if let running = inFlight, running.account == account { await running.task.value }
         let last = manager.maxSpendingAddressIndex + 20
         let derived = manager.spendingAddresses(inRange: 0..<(max(last, 0) + 1))
         var targets: [(spendingIndex: Int?, address: String)] = [(nil, account)]
@@ -650,8 +780,10 @@ final class TokenWallet: ObservableObject {
         // the furthest address holding some goes on the list, and every slot before it
         if let furthest = results.filter({ !$0.result.coins.isEmpty }).compactMap(\.spendingIndex).max(),
            furthest > manager.maxSpendingAddressIndex {
-            await revealFreshReceiveAddress(furthest)
+            // exactly that slot, for this account; the slots before it stay hidden
+            await manager.revealSpendingAddress(at: furthest, owner: account)
         }
+        guard manager.currentWallet?.publicAddress == account else { return found }
         apply(results, for: token)
         lastError = nil
         lastRefreshed = Date()
@@ -810,12 +942,12 @@ struct TokenIcon: View {
         }
         .frame(width: size, height: size)
         .overlay(alignment: .bottomTrailing) {
-            // the small Kaspa mark: it lives on Kaspa L1
-            Text(verbatim: "K")
-                .font(.system(size: size * 0.26, weight: .heavy, design: .rounded))
-                .foregroundColor(.black)
+            // the Kaspa logo itself, small: it lives on Kaspa L1 (same as KaChat, 2026-11-20)
+            Image("KaspaLogo")
+                .resizable()
+                .scaledToFit()
                 .frame(width: size * 0.38, height: size * 0.38)
-                .background(Circle().fill(Color.accentColor))
+                .clipShape(Circle())
                 .overlay(Circle().stroke(Color(.systemBackground), lineWidth: 1.5))
                 .offset(x: size * 0.06, y: size * 0.06)
         }

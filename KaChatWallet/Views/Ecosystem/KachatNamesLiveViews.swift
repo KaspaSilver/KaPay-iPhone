@@ -124,27 +124,6 @@ enum KachatLive {
         return duration(count * (params?.periodMs ?? KachatNames.yearMs))
     }
 
-    /// Who an address is when you haven't named it yourself: its `.kachat` name ("alice.kachat"),
-    /// the same rule as `AddressBookManager.displayName`. nil without one (mainnet, until names
-    /// launch). Views that call this observe `KachatNamesRegistry` so the name lands on its own.
-    @MainActor static func identityName(_ address: String) -> String? {
-        guard !address.isEmpty else { return nil }
-        return KachatNamesRegistry.shared.cachedIdentity(for: address)?.label.map { "\($0).kachat" }
-    }
-
-    /// An address's `.kachat` profile banner and bio, each looked up from its social link on this
-    /// device (every network: profiles aren't registry data). Callers observe
-    /// `KachatNamesRegistry` and `KachatSocialImageResolver`.
-    @MainActor static func profileBanner(_ address: String) -> String? {
-        let link = KachatNamesRegistry.shared.cachedIdentity(for: address)?.profile?.banner
-        return KachatSocialImageResolver.shared.profile(for: link)?.banner
-    }
-
-    @MainActor static func profileBio(_ address: String) -> String? {
-        let link = KachatNamesRegistry.shared.cachedIdentity(for: address)?.profile?.bio
-        return KachatSocialImageResolver.shared.profile(for: link)?.bio
-    }
-
     /// What registering `name` costs for its first period (registry v4: fixed, baked into the
     /// pinned templates). Each further period costs `renewPrice`.
     @MainActor static func price(_ name: String) -> UInt64? {
@@ -446,8 +425,6 @@ final class KachatHubModel: ObservableObject {
             search = .failed(error.localizedDescription)
         }
     }
-
-    func pricePerYear(_ name: String) -> UInt64? { KachatLive.price(name) }
 }
 
 // MARK: - Hub: search result
@@ -1167,8 +1144,8 @@ struct KachatLapsedTile: View {
     }
 }
 
-/// The offers this wallet made, with Withdraw (and Refund once expired). Shown in Profile >
-/// Your Domains > .kachat, under your names.
+/// The offers this wallet made, with Withdraw (and Refund once expired). Shown in the Wallet
+/// tab's Your Domains > .kachat, under your names.
 struct KachatMyOffersSection: View {
     let offers: [KachatNames.OfferInfo]
     @ObservedObject private var registry = KachatNamesRegistry.shared
@@ -2429,17 +2406,6 @@ struct KachatClaimSheet: View {
         go(to: .fee)
     }
 
-    private func stepRow(_ n: Int, _ text: LocalizedStringKey) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(verbatim: "\(n)")
-                .font(.caption.weight(.bold))
-                .foregroundColor(.accentColor)
-                .frame(width: 22, height: 22)
-                .background(Circle().fill(Color.accentColor.opacity(0.15)))
-            Text(text).font(.subheadline)
-        }
-    }
-
     /// The swipe let go: busy at once (the swipe screen is already sending), then the device
     /// check, then the commit.
     /// The swipe-up has already asked for Face ID.
@@ -3649,173 +3615,11 @@ struct KachatLiveDomainsTab: View {
     }
 }
 
-// MARK: - Edit KaChat Profile
-
-/// Where a social link's lookup stands - the editor saves only a field whose lookup found what
-/// that field shows, so what gets saved is what was reviewed.
-enum KachatSocialLookup: Equatable {
-    case none, looking, found, empty, unreachable
-}
-
-/// One profile field's source (avatar, banner or bio) looked up on this device, showing exactly
-/// the piece other people will see.
-struct KachatSocialPreview: View {
-    let link: String
-    let kind: KachatNames.SocialSource.Kind
-    @Binding var lookup: KachatSocialLookup
-
-    @ObservedObject private var resolver = KachatSocialImageResolver.shared
-    @State private var resolved: KachatNames.SocialProfile?
-    @State private var attempt = 0
-    /// The lookup whose answer may land: a newer one (edited link, Retry) supersedes it.
-    @State private var activeKey = ""
-
-    private var source: KachatNames.SocialSource? { KachatNames.SocialSource(link: link, for: kind) }
-
-    private func piece(_ p: KachatNames.SocialProfile?) -> String? {
-        switch kind {
-        case .avatar: return p?.avatar
-        case .banner: return p?.banner
-        case .bio: return p?.bio
-        }
-    }
-
-    var body: some View {
-        // A VStack, not a Group: a Group hands its modifiers to each child, so `.task` below
-        // would belong to whichever child shows - and switching from the spinner to the result
-        // would cancel it and start the lookup again, endlessly. The VStack is one stable view.
-        VStack(alignment: .leading, spacing: 0) {
-            if let source {
-                switch lookup {
-                case .none, .looking:
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("Looking up the profile...").font(.footnote).foregroundColor(.secondary)
-                    }
-                case .found:
-                    found(source)
-                case .empty:
-                    note("person.crop.circle.badge.exclamationmark", missingText(source.platform))
-                case .unreachable:
-                    HStack(spacing: 10) {
-                        Image(systemName: "wifi.exclamationmark").foregroundColor(.secondary)
-                        Text(verbatim: String(format: AppLocalization.string("Couldn't reach %@."), source.platform.displayName))
-                            .font(.footnote).foregroundColor(.secondary)
-                        Spacer()
-                        Button("Retry") { attempt += 1 }.font(.footnote.weight(.semibold))
-                    }
-                }
-            }
-        }
-        // Debounced: one lookup once typing pauses. `attempt` reruns it for Retry. Whatever
-        // happens - cancelled, restarted, failed - the state always lands somewhere final.
-        .task(id: "\(source?.link ?? "")#\(attempt)") {
-            let myKey = "\(source?.link ?? "")#\(attempt)"
-            activeKey = myKey
-            guard let source else { resolved = nil; lookup = .none; return }
-            // The row scrolled back into view (a Form rebuilds its rows): the answer this
-            // screen already got shows at once - no debounce, no "Looking up" flash, no
-            // refetch. Retry (attempt > 0) still runs the full lookup.
-            if attempt == 0, let cached = resolver.cachedProfile(source) {
-                resolved = cached
-                lookup = piece(cached) == nil ? .empty : .found
-                // Still re-checked quietly (the resolver's own 5-minute freshness): a profile
-                // changed on the platform lands here without the flash.
-                let result = await resolver.resolve(source)
-                guard activeKey == myKey, case .answered(let fresh) = result, fresh != cached else { return }
-                resolved = fresh
-                lookup = piece(fresh) == nil ? .empty : .found
-                return
-            }
-            lookup = .looking
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard activeKey == myKey else { return }
-            let result = await resolver.resolve(source)
-            guard activeKey == myKey else { return }
-            resolved = result.profile
-            switch result {
-            case .answered(let p):
-                lookup = piece(p) == nil ? .empty : .found
-            case .unreachable(let cached):
-                lookup = piece(cached) == nil ? .unreachable : .found
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func found(_ source: KachatNames.SocialSource) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            switch kind {
-            case .avatar:
-                KNSAvatarView(avatarURLString: resolved?.avatar, fallbackText: "", size: 64)
-            case .banner:
-                KNSBannerImageView(bannerURLString: resolved?.banner, height: 90, cornerRadius: 8, fitsWidth: true)
-            case .bio:
-                Text(verbatim: resolved?.bio ?? "").font(.subheadline)
-            }
-            Text(verbatim: String(format: AppLocalization.string("From %@"), source.platform.displayName))
-                .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func missingText(_ platform: KachatNames.SocialSource.Platform) -> String {
-        let key: String
-        switch kind {
-        case .avatar: key = "No avatar on this %@ profile."
-        case .banner: key = "No banner on this %@ profile."
-        case .bio: key = "No bio on this %@ profile."
-        }
-        return String(format: AppLocalization.string(key), platform.displayName)
-    }
-
-    private func note(_ icon: String, _ text: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).foregroundColor(.secondary)
-            Text(verbatim: text).font(.footnote).foregroundColor(.secondary)
-        }
-    }
-}
-
-/// One profile field's source as the editor holds it: the platform picked and the handle typed.
-struct KachatSourceInput: Equatable {
-    var platform: KachatNames.SocialSource.Platform = .x
-    var handle = ""
-
-    init(platform: KachatNames.SocialSource.Platform = .x, handle: String = "") {
-        self.platform = platform
-        self.handle = handle
-    }
-
-    /// From a stored profile link.
-    init(stored link: String?, _ kind: KachatNames.SocialSource.Kind) {
-        if let s = KachatNames.SocialSource(link: link ?? "", for: kind) {
-            self.init(platform: s.platform, handle: s.displayHandle)
-        } else {
-            self.init()
-        }
-    }
-
-    var isEmpty: Bool { handle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-    func source(_ kind: KachatNames.SocialSource.Kind) -> KachatNames.SocialSource? {
-        KachatNames.SocialSource.from(platform: platform, handle: handle, for: kind)
-    }
-
-    func isBad(_ kind: KachatNames.SocialSource.Kind) -> Bool { !isEmpty && source(kind) == nil }
-
-    /// The source when the handle field holds a whole pasted link (rather than a handle).
-    func pastedSource(_ kind: KachatNames.SocialSource.Kind) -> KachatNames.SocialSource? {
-        let t = handle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard t.lowercased().hasPrefix("http") || (t.contains(".") && t.contains("/")) else { return nil }
-        return source(kind)
-    }
-}
+// MARK: - Profile record review
 
 /// Review before a profile record goes out - what will be saved, the network fee, the main
 /// address's balance before and after - the same confirmation every other name action shows.
-/// Used by Edit KaChat Profile and by Set as Primary.
+/// Used by Set as Primary (a profile is edited in KaChat or KaPost, not here).
 struct KachatProfileSaveSheet: View {
     let title: LocalizedStringKey
     let confirmTitle: LocalizedStringKey

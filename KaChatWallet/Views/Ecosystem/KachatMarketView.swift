@@ -1,8 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// The ".kachat" wordmark as a template image - the dock item and
-/// Dock draw it the way `ChessTabIcon` draws the chess pieces, tinted like any SF Symbol.
+/// The ".kachat" wordmark as a template image, so the dock item draws it tinted like any SF
+/// Symbol.
 enum KachatTabIcon {
     private static var cache: [String: UIImage] = [:]
 
@@ -89,7 +89,7 @@ enum KachatTabIcon {
 struct KachatMarketView: View {
     /// Names for sale, names in their grace period (counting down to release), expired names
     /// anyone may claim, and everything that happens in the registry.
-    /// Your own names (and the offers you made) live in Profile > Your Domains.
+    /// Your own names (and the offers you made) live in the Wallet tab's Your Domains.
     private enum Page: String, CaseIterable, Identifiable {
         case market, available, expired, activity
 

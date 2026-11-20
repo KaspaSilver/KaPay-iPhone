@@ -214,11 +214,6 @@ enum KachatNames {
             return out
         }
 
-        static func decodeNum8(_ d: Data) throws -> Int64 {
-            guard d.count == 8 else { throw Failure("state int must be 8 bytes") }
-            return try scriptNum(d)
-        }
-
         /// Minimal script number bytes (rusty-kaspa `serialize_i64(v, None)`); empty for 0.
         static func minimalNumber(_ v: Int64) -> Data {
             precondition(v != Int64.min)
@@ -281,31 +276,6 @@ enum KachatNames {
             return d
         }
 
-        static func decodeGapState(_ s: Data) throws -> (lo: Data, hi: Data) {
-            let b = [UInt8](s)
-            guard b.count == 66, b[0] == 0x20, b[33] == 0x20 else { throw Failure("not a gap state") }
-            return (Data(b[1..<33]), Data(b[34..<66]))
-        }
-
-        static func decodeNameState(_ s: Data) throws -> NameFields {
-            let b = [UInt8](s)
-            guard b.count == 126, b[0] == 0x20, b[33] == 0x20, b[66] == 0x20, b[99] == 0x08, b[108] == 0x08, b[117] == 0x08 else {
-                throw Failure("not a name state")
-            }
-            return NameFields(
-                key: Data(b[1..<33]), paddedName: Data(b[34..<66]), owner: Data(b[67..<99]),
-                price: try decodeNum8(Data(b[100..<108])), periodStart: try decodeNum8(Data(b[109..<117])),
-                expiresAt: try decodeNum8(Data(b[118..<126]))
-            )
-        }
-
-        static func decodeOfferState(_ s: Data) throws -> OfferFields {
-            let b = [UInt8](s)
-            guard b.count == 108, b[0] == 0x20, b[33] == 0x20, b[66] == 0x20, b[99] == 0x08 else { throw Failure("not an offer state") }
-            return OfferFields(key: Data(b[1..<33]), buyer: Data(b[34..<66]), seller: Data(b[67..<99]),
-                               refundAfter: try decodeNum8(Data(b[100..<108])))
-        }
-
         // MARK: Scripts
 
         /// `OP_BLAKE2B <blake2b-256(redeem)> OP_EQUAL` (rusty-kaspa `pay_to_script_hash_script`).
@@ -320,13 +290,6 @@ enum KachatNames {
         static func p2pkScript(_ xonly: Data) -> Data {
             var d = Data([0x20]); d.append(xonly); d.append(0xac)
             return d
-        }
-
-        /// The x-only key of a Schnorr P2PK script, nil for anything else.
-        static func p2pkKey(_ script: Data) -> Data? {
-            let b = [UInt8](script)
-            guard b.count == 34, b[0] == 0x20, b[33] == 0xac else { return nil }
-            return Data(b[1..<33])
         }
 
         /// Canonical minimal push (rusty-kaspa `ScriptBuilder::add_data`).

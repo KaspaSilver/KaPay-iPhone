@@ -257,10 +257,8 @@ extension KaspaAddress {
     }
 }
 
-/// The unit every amount is shown in: KAS on mainnet, TKAS on testnet, so a testnet amount can
-/// never be read as real KAS. Market data (the KAS price, exchange tickers) stays "KAS".
-/// The version the app shows for itself, everywhere one is shown (Profile > Version, the saved
-/// accounts screen): "5.2.2 (2581)" through the beta cycle, plain "5.2.2" once the train is
+/// The version the app shows for itself, everywhere one is shown (Settings > About's Version, the
+/// sign-in screen): "5.2.2 (2581)" through the beta cycle, plain "5.2.2" once the train is
 /// released. The build is the real CFBundleVersion of the shipped bundle (Xcode Cloud's counter,
 /// a local archive's, or the "Local Build Number" script phase's for an Xcode run), shown by its
 /// last 4 digits for easier reading; `KaChatIsRelease` = YES drops the parenthetical for the
@@ -286,6 +284,8 @@ enum AppVersion {
     }
 }
 
+/// The unit every amount is shown in: KAS on mainnet, TKAS on testnet, so a testnet amount can
+/// never be read as real KAS. Market data (the KAS price, exchange tickers) stays "KAS".
 enum KaspaUnit {
     static var symbol: String { AppSettings.load().networkType == .testnet ? "TKAS" : "KAS" }
 
@@ -373,11 +373,12 @@ enum AppAppearance: String, Codable, CaseIterable {
     case light
     case dark
 
+    /// In the app's language (Settings > Customization's Appearance picker shows it as is).
     var displayName: String {
         switch self {
-        case .system: return "System"
-        case .light: return "Light"
-        case .dark: return "Dark"
+        case .system: return AppLocalization.string("System")
+        case .light: return AppLocalization.string("Light")
+        case .dark: return AppLocalization.string("Dark")
         }
     }
 
@@ -403,10 +404,11 @@ enum AppLanguage: String, Codable, CaseIterable {
     case zhHans = "zh-Hans"
 
     /// Native name, matching how a language picker conventionally presents itself (each language
-    /// names itself, not translated into the currently-displayed language).
+    /// names itself, not translated into the currently-displayed language). "System" isn't a
+    /// language, so it is translated.
     var displayName: String {
         switch self {
-        case .system: return "System"
+        case .system: return AppLocalization.string("System")
         case .ar: return "العربية"
         case .arEG: return "العربية (مصر)"
         case .bn: return "বাংলা"
@@ -1177,8 +1179,6 @@ enum EndpointOrigin: Int, Codable {
     }
 }
 
-/// A user-saved "host:port" node address, kept purely for quick copy/paste into the
-/// trusted-node field in Connection Settings - not itself used for connections.
 /// One network's connection settings - see `AppSettings.connectionProfiles`.
 struct ConnectionProfile: Codable, Equatable {
     var indexerURL: String
@@ -1218,6 +1218,8 @@ struct ConnectionProfile: Codable, Equatable {
     }
 }
 
+/// A user-saved "host:port" node address, offered in the Kaspa Node picker (Connection Settings
+/// and the connection status sheet); picking one makes it the trusted node.
 struct SavedNodeAddress: Codable, Identifiable, Equatable {
     let id: UUID
     var label: String

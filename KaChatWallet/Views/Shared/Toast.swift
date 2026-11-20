@@ -73,7 +73,7 @@ extension String {
     /// Every address-copy confirmation across the app must use this so the wording and the
     /// shortened form cannot drift between screens.
     var addressCopiedToastText: String {
-        "Address \(addressToastShortened) copied"
+        String(format: AppLocalization.string("Address %@ copied"), locale: AppLocalization.locale, addressToastShortened)
     }
 
     /// Standard shortened form used inside the copy toast: the "kaspa:"/"kaspatest:" prefix,

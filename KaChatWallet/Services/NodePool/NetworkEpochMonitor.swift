@@ -23,13 +23,9 @@ final class NetworkEpochMonitor: ObservableObject {
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "com.kachat.network.epoch.monitor")
     private var currentPath: NWPath?
-    private var lastPathChangeTime: Date?
 
     // Callbacks for epoch changes
     private var epochChangeCallbacks: [(Int) -> Void] = []
-
-    // Grace period after network change (ignore transient errors)
-    private let gracePeriod: TimeInterval = 5.0
 
     // MARK: - Initialization
 
@@ -68,7 +64,6 @@ final class NetworkEpochMonitor: ObservableObject {
         if isSignificantChange {
             // Bump epoch
             epochId += 1
-            lastPathChangeTime = Date()
 
             AppLog.log("[NetworkEpoch] Path changed significantly - new epoch: %d", epochId)
             AppLog.log("[NetworkEpoch] Status: %@, Expensive: %@, Constrained: %@",
@@ -176,12 +171,6 @@ final class NetworkEpochMonitor: ObservableObject {
         return max(base, NetworkQuality.excellent.hedgeDelayMs)
     }
 
-    /// Whether we're within the grace period after a network change
-    var isWithinGracePeriod: Bool {
-        guard let lastChange = lastPathChangeTime else { return false }
-        return Date().timeIntervalSince(lastChange) < gracePeriod
-    }
-
     /// Register a callback for epoch changes
     func onEpochChange(_ callback: @escaping (Int) -> Void) {
         epochChangeCallbacks.append(callback)
@@ -217,33 +206,5 @@ final class NetworkEpochMonitor: ObservableObject {
         parts.append("epoch:\(epochId)")
 
         return parts.joined(separator: " ")
-    }
-}
-
-// MARK: - Combine Publisher
-
-extension NetworkEpochMonitor {
-    /// Publisher for epoch changes
-    var epochPublisher: AnyPublisher<Int, Never> {
-        $epochId.eraseToAnyPublisher()
-    }
-
-    /// Publisher for network quality changes
-    var qualityPublisher: AnyPublisher<NetworkQuality, Never> {
-        $networkQuality.eraseToAnyPublisher()
-    }
-
-    /// Publisher for online status changes
-    var onlinePublisher: AnyPublisher<Bool, Never> {
-        $isOnline.eraseToAnyPublisher()
-    }
-
-    /// Publisher for expensive-path (metered/constrained) transitions - see `isExpensivePath`.
-    /// Emits only on actual changes so subscribers can re-evaluate gating without churn.
-    var expensivePathPublisher: AnyPublisher<Bool, Never> {
-        $isExpensive
-            .combineLatest($isConstrained) { $0 || $1 }
-            .removeDuplicates()
-            .eraseToAnyPublisher()
     }
 }

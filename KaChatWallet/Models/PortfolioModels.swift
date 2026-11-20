@@ -131,7 +131,7 @@ enum PortfolioNumber {
 }
 
 /// A network fee one of a portfolio's imported addresses paid on a transaction it sent -
-/// messages, handshakes and payments alike. Recorded by `PortfolioAddressImporter` beside the
+/// payments and any other transaction alike. Recorded by `PortfolioAddressImporter` beside the
 /// buy/sell rows and totalled on the Fees Spent card. `fiatValue` is the fee at that day's KAS
 /// price, nil until that price is known (the background backfill fills it in like a row's).
 struct PortfolioFeeRecord: Codable, Identifiable, Equatable {

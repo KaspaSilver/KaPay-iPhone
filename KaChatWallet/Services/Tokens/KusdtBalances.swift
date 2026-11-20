@@ -67,14 +67,18 @@ enum KusdtBalances {
         // 1 and 2: plain coins of this key, with their scripts and addresses worked out here
         struct Wanted { let txid: String; let index: UInt32; let state: Kusdt.State; let script: Data; let address: String }
         var wanted: [Wanted] = []
+        // one entry per outpoint: an API that lists a coin twice can't make it count twice
+        var seen: Set<String> = []
         for entry in answer.states {
-            guard let state = entry.state, state.isPlain(of: owner) else { continue }
+            guard let state = entry.state, state.isPlain(of: owner),
+                  seen.insert("\(entry.txid.lowercased()):\(entry.index)").inserted else { continue }
             let script = Kusdt.lockingScript(state, template: template)
             guard let coinAddress = Kusdt.address(ofLockingScript: script) else { continue }
             wanted.append(Wanted(txid: entry.txid, index: entry.index, state: state, script: script, address: coinAddress))
         }
         let listedByAPI = Set(wanted.map { "\($0.txid):\($0.index)" })
-        for e in expected where !listedByAPI.contains("\(e.transactionId):\(e.index)") && e.state.isPlain(of: owner) {
+        for e in expected where !listedByAPI.contains("\(e.transactionId):\(e.index)") && e.state.isPlain(of: owner)
+            && seen.insert("\(e.transactionId.lowercased()):\(e.index)").inserted {
             let script = Kusdt.lockingScript(e.state, template: template)
             guard let coinAddress = Kusdt.address(ofLockingScript: script) else { continue }
             wanted.append(Wanted(txid: e.transactionId, index: e.index, state: e.state, script: script, address: coinAddress))
@@ -101,6 +105,15 @@ enum KusdtBalances {
 
     // MARK: Trestly's API
 
+    /// No cookies, no cache, nothing kept between lookups (audit, 2026-11-20, privacy).
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.urlCache = nil
+        configuration.timeoutIntervalForRequest = 20
+        return URLSession(configuration: configuration)
+    }()
+
     private struct Listed {
         let txid: String
         let index: UInt32
@@ -121,7 +134,7 @@ enum KusdtBalances {
         }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Self.session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw Failure.api(AppLocalization.string("Trestly didn't answer.")) }
         guard (200...299).contains(http.statusCode) else {
             throw Failure.api(String(format: AppLocalization.string("Trestly answered HTTP %d."), http.statusCode))

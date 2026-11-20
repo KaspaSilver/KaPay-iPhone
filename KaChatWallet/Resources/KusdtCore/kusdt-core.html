@@ -1,16 +1,29 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>kUSDT core</title></head>
+<head><meta charset="utf-8">
+<!-- The page reaches nothing but its own files and the public Kaspa nodes Trestly's node client
+uses (wss://<name>.kaspa.stream/.red/.green/.blue); its HTTP goes through KaPay (kusdtNet). The
+hash is the inline module below: change one, change the other. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' kusdt-core: 'sha256-lCroyicj0RX+1dtEp4mmBhZqrLDcXCpXy/pNnH2kPjg=' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' kusdt-core: wss://*.kaspa.stream wss://*.kaspa.red wss://*.kaspa.green wss://*.kaspa.blue; base-uri 'none'; form-action 'none'">
+<title>kUSDT core</title></head>
 <body>
 <script type="module">
-// Trestly's kUSDT builders (kaspador/kusdt-open bridge/packages/core/pkg-web), run offline inside
-// KaPay: loaded only from the app (kusdt-core://), never from the network. KaPay calls
-// window.kusdtCore.run(command, requestJSON) and gets the answer's JSON back.
+// Trestly's kUSDT builders (kaspador/kusdt-open bridge/packages/core/pkg-web), run inside KaPay:
+// loaded only from the app (kusdt-core://), never from the network. KaPay calls
+// window.kusdtCore.run(command, requestJSON) and gets the answer's JSON back. Once the core is up,
+// Trestly's wallet logic for the pool (kusdt-wallet.js, built by tools/kusdt-wallet) is loaded
+// beside it as window.kapayWallet; its HTTP goes through KaPay (kusdtNet).
 import init, { run, version } from './kusdt_wasm.js';
 window.kusdtCore = { ready: false };
-init().then(() => {
+init().then(async () => {
   window.kusdtCore = { ready: true, run: (command, request) => run(command, request), version: () => version() };
   window.webkit.messageHandlers.kusdtCore.postMessage({ ready: true, version: version() });
+  try {
+    await import('./kusdt-wallet.js');
+    window.webkit.messageHandlers.kusdtCore.postMessage({ walletReady: true });
+  } catch (e) {
+    window.webkit.messageHandlers.kusdtCore.postMessage({ walletError: String(e) });
+  }
 }).catch((e) => {
   window.webkit.messageHandlers.kusdtCore.postMessage({ error: String(e) });
 });

@@ -142,9 +142,9 @@ struct PortfolioPickerHeader: View {
     }
 
     private func portfolioNameSheet(
-        title: String,
+        title: LocalizedStringKey,
         text: Binding<String>,
-        confirmTitle: String,
+        confirmTitle: LocalizedStringKey,
         onConfirm: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) -> some View {
@@ -230,12 +230,13 @@ private struct PortfolioActionsSheet: View {
         }
     }
 
-    private var title: String {
+    /// The portfolio's own name as typed; the other titles in the app's language.
+    private var title: Text {
         switch mode {
-        case .menu: return target.name
-        case .rename: return "Rename"
-        case .reorder: return "Reorder"
-        case .confirmDelete: return "Delete Portfolio"
+        case .menu: return Text(verbatim: target.name)
+        case .rename: return Text("Rename")
+        case .reorder: return Text("Reorder")
+        case .confirmDelete: return Text("Delete Portfolio")
         }
     }
 
